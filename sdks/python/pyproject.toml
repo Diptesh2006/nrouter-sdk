@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nroutersdk"
+version = "1.0.0"
+description = "nRouter SDK — OpenAI-compatible client for the nRouter LLM gateway"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [
+    { name = "nRouter", email = "hello@nrouter.ai" },
+]
+keywords = ["llm", "ai", "openai", "nrouter", "router", "gateway", "api"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "openai>=1.0.0",
+    "httpx>=0.24.1",
+]
+
+[project.urls]
+Homepage = "https://nrouter.ai"
+Documentation = "https://docs.nrouter.ai"
+Repository = "https://github.com/nRouterAI/nrouter-ent-ai-hub/tree/sdk-only"
+Issues = "https://github.com/nRouterAI/nrouter-ent-ai-hub/issues"

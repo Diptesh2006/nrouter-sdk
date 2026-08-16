@@ -1,0 +1,83 @@
+{
+  "$schema": "https://nrouter.ai/sdk-spec/v1",
+  "version": "1.0.0",
+  "base_url": "https://api.nrouter.ai/v1",
+  "env_var": "NROUTER_API_KEY",
+
+  "response_headers": {
+    "x-nrouter-request-id":            { "type": "string",  "description": "Unique request ID",                  "always": true },
+    "x-nrouter-request-cost":          { "type": "float",   "description": "Exact cost in USD",                  "always": false },
+    "x-nrouter-guardrails-applied":    { "type": "csv",     "description": "Guardrails that ran on this request", "always": false },
+    "x-nrouter-prompt-version":        { "type": "integer", "description": "Prompt template version injected",    "always": false },
+    "x-nrouter-ab-test":               { "type": "string",  "description": "A/B test variant selected",           "always": false },
+    "x-nrouter-post-call-guardrails":  { "type": "csv",     "description": "Post-call guardrails that ran",       "always": false },
+    "x-nrouter-stream-buffered":       { "type": "boolean", "description": "Stream buffered for guardrails",      "always": false },
+    "x-nrouter-cache":                 { "type": "string",  "description": "Cache hit/miss (models endpoint)",    "always": false },
+    "x-nrouter-latency-ms":            { "type": "float",   "description": "Server-side latency in milliseconds", "always": true }
+  },
+
+  "errors": {
+    "guardrail_blocked":    { "http": 400, "class": "nRouterGuardrailBlockedError", "description": "Guardrail blocked the request" },
+    "insufficient_credits": { "http": 402, "class": "nRouterCreditError",          "description": "Not enough credits" },
+    "rate_limit_exceeded":  { "http": 429, "class": "nRouterRateLimitError",       "description": "RPM limit exceeded" },
+    "tpm_limit_exceeded":   { "http": 429, "class": "nRouterRateLimitError",       "description": "TPM limit exceeded" },
+    "credit_check_failed":  { "http": 503, "class": "nRouterServiceError",         "description": "Credit system unavailable" }
+  },
+
+  "supported_endpoints": [
+    { "method": "POST",  "path": "/v1/chat/completions",       "sdk": "chat.completions.create()",       "features": ["guardrails", "prompts", "ab_testing", "credits", "cache"] },
+    { "method": "POST",  "path": "/v1/completions",            "sdk": "completions.create()",            "features": ["credits", "cache"] },
+    { "method": "POST",  "path": "/v1/embeddings",             "sdk": "embeddings.create()",             "features": ["credits", "cache"] },
+    { "method": "POST",  "path": "/v1/images/generations",     "sdk": "images.generate()",               "features": ["credits"] },
+    { "method": "POST",  "path": "/v1/images/edits",           "sdk": "images.edit()",                   "features": ["credits"] },
+    { "method": "POST",  "path": "/v1/videos",                 "sdk": "videos.create()",                 "features": ["credits"] },
+    { "method": "POST",  "path": "/v1/audio/speech",           "sdk": "audio.speech.create()",           "features": ["credits"] },
+    { "method": "POST",  "path": "/v1/audio/transcriptions",   "sdk": "audio.transcriptions.create()",   "features": ["credits"] },
+    { "method": "POST",  "path": "/v1/moderations",            "sdk": "moderations.create()",            "features": [] },
+    { "method": "POST",  "path": "/v1/rerank",                 "sdk": "POST /v1/rerank",                 "features": ["credits"] },
+    { "method": "POST",  "path": "/v1/ocr",                    "sdk": "POST /v1/ocr",                    "features": ["credits"] },
+    { "method": "GET",   "path": "/v1/models",                 "sdk": "models.list()",                   "features": ["cache"] },
+    { "method": "GET",   "path": "/v1/models/{model_id}",      "sdk": "models.retrieve()",               "features": ["cache"] }
+  ],
+
+  "unsupported_endpoints": {
+    "files":          "File management is not yet available via nRouter.",
+    "fine_tuning":    "Fine-tuning is not yet available via nRouter.",
+    "batches":        "Batch API is not yet available via nRouter.",
+    "beta":           "Assistants / Threads API is not yet available via nRouter.",
+    "vector_stores":  "Vector stores are not yet available via nRouter.",
+    "uploads":        "Upload API is not yet available via nRouter.",
+    "containers":     "Containers API is not yet available via nRouter.",
+    "conversations":  "Conversations API is not yet available via nRouter.",
+    "responses":      "Responses API is not yet available. Use chat.completions.create() instead.",
+    "webhooks":       "Webhooks API is not yet available via nRouter."
+  },
+
+  "nrouter_apis": {
+    "credits": {
+      "balance":  { "method": "GET",  "path": "/api/credits/balance" },
+      "history":  { "method": "GET",  "path": "/api/credits/history",  "params": ["limit", "offset"] }
+    },
+    "guardrails": {
+      "list":     { "method": "GET",  "path": "/nrouter/guardrail/list" },
+      "get":      { "method": "GET",  "path": "/nrouter/guardrail/info",  "params": ["guardrail_id"] },
+      "logs":     { "method": "GET",  "path": "/nrouter/guardrail/logs",  "params": ["limit"] }
+    },
+    "prompts": {
+      "list":     { "method": "GET",  "path": "/nrouter/prompt/list" },
+      "get":      { "method": "GET",  "path": "/nrouter/prompt/info",     "params": ["prompt_id"] },
+      "diff":     { "method": "GET",  "path": "/nrouter/prompt/version/diff", "params": ["v1", "v2"] }
+    },
+    "models": {
+      "list":     { "method": "GET",  "path": "/v1/models" },
+      "pricing":  { "method": "GET",  "path": "/api/models/pricing" }
+    }
+  },
+
+  "extra_body_fields": {
+    "nrouter_prompt_template_id":  { "type": "string", "description": "Override org default prompt template (UUID)" },
+    "nrouter_prompt_variables":    { "type": "object", "description": "Jinja2 variables for the prompt template" },
+    "nrouter_guardrail_ids":       { "type": "array",  "items": "string", "description": "Run only these guardrails (UUIDs). Omit to apply all org-enabled guardrails." },
+    "nrouter_cache":               { "type": "boolean", "description": "Override org cache setting. false = skip cache for this request. Omit to use org default (usually true)." }
+  }
+}

@@ -1,6 +1,8 @@
 # nRouter SDKs
 
-OpenAI-compatible SDKs for the [nRouter](https://nrouter.ai) LLM gateway. One key, one bill, 240+ models, built-in guardrails and prompt management.
+OpenAI-compatible SDKs for the [nRouter](https://nrouter.ai) LLM gateway. One key, one bill,
+the live multi-provider catalog, built-in guardrails, and prompt management. The exact current
+models are published at [nrouter.ai/api/public/models](https://nrouter.ai/api/public/models).
 
 ## SDKs
 

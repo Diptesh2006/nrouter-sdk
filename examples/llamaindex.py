@@ -95,7 +95,7 @@ llm_no_cache = OpenAI(
 # ━━━ 5. RAG WITH GUARDRAILS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 documents = [
-    Document(text="nRouter is an LLM gateway with 240+ models."),
+    Document(text="nRouter is an LLM gateway with a live multi-provider catalog."),
     Document(text="Guardrails protect every request: PII, injection, keywords."),
     Document(text="Credits are the currency. Prompt templates are versioned."),
 ]

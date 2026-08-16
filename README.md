@@ -2,7 +2,7 @@
 
 > **Where this lives (corrected 2026-08-02).** This tree hosts the canonical nRouter API
 > examples and SDK code (Rule #14). Its authoring home is **inside `nrouter-ent-ai-hub`**, at
-> `nrouter-brain/nrouter-ent-ai-hub/nrouter-sdk/` — edit it there. The nRouter monorepo
+> `nrouter-brain/nrouter-ent-ai-hub/nrouter-sdk/` — edit it there. The nRouter app repo
 > vendors it at `04-nroutersdk/` as a **`git subtree --squash`** from this repo's `sdk-only`
 > split branch. It is **not** a git submodule — the workspace migrated off submodules on
 > 2026-07-22, so there is no `.gitmodules` entry and `git submodule update --init` does nothing.
@@ -10,7 +10,9 @@
 
 OpenAI-compatible SDK and code examples for the [nRouter](https://nrouter.ai) LLM gateway.
 
-One key. One bill. 240+ models. Guardrails, prompt templates, and cost tracking built in.
+One key. One bill. The live multi-provider catalog. Guardrails, prompt templates, and cost
+tracking built in. Browse the exact models available now at
+[nrouter.ai/api/public/models](https://nrouter.ai/api/public/models).
 
 ## Quick Start
 

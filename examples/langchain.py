@@ -163,7 +163,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.runnables import RunnablePassthrough
 
 docs = [
-    "nRouter manages 240+ LLM models through a single API key.",
+    "nRouter serves the models in its live catalog through a single API key.",
     "Credits are the currency — buy once, use any model.",
     "Guardrails run on every request: PII detection, prompt injection, keyword filtering.",
     "Prompt templates are versioned and injected server-side with A/B testing.",

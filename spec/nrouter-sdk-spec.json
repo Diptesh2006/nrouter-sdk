@@ -1,19 +1,20 @@
 {
   "$schema": "https://nrouter.ai/sdk-spec/v1",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "base_url": "https://api.nrouter.ai/v1",
   "env_var": "NROUTER_API_KEY",
 
   "response_headers": {
-    "x-nrouter-request-id":            { "type": "string",  "description": "Unique request ID",                  "always": true },
-    "x-nrouter-request-cost":          { "type": "float",   "description": "Exact cost in USD",                  "always": false },
-    "x-nrouter-guardrails-applied":    { "type": "csv",     "description": "Guardrails that ran on this request", "always": false },
-    "x-nrouter-prompt-version":        { "type": "integer", "description": "Prompt template version injected",    "always": false },
-    "x-nrouter-ab-test":               { "type": "string",  "description": "A/B test variant selected",           "always": false },
-    "x-nrouter-post-call-guardrails":  { "type": "csv",     "description": "Post-call guardrails that ran",       "always": false },
-    "x-nrouter-stream-buffered":       { "type": "boolean", "description": "Stream buffered for guardrails",      "always": false },
-    "x-nrouter-cache":                 { "type": "string",  "description": "Cache hit/miss (models endpoint)",    "always": false },
-    "x-nrouter-latency-ms":            { "type": "float",   "description": "Server-side latency in milliseconds", "always": true }
+    "x-nr-request-id":          { "type": "string",  "description": "Unique request ID",                                      "always": true },
+    "x-nr-request-cost":        { "type": "float",   "description": "Exact cost in USD; absent when the model is unpriced",     "always": false },
+    "x-nr-cost-status":         { "type": "string",  "description": "Cost status",                                            "always": false, "values": ["exact", "unpriced"] },
+    "x-nr-model":               { "type": "string",  "description": "Model that served the request",                          "always": false },
+    "x-nr-input-tokens":        { "type": "integer", "description": "Input token count",                                      "always": false },
+    "x-nr-output-tokens":       { "type": "integer", "description": "Output token count",                                     "always": false },
+    "x-nr-total-tokens":        { "type": "integer", "description": "Total token count, including cache tokens",               "always": false },
+    "x-nr-cache-read-tokens":   { "type": "integer", "description": "Provider cache-read tokens; emitted only when nonzero",   "always": false },
+    "x-nr-cache-write-tokens":  { "type": "integer", "description": "Provider cache-write tokens; emitted only when nonzero",  "always": false },
+    "x-nr-limit-source":        { "type": "string",  "description": "Limit source on 429 responses",                          "always": false, "values": ["key", "plan", "team", "user", "budget"] }
   },
 
   "errors": {

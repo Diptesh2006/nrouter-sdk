@@ -68,9 +68,11 @@ raw = client.chat.completions.with_raw_response.create(
     model="gpt-4o-mini",
     messages=[{"role": "user", "content": "Hi"}],
 )
-print(f"Cost: ${raw.headers.get('x-nrouter-request-cost')}")
-print(f"Guardrails: {raw.headers.get('x-nrouter-guardrails-applied')}")
-print(f"Prompt version: {raw.headers.get('x-nrouter-prompt-version')}")
+cost = raw.headers.get("x-nr-request-cost")
+cost_status = raw.headers.get("x-nr-cost-status")
+print(f"Cost: ${cost}" if cost is not None else f"Cost status: {cost_status}")
+print(f"Model: {raw.headers.get('x-nr-model')}")
+print(f"Total tokens: {raw.headers.get('x-nr-total-tokens')}")
 
 # ━━━ 7. HANDLE ERRORS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 from openai import BadRequestError

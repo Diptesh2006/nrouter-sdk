@@ -41,7 +41,7 @@ sdks/
 ## What Every SDK Does (Same Features, Every Language)
 
 1. **Pre-configured** — `base_url` and `api_key` (from `NROUTER_API_KEY`) set automatically
-2. **Auto-captures metadata** — `lastResponse` populated with cost, guardrails, prompt version from `x-nrouter-*` headers
+2. **Auto-captures metadata** — `last_response` populated from the gateway's canonical `x-nr-*` cost, model, token, request, and limit headers
 3. **Typed errors** — `GuardrailBlockedError`, `CreditError`, `RateLimitError` (not generic 400/402/429)
 4. **Blocks unsupported endpoints** — `audio`, `files`, `fine_tuning`, etc. give clear errors, not confusing 404s
 5. **nRouter APIs** — `credits.balance()`, `guardrails.list()`, `prompts.list()`, `nrouterModels.pricing()`
@@ -53,8 +53,8 @@ All SDKs are driven by `spec/nrouter-sdk-spec.json`:
 
 ```json
 {
-  "version": "0.1.0",
-  "response_headers": { "x-nrouter-request-cost": { "type": "float" }, ... },
+  "version": "2.0.0",
+  "response_headers": { "x-nr-request-cost": { "type": "float" }, ... },
   "errors": { "guardrail_blocked": { "http": 400, "class": "GuardrailBlockedError" }, ... },
   "unsupported_endpoints": { "audio": "...", "files": "...", ... },
   "nrouter_apis": { "credits": { "balance": "/api/credits/balance" }, ... }

@@ -1,0 +1,16 @@
+{
+  "source": "nrouter-rust-gateway/src/http/nr_headers.rs::all_emitted_names",
+  "source_commit": "3dd3c8701fe95baa2d10117d37810f9916890e2a",
+  "headers": [
+    "x-nr-request-id",
+    "x-nr-request-cost",
+    "x-nr-cost-status",
+    "x-nr-model",
+    "x-nr-input-tokens",
+    "x-nr-output-tokens",
+    "x-nr-total-tokens",
+    "x-nr-cache-read-tokens",
+    "x-nr-cache-write-tokens",
+    "x-nr-limit-source"
+  ]
+}

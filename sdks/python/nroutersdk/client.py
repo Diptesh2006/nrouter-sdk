@@ -179,7 +179,7 @@ class _nRouterChat:
 
         Returns:
             ChatCompletion. After the call, ``client.last_response`` has
-            cost, request_id, guardrails_applied, prompt_version, etc.
+            cost, cost status, model, token counts, and request ID.
         """
         extra_body: Dict[str, Any] = kwargs.pop("extra_body", {}) or {}
 
@@ -205,8 +205,8 @@ class nRouter(_OpenAI):
     """OpenAI-compatible client pre-configured for nRouter.
 
     Every API call automatically captures response metadata in
-    ``client.last_response`` — cost, request ID, which guardrails ran,
-    which prompt version was used, and A/B test variant.
+    ``client.last_response`` — cost status, request ID, served model, token
+    counts, and the source of a rate-limit response.
 
     Supported:
         ``chat.completions``, ``completions``, ``embeddings``,
@@ -273,9 +273,9 @@ class nRouter(_OpenAI):
         self._client.event_hooks["response"].append(self._capture_nrouter_headers)
 
     def _capture_nrouter_headers(self, response: httpx.Response) -> None:
-        """Capture x-nrouter-* headers from every response."""
+        """Capture canonical x-nr-* headers from every response."""
         headers = dict(response.headers)
-        if any(k.startswith("x-nrouter-") for k in headers):
+        if any(k.startswith("x-nr-") for k in headers):
             self.last_response = nRouterResponseMeta.from_headers(headers)
 
     # -- internal helpers --------------------------------------------------
@@ -351,9 +351,9 @@ class AsyncnRouter(_AsyncOpenAI):
         self._client.event_hooks["response"].append(self._capture_nrouter_headers)
 
     async def _capture_nrouter_headers(self, response: httpx.Response) -> None:
-        """Capture x-nrouter-* headers from every response."""
+        """Capture canonical x-nr-* headers from every response."""
         headers = dict(response.headers)
-        if any(k.startswith("x-nrouter-") for k in headers):
+        if any(k.startswith("x-nr-") for k in headers):
             self.last_response = nRouterResponseMeta.from_headers(headers)
 
     def _nrouter_get(self, path: str) -> dict:

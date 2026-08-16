@@ -68,9 +68,11 @@ const noCacheResponse = await client.chat.completions.create({
 const raw = await client.chat.completions
   .create({ model: "gpt-4o-mini", messages: [{ role: "user", content: "Hi" }] })
   .asResponse();
-console.log(`Cost: $${raw.headers.get("x-nrouter-request-cost")}`);
-console.log(`Guardrails: ${raw.headers.get("x-nrouter-guardrails-applied")}`);
-console.log(`Prompt version: ${raw.headers.get("x-nrouter-prompt-version")}`);
+const cost = raw.headers.get("x-nr-request-cost");
+const costStatus = raw.headers.get("x-nr-cost-status");
+console.log(cost === null ? `Cost status: ${costStatus}` : `Cost: $${cost}`);
+console.log(`Model: ${raw.headers.get("x-nr-model")}`);
+console.log(`Total tokens: ${raw.headers.get("x-nr-total-tokens")}`);
 
 // ━━━ 7. HANDLE ERRORS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 try {

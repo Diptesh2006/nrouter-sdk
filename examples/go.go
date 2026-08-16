@@ -53,7 +53,9 @@ func main() {
 	// Cache is enabled by default. Omit the field to use org default.
 
 	// Response headers contain:
-	//   x-nrouter-request-cost: 0.00347
-	//   x-nrouter-guardrails-applied: pii-detection,prompt-injection
-	//   x-nrouter-prompt-version: 3
+	//   x-nr-request-id: nrouter-a1b2c3d4e5f67890
+	//   x-nr-request-cost: 0.00347
+	//   x-nr-cost-status: exact
+	//   x-nr-model: gpt-4o
+	//   x-nr-total-tokens: 60
 }

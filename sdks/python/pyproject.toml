@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nroutersdk"
-version = "1.0.0"
+version = "2.0.0"
 description = "nRouter SDK — OpenAI-compatible client for the nRouter LLM gateway"
 readme = "README.md"
 license = "MIT"

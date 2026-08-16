@@ -13,23 +13,32 @@ That's it. Guardrails, prompt templates, credit tracking, and cost headers all w
 
 ## Cost Transparency
 
-Every response includes the exact cost in the `x-nrouter-request-cost` header. No hidden fees, no surprises.
+Priced responses expose the exact USD cost in `x-nr-request-cost`. Unpriced responses
+omit the amount and identify the result with `x-nr-cost-status: unpriced`.
 
 ```
 HTTP/1.1 200 OK
-x-nrouter-request-cost: 0.00347
-x-nrouter-request-id: nrouter-a1b2c3d4e5f67890
-x-nrouter-guardrails-applied: pii-detection,prompt-injection
-x-nrouter-prompt-version: 3
+x-nr-request-id: nrouter-a1b2c3d4e5f67890
+x-nr-request-cost: 0.00347
+x-nr-cost-status: exact
+x-nr-model: gpt-4o
+x-nr-input-tokens: 42
+x-nr-output-tokens: 18
+x-nr-total-tokens: 60
 ```
 
 | Header | What It Tells You |
 |--------|------------------|
-| `x-nrouter-request-cost` | Exact cost in USD (e.g., `0.00347` = $0.00347) |
-| `x-nrouter-request-id` | Unique ID for debugging / support tickets |
-| `x-nrouter-guardrails-applied` | Which guardrails ran on this request |
-| `x-nrouter-prompt-version` | Which prompt template version was injected |
-| `x-nrouter-ab-test` | Which A/B test variant was selected |
+| `x-nr-request-id` | Unique ID for debugging / support tickets (always present) |
+| `x-nr-request-cost` | Exact cost in USD; absent when the model is unpriced |
+| `x-nr-cost-status` | `exact` or `unpriced` |
+| `x-nr-model` | Model that served the request |
+| `x-nr-input-tokens` | Input token count |
+| `x-nr-output-tokens` | Output token count |
+| `x-nr-total-tokens` | Total tokens, including cache tokens |
+| `x-nr-cache-read-tokens` | Cache-read tokens; emitted only when nonzero |
+| `x-nr-cache-write-tokens` | Cache-write tokens; emitted only when nonzero |
+| `x-nr-limit-source` | Rate-limit source (`key`, `plan`, `team`, `user`, or `budget`) on 429 |
 
 ### Platform Fee (Already Deducted)
 
@@ -74,8 +83,8 @@ curl -i https://api.nrouter.ai/v1/chat/completions \
   -d '{
     "model": "gpt-4o-mini",
     "messages": [{"role": "user", "content": "Hi"}]
-  }' 2>&1 | grep -i "x-nrouter-request-cost"
-# x-nrouter-request-cost: 0.000015
+  }' 2>&1 | grep -i "x-nr-request-cost"
+# x-nr-request-cost: 0.000015
 
 # Embeddings
 curl https://api.nrouter.ai/v1/embeddings \
@@ -207,8 +216,9 @@ response = client.chat.completions.with_raw_response.create(
     model="gpt-4o-mini",
     messages=[{"role": "user", "content": "Hi"}],
 )
-cost = response.headers.get("x-nrouter-request-cost")
-print(f"Cost: ${float(cost):.6f}")
+cost = response.headers.get("x-nr-request-cost")
+cost_status = response.headers.get("x-nr-cost-status")
+print(f"Cost: ${float(cost):.6f}" if cost is not None else f"Cost status: {cost_status}")
 parsed = response.parse()
 print(parsed.choices[0].message.content)
 ```
@@ -262,8 +272,9 @@ const raw = await client.chat.completions
     messages: [{ role: "user", content: "Hi" }],
   })
   .asResponse();
-const cost = raw.headers.get("x-nrouter-request-cost");
-console.log(`Cost: $${cost}`);
+const cost = raw.headers.get("x-nr-request-cost");
+const costStatus = raw.headers.get("x-nr-cost-status");
+console.log(cost === null ? `Cost status: ${costStatus}` : `Cost: $${cost}`);
 
 // Tool calling
 const tools = await client.chat.completions.create({
@@ -664,18 +675,18 @@ http GET https://api.nrouter.ai/api/credits/balance \
 
 Every language can read the cost header from the raw HTTP response:
 
-| Language | How to Read `x-nrouter-request-cost` |
+| Language | How to Read `x-nr-request-cost` |
 |----------|--------------------------------------|
-| **cURL** | `curl -i ... \| grep x-nrouter-request-cost` |
+| **cURL** | `curl -i ... \| grep x-nr-request-cost` |
 | **Python (nroutersdk)** | `client.last_response.cost` |
-| **Python (openai)** | `client.chat.completions.with_raw_response.create(...)` then `response.headers["x-nrouter-request-cost"]` |
-| **Node.js** | `client.chat.completions.create(...).asResponse()` then `response.headers.get("x-nrouter-request-cost")` |
-| **Go** | Access `resp.Header.Get("x-nrouter-request-cost")` from raw response |
+| **Python (openai)** | `client.chat.completions.with_raw_response.create(...)` then `response.headers["x-nr-request-cost"]` |
+| **Node.js** | `client.chat.completions.create(...).asResponse()` then `response.headers.get("x-nr-request-cost")` |
+| **Go** | Access `resp.Header.Get("x-nr-request-cost")` from raw response |
 | **Java** | Intercept via OkHttp interceptor |
 | **Ruby** | Response hash includes headers |
-| **PHP** | `$response->meta()['x-nrouter-request-cost']` |
+| **PHP** | `$response->meta()['x-nr-request-cost']` |
 | **C#** | Custom `DelegatingHandler` to capture headers |
-| **Rust** | `response.headers.get("x-nrouter-request-cost")` |
+| **Rust** | `response.headers.get("x-nr-request-cost")` |
 
 ### Cost Estimation Before You Call
 

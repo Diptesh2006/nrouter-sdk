@@ -5,7 +5,7 @@
 //
 // Guardrails, prompt templates, and cost tracking are all server-side.
 // Blocked requests throw with {"error": "...", "code": "guardrail_blocked"}.
-// Cost is in the x-nrouter-request-cost response header.
+// Cost is in the x-nr-request-cost response header when the model is priced.
 
 using OpenAI;
 using OpenAI.Chat;

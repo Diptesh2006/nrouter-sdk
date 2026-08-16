@@ -5,7 +5,7 @@
 //
 // Guardrails, prompt templates, and cost tracking are all server-side.
 // Blocked requests return 400 with {"error": "...", "code": "guardrail_blocked"}.
-// Cost is in the x-nrouter-request-cost response header.
+// Cost is in the x-nr-request-cost response header when the model is priced.
 
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;

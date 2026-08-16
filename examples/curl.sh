@@ -29,17 +29,20 @@ curl "$BASE/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"model": "claude-sonnet-4-20250514", "messages": [{"role": "user", "content": "Hello!"}]}'
 
-# ━━━ 3. SEE COST + GUARDRAILS IN RESPONSE HEADERS ━━━━━━━━━━
+# ━━━ 3. SEE COST + USAGE IN RESPONSE HEADERS ━━━━━━━━━━━━━━━
 
 curl -i "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hi"}]}'
 # Response headers:
-#   x-nrouter-request-id: nrouter-a1b2c3d4e5f67890
-#   x-nrouter-request-cost: 0.000015
-#   x-nrouter-guardrails-applied: pii-detection,prompt-injection
-#   x-nrouter-prompt-version: 3
+#   x-nr-request-id: nrouter-a1b2c3d4e5f67890
+#   x-nr-request-cost: 0.000015
+#   x-nr-cost-status: exact
+#   x-nr-model: gpt-4o-mini
+#   x-nr-input-tokens: 8
+#   x-nr-output-tokens: 4
+#   x-nr-total-tokens: 12
 
 # ━━━ 4. WITH PROMPT TEMPLATE + VARIABLES ━━━━━━━━━━━━━━━━━━━━
 # Prompt templates are opt-in: pass the template ID + Jinja2 variables.

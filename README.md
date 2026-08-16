@@ -102,16 +102,21 @@ Files, fine-tuning, batches, assistants/threads, vector stores, responses API.
 
 ## Response Headers
 
-Every response includes branded `x-nrouter-*` headers:
+The gateway emits only the following public `x-nr-*` response headers. Most are
+conditional; `x-nr-request-id` is the only header present on every response.
 
 | Header | Type | Description |
 |--------|------|-------------|
-| `x-nrouter-request-id` | string | Unique request ID (always present) |
-| `x-nrouter-request-cost` | float | Exact cost in USD |
-| `x-nrouter-guardrails-applied` | csv | Which guardrails ran |
-| `x-nrouter-prompt-version` | int | Prompt template version injected |
-| `x-nrouter-ab-test` | string | A/B test variant selected |
-| `x-nrouter-post-call-guardrails` | csv | Post-call guardrails that ran |
+| `x-nr-request-id` | string | Unique request ID (always present) |
+| `x-nr-request-cost` | float | Exact cost in USD; absent when the model is unpriced |
+| `x-nr-cost-status` | string | `exact` or `unpriced` when cost metadata is available |
+| `x-nr-model` | string | Model that served the request |
+| `x-nr-input-tokens` | integer | Input token count |
+| `x-nr-output-tokens` | integer | Output token count |
+| `x-nr-total-tokens` | integer | Total token count, including cache tokens |
+| `x-nr-cache-read-tokens` | integer | Cache-read tokens; emitted only when nonzero |
+| `x-nr-cache-write-tokens` | integer | Cache-write tokens; emitted only when nonzero |
+| `x-nr-limit-source` | string | `key`, `plan`, `team`, `user`, or `budget` on 429 responses |
 
 Python SDK captures these automatically in `client.last_response`. Other languages read them from HTTP response headers.
 

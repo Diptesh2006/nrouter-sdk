@@ -1,0 +1,11 @@
+[package]
+name = "nrouter"
+version = "1.0.0"
+edition = "2021"
+description = "OpenAI-compatible SDK for the nRouter LLM gateway"
+license = "MIT"
+homepage = "https://nrouter.ai"
+repository = "https://github.com/nRouterAI/nrouter-ent-ai-hub"
+
+[dependencies]
+async-openai = "0.25"

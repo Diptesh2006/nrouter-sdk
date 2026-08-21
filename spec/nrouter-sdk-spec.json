@@ -3,82 +3,327 @@
   "version": "2.0.0",
   "base_url": "https://api.nrouter.ai/v1",
   "env_var": "NROUTER_API_KEY",
-
   "response_headers": {
-    "x-nr-request-id":          { "type": "string",  "description": "Unique request ID",                                      "always": true },
-    "x-nr-request-cost":        { "type": "float",   "description": "Exact cost in USD; absent when the model is unpriced",     "always": false },
-    "x-nr-cost-status":         { "type": "string",  "description": "Cost status",                                            "always": false, "values": ["exact", "unpriced"] },
-    "x-nr-model":               { "type": "string",  "description": "Model that served the request",                          "always": false },
-    "x-nr-input-tokens":        { "type": "integer", "description": "Input token count",                                      "always": false },
-    "x-nr-output-tokens":       { "type": "integer", "description": "Output token count",                                     "always": false },
-    "x-nr-total-tokens":        { "type": "integer", "description": "Total token count, including cache tokens",               "always": false },
-    "x-nr-cache-read-tokens":   { "type": "integer", "description": "Provider cache-read tokens; emitted only when nonzero",   "always": false },
-    "x-nr-cache-write-tokens":  { "type": "integer", "description": "Provider cache-write tokens; emitted only when nonzero",  "always": false },
-    "x-nr-limit-source":        { "type": "string",  "description": "Limit source on 429 responses",                          "always": false, "values": ["key", "plan", "team", "user", "budget"] }
-  },
-
-  "errors": {
-    "guardrail_blocked":    { "http": 400, "class": "nRouterGuardrailBlockedError", "description": "Guardrail blocked the request" },
-    "insufficient_credits": { "http": 402, "class": "nRouterCreditError",          "description": "Not enough credits" },
-    "rate_limit_exceeded":  { "http": 429, "class": "nRouterRateLimitError",       "description": "RPM limit exceeded" },
-    "tpm_limit_exceeded":   { "http": 429, "class": "nRouterRateLimitError",       "description": "TPM limit exceeded" },
-    "credit_check_failed":  { "http": 503, "class": "nRouterServiceError",         "description": "Credit system unavailable" }
-  },
-
-  "supported_endpoints": [
-    { "method": "POST",  "path": "/v1/chat/completions",       "sdk": "chat.completions.create()",       "features": ["guardrails", "prompts", "ab_testing", "credits", "cache"] },
-    { "method": "POST",  "path": "/v1/completions",            "sdk": "completions.create()",            "features": ["credits", "cache"] },
-    { "method": "POST",  "path": "/v1/embeddings",             "sdk": "embeddings.create()",             "features": ["credits", "cache"] },
-    { "method": "POST",  "path": "/v1/images/generations",     "sdk": "images.generate()",               "features": ["credits"] },
-    { "method": "POST",  "path": "/v1/images/edits",           "sdk": "images.edit()",                   "features": ["credits"] },
-    { "method": "POST",  "path": "/v1/videos",                 "sdk": "videos.create()",                 "features": ["credits"] },
-    { "method": "POST",  "path": "/v1/audio/speech",           "sdk": "audio.speech.create()",           "features": ["credits"] },
-    { "method": "POST",  "path": "/v1/audio/transcriptions",   "sdk": "audio.transcriptions.create()",   "features": ["credits"] },
-    { "method": "POST",  "path": "/v1/moderations",            "sdk": "moderations.create()",            "features": [] },
-    { "method": "POST",  "path": "/v1/rerank",                 "sdk": "POST /v1/rerank",                 "features": ["credits"] },
-    { "method": "POST",  "path": "/v1/ocr",                    "sdk": "POST /v1/ocr",                    "features": ["credits"] },
-    { "method": "GET",   "path": "/v1/models",                 "sdk": "models.list()",                   "features": ["cache"] },
-    { "method": "GET",   "path": "/v1/models/{model_id}",      "sdk": "models.retrieve()",               "features": ["cache"] }
-  ],
-
-  "unsupported_endpoints": {
-    "files":          "File management is not yet available via nRouter.",
-    "fine_tuning":    "Fine-tuning is not yet available via nRouter.",
-    "batches":        "Batch API is not yet available via nRouter.",
-    "beta":           "Assistants / Threads API is not yet available via nRouter.",
-    "vector_stores":  "Vector stores are not yet available via nRouter.",
-    "uploads":        "Upload API is not yet available via nRouter.",
-    "containers":     "Containers API is not yet available via nRouter.",
-    "conversations":  "Conversations API is not yet available via nRouter.",
-    "responses":      "Responses API is not yet available. Use chat.completions.create() instead.",
-    "webhooks":       "Webhooks API is not yet available via nRouter."
-  },
-
-  "nrouter_apis": {
-    "credits": {
-      "balance":  { "method": "GET",  "path": "/api/credits/balance" },
-      "history":  { "method": "GET",  "path": "/api/credits/history",  "params": ["limit", "offset"] }
+    "x-nr-request-id": {
+      "type": "string",
+      "description": "Unique request ID",
+      "always": true
     },
-    "guardrails": {
-      "list":     { "method": "GET",  "path": "/nrouter/guardrail/list" },
-      "get":      { "method": "GET",  "path": "/nrouter/guardrail/info",  "params": ["guardrail_id"] },
-      "logs":     { "method": "GET",  "path": "/nrouter/guardrail/logs",  "params": ["limit"] }
+    "x-nr-request-cost": {
+      "type": "float",
+      "description": "Exact cost in USD; absent when the model is unpriced",
+      "always": false
     },
-    "prompts": {
-      "list":     { "method": "GET",  "path": "/nrouter/prompt/list" },
-      "get":      { "method": "GET",  "path": "/nrouter/prompt/info",     "params": ["prompt_id"] },
-      "diff":     { "method": "GET",  "path": "/nrouter/prompt/version/diff", "params": ["v1", "v2"] }
+    "x-nr-cost-status": {
+      "type": "string",
+      "description": "Cost status",
+      "always": false,
+      "values": [
+        "exact",
+        "unpriced"
+      ]
     },
-    "models": {
-      "list":     { "method": "GET",  "path": "/v1/models" },
-      "pricing":  { "method": "GET",  "path": "/api/models/pricing" }
+    "x-nr-model": {
+      "type": "string",
+      "description": "Model that served the request",
+      "always": false
+    },
+    "x-nr-input-tokens": {
+      "type": "integer",
+      "description": "Input token count",
+      "always": false
+    },
+    "x-nr-output-tokens": {
+      "type": "integer",
+      "description": "Output token count",
+      "always": false
+    },
+    "x-nr-total-tokens": {
+      "type": "integer",
+      "description": "Total token count, including cache tokens",
+      "always": false
+    },
+    "x-nr-cache-read-tokens": {
+      "type": "integer",
+      "description": "Provider cache-read tokens; emitted only when nonzero",
+      "always": false
+    },
+    "x-nr-cache-write-tokens": {
+      "type": "integer",
+      "description": "Provider cache-write tokens; emitted only when nonzero",
+      "always": false
+    },
+    "x-nr-limit-source": {
+      "type": "string",
+      "description": "Limit source on 429 responses",
+      "always": false,
+      "values": [
+        "key",
+        "plan",
+        "team",
+        "user",
+        "budget"
+      ]
     }
   },
-
+  "errors": {
+    "guardrail_blocked": {
+      "http": 400,
+      "class": "nRouterGuardrailBlockedError",
+      "description": "Guardrail blocked the request"
+    },
+    "insufficient_credits": {
+      "http": 402,
+      "class": "nRouterCreditError",
+      "description": "Not enough credits"
+    },
+    "rate_limit_exceeded": {
+      "http": 429,
+      "class": "nRouterRateLimitError",
+      "description": "RPM limit exceeded"
+    },
+    "tpm_limit_exceeded": {
+      "http": 429,
+      "class": "nRouterRateLimitError",
+      "description": "TPM limit exceeded"
+    },
+    "credit_check_failed": {
+      "http": 503,
+      "class": "nRouterServiceError",
+      "description": "Credit system unavailable"
+    }
+  },
+  "supported_endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "sdk": "chat.completions.create()",
+      "features": [
+        "guardrails",
+        "prompts",
+        "ab_testing",
+        "credits",
+        "cache"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/completions",
+      "sdk": "completions.create()",
+      "features": [
+        "credits",
+        "cache"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/embeddings",
+      "sdk": "embeddings.create()",
+      "features": [
+        "credits",
+        "cache"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/images/generations",
+      "sdk": "images.generate()",
+      "features": [
+        "credits"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/videos",
+      "sdk": "videos.create()",
+      "features": [
+        "credits"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audio/speech",
+      "sdk": "audio.speech.create()",
+      "features": [
+        "credits"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audio/transcriptions",
+      "sdk": "audio.transcriptions.create()",
+      "features": [
+        "credits"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/v1/models",
+      "sdk": "models.list()",
+      "features": [
+        "cache"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/v1/models/{model_id}",
+      "sdk": "models.retrieve()",
+      "features": [
+        "cache"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/messages",
+      "sdk": "messages.create()",
+      "features": [
+        "guardrails",
+        "prompts",
+        "ab_testing",
+        "credits",
+        "cache"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/messages/count_tokens",
+      "sdk": "messages.count_tokens()",
+      "features": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/responses",
+      "sdk": "responses.create()",
+      "features": [
+        "guardrails",
+        "prompts",
+        "ab_testing",
+        "credits",
+        "cache"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/audio/translations",
+      "sdk": "audio.translations.create()",
+      "features": [
+        "credits"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/v1/videos/{id}",
+      "sdk": "videos.retrieve()",
+      "features": [],
+      "note": "Collection is free \u2014 the customer is billed when the video is CREATED, not when its status is polled or its bytes are downloaded (gateway src/http/videos.rs: \"Create bills; collection is free\")."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/videos/{id}/content",
+      "sdk": "videos.download_content()",
+      "features": [],
+      "note": "Collection is free \u2014 the customer is billed when the video is CREATED, not when its status is polled or its bytes are downloaded (gateway src/http/videos.rs: \"Create bills; collection is free\")."
+    }
+  ],
+  "unsupported_endpoints": {
+    "files": "File management is not yet available via nRouter.",
+    "fine_tuning": "Fine-tuning is not yet available via nRouter.",
+    "batches": "Batch API is not yet available via nRouter.",
+    "beta": "Assistants / Threads API is not yet available via nRouter.",
+    "vector_stores": "Vector stores are not yet available via nRouter.",
+    "uploads": "Upload API is not yet available via nRouter.",
+    "containers": "Containers API is not yet available via nRouter.",
+    "conversations": "Conversations API is not yet available via nRouter.",
+    "webhooks": "Webhooks API is not yet available via nRouter.",
+    "edits": "Image editing is not mounted by the gateway. Listed as supported until 2026-08-21; a client calling it received a 404.",
+    "moderations": "Moderation is not mounted by the gateway. Listed as supported until 2026-08-21; a client calling it received a 404.",
+    "rerank": "Reranking is not mounted by the gateway. Listed as supported until 2026-08-21; a client calling it received a 404.",
+    "ocr": "OCR is not mounted by the gateway. Listed as supported until 2026-08-21; a client calling it received a 404."
+  },
+  "nrouter_apis": {
+    "credits": {
+      "balance": {
+        "method": "GET",
+        "path": "/api/credits/balance"
+      },
+      "history": {
+        "method": "GET",
+        "path": "/api/credits/history",
+        "params": [
+          "limit",
+          "offset"
+        ]
+      }
+    },
+    "guardrails": {
+      "list": {
+        "method": "GET",
+        "path": "/nrouter/guardrail/list"
+      },
+      "get": {
+        "method": "GET",
+        "path": "/nrouter/guardrail/info",
+        "params": [
+          "guardrail_id"
+        ]
+      },
+      "logs": {
+        "method": "GET",
+        "path": "/nrouter/guardrail/logs",
+        "params": [
+          "limit"
+        ]
+      }
+    },
+    "prompts": {
+      "list": {
+        "method": "GET",
+        "path": "/nrouter/prompt/list"
+      },
+      "get": {
+        "method": "GET",
+        "path": "/nrouter/prompt/info",
+        "params": [
+          "prompt_id"
+        ]
+      },
+      "diff": {
+        "method": "GET",
+        "path": "/nrouter/prompt/version/diff",
+        "params": [
+          "v1",
+          "v2"
+        ]
+      }
+    },
+    "models": {
+      "list": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "pricing": {
+        "method": "GET",
+        "path": "/api/models/pricing"
+      }
+    }
+  },
   "extra_body_fields": {
-    "nrouter_prompt_template_id":  { "type": "string", "description": "Override org default prompt template (UUID)" },
-    "nrouter_prompt_variables":    { "type": "object", "description": "Jinja2 variables for the prompt template" },
-    "nrouter_guardrail_ids":       { "type": "array",  "items": "string", "description": "Run only these guardrails (UUIDs). Omit to apply all org-enabled guardrails." },
-    "nrouter_cache":               { "type": "boolean", "description": "Override org cache setting. false = skip cache for this request. Omit to use org default (usually true)." }
+    "nrouter_prompt_template_id": {
+      "type": "string",
+      "description": "Override org default prompt template (UUID)"
+    },
+    "nrouter_prompt_variables": {
+      "type": "object",
+      "description": "Jinja2 variables for the prompt template"
+    },
+    "nrouter_guardrail_ids": {
+      "type": "array",
+      "items": "string",
+      "description": "Run only these guardrails (UUIDs). Omit to apply all org-enabled guardrails."
+    },
+    "nrouter_cache": {
+      "type": "boolean",
+      "description": "Override org cache setting. false = skip cache for this request. Omit to use org default (usually true)."
+    }
   }
 }

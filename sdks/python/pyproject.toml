@@ -28,7 +28,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "openai>=1.0.0",
+    "openai>=1.66.0"   # Responses namespace: ABSENT in 1.65.5, PRESENT in 1.66.0,
     "httpx>=0.24.1",
 ]
 

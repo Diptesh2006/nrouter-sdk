@@ -138,7 +138,7 @@ curl https://api.nrouter.ai/v1/chat/completions \
 ## Python (Branded SDK)
 
 ```bash
-pip install nroutersdk
+pip install nrouter-sdk
 ```
 
 ```python

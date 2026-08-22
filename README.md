@@ -12,7 +12,7 @@ tracking built in. Browse the exact models available now at
 
 ### Python (Branded SDK)
 ```bash
-pip install nroutersdk
+pip install nrouter-sdk
 ```
 ```python
 from nroutersdk import nRouter
@@ -33,7 +33,7 @@ wrappers, not yet at Python's feature depth — see each package's own README):
 
 | Language | Install | Package |
 |----------|---------|---------|
-| **TypeScript / JS** | `npm install nroutersdk` | [`sdks/js/`](sdks/js/) |
+| **TypeScript / JS** | `npm install @nrouter/sdk` | [`sdks/js/`](sdks/js/) |
 | **Java** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) |
 | **Rust** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) |
 | **R** | `remotes::install_github(..., subdir = "nrouter-sdk/sdks/r")` | [`sdks/r/`](sdks/r/) |
@@ -94,8 +94,8 @@ example for any of these without first adding the route to the gateway and the s
 
 | Language | Install | Example |
 |----------|---------|---------|
-| **Python (branded)** | `pip install nroutersdk` | [`sdks/python/`](sdks/python/) |
-| **TypeScript / JS (branded)** | `npm install nroutersdk` | [`sdks/js/`](sdks/js/) · [`examples/hello-world/typescript.ts`](examples/hello-world/typescript.ts), [`javascript.js`](examples/hello-world/javascript.js) |
+| **Python (branded)** | `pip install nrouter-sdk` | [`sdks/python/`](sdks/python/) |
+| **TypeScript / JS (branded)** | `npm install @nrouter/sdk` | [`sdks/js/`](sdks/js/) · [`examples/hello-world/typescript.ts`](examples/hello-world/typescript.ts), [`javascript.js`](examples/hello-world/javascript.js) |
 | **Java (branded)** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) · [`examples/hello-world/java.java`](examples/hello-world/java.java) |
 | **Rust (branded)** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) · [`examples/hello-world/rust.rs`](examples/hello-world/rust.rs) |
 | **R (branded)** | `remotes::install_github(..., subdir = "nrouter-sdk/sdks/r")` | [`sdks/r/`](sdks/r/) · [`examples/hello-world/r.R`](examples/hello-world/r.R) |
@@ -159,8 +159,8 @@ nrouter-sdk/
 ├── LANGUAGES.md                     ← every-language guide (any OpenAI-format client)
 ├── spec/nrouter-sdk-spec.json       ← Source of truth (headers, errors, endpoints, Rule #14)
 ├── sdks/
-│   ├── python/                      ← Branded SDK → pip install nroutersdk
-│   ├── js/                          ← Branded SDK → npm install nroutersdk
+│   ├── python/                      ← Branded SDK → pip install nrouter-sdk
+│   ├── js/                          ← Branded SDK → npm install @nrouter/sdk
 │   ├── java/                        ← Branded SDK → Maven ai.nrouter:nrouter-sdk
 │   ├── rust/                        ← Branded SDK → cargo add nrouter
 │   └── r/                           ← Branded SDK → remotes::install_github(...)

@@ -7,23 +7,17 @@ models are published at [nrouter.ai/api/public/models](https://nrouter.ai/api/pu
 
 ## SDKs
 
-> ⚠️ **Status re-measured 2026-08-21.** The 2026-08-02 note this replaces was wrong in
-> two ways: it said `sdks/` held one directory (it holds five — java, js, python, r, rust)
-> and that `pypi.org/pypi/nroutersdk` returned 200. That name has never existed; the 200
-> was `nemoroutersdk`, the retired-brand package still live from 2026-03-31. Measured
-> today: `nrouter-sdk` -> 200 (v2.0.0, published 2026-08-21), `nroutersdk` -> 404,
-> `registry.npmjs.org/@nrouter/sdk` -> 404. Do not restore a status line without a
-> registry check on the day you write it.
-
 | Language | Package | Install | Status |
 |----------|---------|---------|--------|
-| **Python** | `nrouter-sdk` | `pip install nrouter-sdk` | **Published** — v2.0.0 on PyPI (imports as `nroutersdk`) |
-| **cURL** | None needed | Built-in | **Available** — see `examples/curl.sh` |
-| **Node.js** | `@nrouter/sdk` *(reserved name)* | — | **NOT BUILT** — no `sdks/node/`, not on npm |
-| **Go** | `github.com/nrouter/nrouter-go` | — | **NOT BUILT** — no repo, no `sdks/go/` |
-| **Java** | `com.nrouter:sdk` | — | **NOT BUILT** — not on Maven Central |
-| **Ruby** | `nrouter` | — | **NOT BUILT** — no `sdks/ruby/` |
-| **PHP** | `nrouter/sdk` | — | **NOT BUILT** — no `sdks/php/` |
+| **Python** | `nrouter-sdk` | `pip install nrouter-sdk` | **Published** on PyPI — imports as `nroutersdk` |
+| **cURL** | none needed | built in | **Ready** — see `examples/curl.sh` |
+| **JavaScript / TypeScript** | `@nrouter/sdk` | — | Source in `sdks/js/`; npm publish pending |
+| **Java** | — | — | Source in `sdks/java/`; not on Maven Central |
+| **Rust** | — | — | Source in `sdks/rust/`; not on crates.io |
+| **R** | — | — | Source in `sdks/r/`; not on CRAN |
+
+Python is the only language published to a package registry today. The others are
+usable from source in this repository, and ship to their registries as they are ready.
 
 **Until a branded SDK ships for your language, use the stock OpenAI SDK** pointed at
 `https://api.nrouter.ai/v1` — that is the supported path and it is what every file under

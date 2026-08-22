@@ -1,6 +1,6 @@
 # nrouter (Rust)
 
-OpenAI-compatible SDK for the [nRouter](https://nrouter.ai) LLM gateway. A thin wrapper
+SDK for the [nRouter](https://nrouter.ai) LLM gateway — one API key for models across six provider clouds (Alibaba US, OpenAI, AWS Bedrock, Azure Foundry, Google Vertex AI, Anthropic). A thin wrapper
 around the `async-openai` crate — same API surface, pre-configured for nRouter.
 
 ## Install

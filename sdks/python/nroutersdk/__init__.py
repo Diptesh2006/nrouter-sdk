@@ -1,4 +1,4 @@
-"""nRouter SDK — OpenAI-compatible client for the nRouter LLM gateway.
+"""nRouter SDK — one API key for models across six provider clouds.
 
 Usage:
     from nroutersdk import nRouter

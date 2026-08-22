@@ -1,6 +1,6 @@
 # nRouter SDK (Java)
 
-OpenAI-compatible SDK for the [nRouter](https://nrouter.ai) LLM gateway. A thin factory
+SDK for the [nRouter](https://nrouter.ai) LLM gateway — one API key for models across six provider clouds (Alibaba US, OpenAI, AWS Bedrock, Azure Foundry, Google Vertex AI, Anthropic). A thin factory
 around the official `openai-java` client — same API surface, pre-configured for nRouter.
 
 ## Install

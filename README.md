@@ -1,14 +1,8 @@
 # nRouter SDK & Examples
 
-> **Where this lives (corrected 2026-08-02).** This tree hosts the canonical nRouter API
-> examples and SDK code (Rule #14). Its authoring home is **inside `nrouter-ent-ai-hub`**, at
-> `nrouter-brain/nrouter-ent-ai-hub/nrouter-sdk/` — edit it there. The nRouter app repo
-> vendors it at `04-nroutersdk/` as a **`git subtree --squash`** from this repo's `sdk-only`
-> split branch. It is **not** a git submodule — the workspace migrated off submodules on
-> 2026-07-22, so there is no `.gitmodules` entry and `git submodule update --init` does nothing.
-> A plain clone of the monorepo already contains these files.
+SDK and code examples for the [nRouter](https://nrouter.ai) LLM gateway.
 
-OpenAI-compatible SDK and code examples for the [nRouter](https://nrouter.ai) LLM gateway.
+One API key for models across six provider clouds — Alibaba US, OpenAI, AWS Bedrock, Azure Foundry, Google Vertex AI and Anthropic. nRouter serves the OpenAI wire format and Anthropic's Messages API natively, plus embeddings, audio, images and video.
 
 One key. One bill. The live multi-provider catalog. Guardrails, prompt templates, and cost
 tracking built in. Browse the exact models available now at
@@ -96,7 +90,7 @@ example for any of these without first adding the route to the gateway and the s
 
 ## Examples by Language
 
-### SDKs (Direct OpenAI-compatible)
+### SDKs (direct)
 
 | Language | Install | Example |
 |----------|---------|---------|
@@ -162,7 +156,7 @@ This repo's own path is `nrouter-sdk/` (`04-nroutersdk/` is only the name it tak
 ```
 nrouter-sdk/
 ├── README.md                        ← You are here (single reference for all)
-├── LANGUAGES.md                     ← every-language guide (any OpenAI-compatible client)
+├── LANGUAGES.md                     ← every-language guide (any OpenAI-format client)
 ├── spec/nrouter-sdk-spec.json       ← Source of truth (headers, errors, endpoints, Rule #14)
 ├── sdks/
 │   ├── python/                      ← Branded SDK → pip install nroutersdk

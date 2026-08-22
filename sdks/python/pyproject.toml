@@ -3,16 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "nroutersdk"
+name = "nrouter-sdk"
 version = "2.0.0"
-description = "nRouter SDK — OpenAI-compatible client for the nRouter LLM gateway"
+description = "nRouter SDK — one API key for models across six provider clouds. Native OpenAI and Anthropic wire formats, plus embeddings, audio, images and video."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.8"
 authors = [
     { name = "nRouter", email = "hello@nrouter.ai" },
 ]
-keywords = ["llm", "ai", "openai", "nrouter", "router", "gateway", "api"]
+keywords = ["llm", "ai", "nrouter", "gateway", "llm-gateway", "openai", "anthropic", "claude", "bedrock", "vertex-ai", "azure", "qwen", "api"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -34,6 +34,12 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://nrouter.ai"
-Documentation = "https://docs.nrouter.ai"
-Repository = "https://github.com/nRouterAI/nrouter-ent-ai-hub/tree/sdk-only"
-Issues = "https://github.com/nRouterAI/nrouter-ent-ai-hub/issues"
+Documentation = "https://nrouter.ai/docs"
+Repository = "https://github.com/nRouterAI/nrouter-sdk"
+Issues = "https://github.com/nRouterAI/nrouter-sdk/issues"
+
+# Distribution name is `nrouter-sdk`; the import package stays `nroutersdk`.
+# Hatchling cannot infer that from the project name, so name it explicitly —
+# without this the wheel build fails to locate any package.
+[tool.hatch.build.targets.wheel]
+packages = ["nroutersdk"]

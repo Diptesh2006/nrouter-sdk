@@ -19,7 +19,7 @@ function resolveApiKey(apiKey?: string): string {
 type NRouterOptions = ConstructorParameters<typeof OpenAI>[0];
 
 /**
- * OpenAI-compatible client pre-configured for nRouter.
+ * Client pre-configured for nRouter (OpenAI wire format).
  *
  * Supports the same resources as the OpenAI SDK (chat.completions,
  * completions, embeddings, images, models, ...) — nRouter proxies the

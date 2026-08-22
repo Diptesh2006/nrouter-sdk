@@ -2,7 +2,7 @@
 name = "nrouter"
 version = "1.0.0"
 edition = "2021"
-description = "OpenAI-compatible SDK for the nRouter LLM gateway"
+description = "nRouter SDK — one API key for models across six provider clouds"
 license = "MIT"
 homepage = "https://nrouter.ai"
 repository = "https://github.com/nRouterAI/nrouter-ent-ai-hub"

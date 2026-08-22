@@ -1,6 +1,6 @@
 # nrouter (R)
 
-OpenAI-compatible SDK for the [nRouter](https://nrouter.ai) LLM gateway. No official
+SDK for the [nRouter](https://nrouter.ai) LLM gateway — one API key for models across six provider clouds (Alibaba US, OpenAI, AWS Bedrock, Azure Foundry, Google Vertex AI, Anthropic). No official
 OpenAI SDK exists for R, so this package calls the HTTP API directly via `httr`.
 
 ## Install

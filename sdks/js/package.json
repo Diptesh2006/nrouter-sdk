@@ -1,7 +1,7 @@
 {
-  "name": "nroutersdk",
+  "name": "@nrouter/sdk",
   "version": "1.0.0",
-  "description": "nRouter SDK — OpenAI-compatible client for the nRouter LLM gateway",
+  "description": "nRouter SDK — one API key for models across six provider clouds. Native OpenAI and Anthropic wire formats, plus embeddings, audio, images and video.",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,18 +14,30 @@
   "keywords": [
     "llm",
     "ai",
-    "openai",
     "nrouter",
-    "router",
     "gateway",
+    "llm-gateway",
+    "openai",
+    "anthropic",
+    "claude",
+    "bedrock",
+    "vertex-ai",
+    "azure",
+    "qwen",
     "api"
   ],
   "author": "nRouter <hello@nrouter.ai>",
   "homepage": "https://nrouter.ai",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nRouterAI/nrouter-ent-ai-hub.git",
-    "directory": "nrouter-sdk/sdks/js"
+    "url": "https://github.com/nRouterAI/nrouter-sdk.git",
+    "directory": "sdks/js"
+  },
+  "bugs": {
+    "url": "https://github.com/nRouterAI/nrouter-sdk/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "openai": "^4.0.0"

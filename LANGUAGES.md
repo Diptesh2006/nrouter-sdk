@@ -1,6 +1,6 @@
 # nRouter — Every Language Guide
 
-nRouter is **OpenAI-compatible**. Any language with an OpenAI SDK works by changing two things:
+nRouter serves models from six provider clouds behind one API key, and **speaks the OpenAI wire format**. Any language with an OpenAI SDK works by changing two things:
 
 ```
 base_url  →  https://api.nrouter.ai/v1

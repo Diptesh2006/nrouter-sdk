@@ -27,8 +27,11 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+# openai floor is 1.66.0 because the Responses namespace is ABSENT in 1.65.5
+# and PRESENT in 1.66.0 (measured, not inferred). The client exposes
+# `responses`, so anything lower resolves to a package without it.
 dependencies = [
-    "openai>=1.66.0"   # Responses namespace: ABSENT in 1.65.5, PRESENT in 1.66.0,
+    "openai>=1.66.0",
     "httpx>=0.24.1",
 ]
 

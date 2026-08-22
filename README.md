@@ -76,13 +76,13 @@ provider key. This table is derived from `spec/nrouter-sdk-spec.json` › `suppo
 | `/v1/audio/speech` | `audio.speech.create()` | Credits (TTS) |
 | `/v1/audio/transcriptions` | `audio.transcriptions.create()` | Credits (Whisper STT) |
 | `/v1/audio/translations` | `audio.translations.create()` | Credits |
-| `/v1/messages` | `POST /v1/messages` | Anthropic-compatible; Credits |
+| `/v1/messages` | `client.messages.create()` | Anthropic-compatible buffered call; Credits |
 | `/v1/messages/count_tokens` | `POST /v1/messages/count_tokens` | Count before spending |
 | `/v1/responses` | `responses.create()` | OpenAI Responses API |
 | `/v1/videos` | `POST /v1/videos` | Start a video job (billed) |
 | `/v1/videos/{id}` | `GET /v1/videos/{id}` | Poll job status (free) |
 | `/v1/videos/{id}/content` | `GET /v1/videos/{id}/content` | Download the video (free) |
-| `/v1/models` | `models.list()` | Cached 60s |
+| `/v1/models` | `models.list()` | Tenant-filtered model list |
 | `/v1/models/{model_id}` | `models.retrieve()` | Retrieve one model |
 
 ### Not Served By The Gateway

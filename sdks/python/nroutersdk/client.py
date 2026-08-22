@@ -147,6 +147,70 @@ class _nRouterModels:
         return self._c._nrouter_get("/api/models/pricing")
 
 
+class _Messages:
+    """Anthropic-compatible Messages API.
+
+    The buffered call is the reference provider slice. Streaming is refused
+    explicitly until the SDK owns and tests an SSE parser; returning a JSON
+    response while silently ignoring ``stream=True`` would be worse than a
+    loud, actionable refusal.
+    """
+
+    def __init__(self, client) -> None:
+        self._c = client
+
+    def create(
+        self,
+        *,
+        model: str,
+        messages: List[Dict[str, Any]],
+        max_tokens: int,
+        stream: bool = False,
+        **kwargs,
+    ) -> dict:
+        if stream:
+            raise NotImplementedError(
+                "messages.create(stream=True) is not available until the SDK SSE stream contract is tested"
+            )
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "stream": False,
+            **kwargs,
+        }
+        return self._c._nrouter_post("/v1/messages", json=payload)
+
+
+class _AsyncMessages:
+    """Async Anthropic-compatible Messages API."""
+
+    def __init__(self, client) -> None:
+        self._c = client
+
+    async def create(
+        self,
+        *,
+        model: str,
+        messages: List[Dict[str, Any]],
+        max_tokens: int,
+        stream: bool = False,
+        **kwargs,
+    ) -> dict:
+        if stream:
+            raise NotImplementedError(
+                "messages.create(stream=True) is not available until the SDK SSE stream contract is tested"
+            )
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "stream": False,
+            **kwargs,
+        }
+        return await self._c._nrouter_post("/v1/messages", json=payload)
+
+
 # ---------------------------------------------------------------------------
 # Chat wrapper with nRouter features
 # ---------------------------------------------------------------------------
@@ -210,11 +274,11 @@ class nRouter(_OpenAI):
 
     Supported:
         ``chat.completions``, ``completions``, ``embeddings``,
-        ``images``, ``models``
+        ``images``, ``models``, buffered ``messages.create``
 
     nRouter extras:
         ``nrouter.chat()``, ``credits``, ``guardrails``, ``prompts``,
-        ``nrouter_models``, ``last_response``
+        ``nrouter_models``, ``messages``, ``last_response``
 
     Args:
         api_key: nRouter API key (or ``NROUTER_API_KEY`` env var).
@@ -239,6 +303,7 @@ class nRouter(_OpenAI):
     guardrails: _Guardrails
     prompts: _Prompts
     nrouter_models: _nRouterModels
+    messages: _Messages
     nrouter: _nRouterChat
     last_response: Optional[nRouterResponseMeta]
 
@@ -264,6 +329,7 @@ class nRouter(_OpenAI):
         self.guardrails = _Guardrails(self)
         self.prompts = _Prompts(self)
         self.nrouter_models = _nRouterModels(self)
+        self.messages = _Messages(self)
         self.nrouter = _nRouterChat(self)
 
         # Response metadata — updated after every API call
@@ -281,12 +347,12 @@ class nRouter(_OpenAI):
     # -- internal helpers --------------------------------------------------
 
     def _nrouter_get(self, path: str) -> dict:
-        r = httpx.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
+        r = self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
         r.raise_for_status()
         return r.json()
 
     def _nrouter_post(self, path: str, json: Optional[dict] = None) -> dict:
-        r = httpx.post(
+        r = self._client.post(
             f"{self._nrouter_base}{path}",
             headers=self._nrouter_headers,
             json=json,
@@ -320,6 +386,7 @@ class AsyncnRouter(_AsyncOpenAI):
     guardrails: _Guardrails
     prompts: _Prompts
     nrouter_models: _nRouterModels
+    messages: _AsyncMessages
     nrouter: _nRouterChat
     last_response: Optional[nRouterResponseMeta]
 
@@ -344,6 +411,7 @@ class AsyncnRouter(_AsyncOpenAI):
         self.guardrails = _Guardrails(self)
         self.prompts = _Prompts(self)
         self.nrouter_models = _nRouterModels(self)
+        self.messages = _AsyncMessages(self)
         self.nrouter = _nRouterChat(self)
         self.last_response = None
 
@@ -356,13 +424,13 @@ class AsyncnRouter(_AsyncOpenAI):
         if any(k.startswith("x-nr-") for k in headers):
             self.last_response = nRouterResponseMeta.from_headers(headers)
 
-    def _nrouter_get(self, path: str) -> dict:
-        r = httpx.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
+    async def _nrouter_get(self, path: str) -> dict:
+        r = await self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
         r.raise_for_status()
         return r.json()
 
-    def _nrouter_post(self, path: str, json: Optional[dict] = None) -> dict:
-        r = httpx.post(
+    async def _nrouter_post(self, path: str, json: Optional[dict] = None) -> dict:
+        r = await self._client.post(
             f"{self._nrouter_base}{path}",
             headers=self._nrouter_headers,
             json=json,

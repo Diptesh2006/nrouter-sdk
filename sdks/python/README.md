@@ -83,6 +83,21 @@ response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "us
 print(f"Cost: ${client.last_response.cost}")
 ```
 
+### Anthropic Messages (first provider-complete slice)
+```python
+message = client.messages.create(
+    model="claude-sonnet-4-5",
+    messages=[{"role": "user", "content": "Hello!"}],
+    max_tokens=256,
+)
+print(message["content"][0]["text"])
+print(f"Cost: ${client.last_response.cost}")
+```
+
+Buffered Messages calls are supported in both `nRouter` and `AsyncnRouter`. `stream=True` refuses
+explicitly until the branded SDK has a tested SSE parser; use the official Anthropic-compatible
+HTTP endpoint directly if you need streaming today.
+
 ### Node.js
 ```typescript
 import { nRouter } from "@nrouter/sdk";

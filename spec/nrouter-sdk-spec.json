@@ -64,6 +64,20 @@
         "user",
         "budget"
       ]
+    },
+    "x-nr-auth-reason": {
+      "type": "string",
+      "description": "Machine-readable reason a virtual key was refused",
+      "always": false,
+      "values": [
+        "unauthorized",
+        "key_blocked",
+        "key_expired",
+        "key_route_not_allowed",
+        "key_ip_not_allowed",
+        "key_network_policy_invalid",
+        "auth_backend_unavailable"
+      ]
     }
   },
   "errors": {
@@ -102,8 +116,7 @@
         "guardrails",
         "prompts",
         "ab_testing",
-        "credits",
-        "cache"
+        "credits"
       ]
     },
     {
@@ -111,8 +124,7 @@
       "path": "/v1/completions",
       "sdk": "completions.create()",
       "features": [
-        "credits",
-        "cache"
+        "credits"
       ]
     },
     {
@@ -120,8 +132,7 @@
       "path": "/v1/embeddings",
       "sdk": "embeddings.create()",
       "features": [
-        "credits",
-        "cache"
+        "credits"
       ]
     },
     {
@@ -160,17 +171,13 @@
       "method": "GET",
       "path": "/v1/models",
       "sdk": "models.list()",
-      "features": [
-        "cache"
-      ]
+      "features": []
     },
     {
       "method": "GET",
       "path": "/v1/models/{model_id}",
       "sdk": "models.retrieve()",
-      "features": [
-        "cache"
-      ]
+      "features": []
     },
     {
       "method": "POST",
@@ -180,8 +187,7 @@
         "guardrails",
         "prompts",
         "ab_testing",
-        "credits",
-        "cache"
+        "credits"
       ]
     },
     {
@@ -198,8 +204,7 @@
         "guardrails",
         "prompts",
         "ab_testing",
-        "credits",
-        "cache"
+        "credits"
       ]
     },
     {

@@ -78,6 +78,17 @@
         "key_network_policy_invalid",
         "auth_backend_unavailable"
       ]
+    },
+    "x-nr-response-cache": {
+      "type": "string",
+      "description": "nRouter response-cache outcome for this request",
+      "always": false,
+      "values": ["hit", "miss"]
+    },
+    "x-nr-response-cache-age": {
+      "type": "integer",
+      "description": "Age in seconds of a response-cache hit",
+      "always": false
     }
   },
   "errors": {
@@ -116,7 +127,8 @@
         "guardrails",
         "prompts",
         "ab_testing",
-        "credits"
+        "credits",
+        "cache"
       ]
     },
     {
@@ -124,7 +136,8 @@
       "path": "/v1/completions",
       "sdk": "completions.create()",
       "features": [
-        "credits"
+        "credits",
+        "cache"
       ]
     },
     {
@@ -187,7 +200,8 @@
         "guardrails",
         "prompts",
         "ab_testing",
-        "credits"
+        "credits",
+        "cache"
       ]
     },
     {
@@ -204,7 +218,8 @@
         "guardrails",
         "prompts",
         "ab_testing",
-        "credits"
+        "credits",
+        "cache"
       ]
     },
     {
@@ -328,7 +343,8 @@
     },
     "nrouter_cache": {
       "type": "boolean",
-      "description": "Override org cache setting. false = skip cache for this request. Omit to use org default (usually true)."
+      "default": true,
+      "description": "Use nRouter's tenant-isolated response cache for buffered text requests. Set false to force provider egress; streams are never cached."
     }
   }
 }

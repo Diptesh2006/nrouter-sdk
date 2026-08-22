@@ -23,6 +23,9 @@ class nRouterResponseMeta:
         cache_read_tokens: Tokens read from the provider cache.
         cache_write_tokens: Tokens written to the provider cache.
         limit_source: Limit source on a 429 response.
+        response_cache: Executable nRouter response-cache outcome (``hit`` or
+            ``miss``), absent when caching did not participate.
+        response_cache_age: Age in seconds of a response-cache hit.
     """
 
     request_id: Optional[str] = None
@@ -35,6 +38,8 @@ class nRouterResponseMeta:
     cache_read_tokens: Optional[int] = None
     cache_write_tokens: Optional[int] = None
     limit_source: Optional[str] = None
+    response_cache: Optional[str] = None
+    response_cache_age: Optional[int] = None
 
     @classmethod
     def from_headers(cls, headers: dict) -> "nRouterResponseMeta":
@@ -57,4 +62,6 @@ class nRouterResponseMeta:
             cache_read_tokens=optional_int("x-nr-cache-read-tokens"),
             cache_write_tokens=optional_int("x-nr-cache-write-tokens"),
             limit_source=headers.get("x-nr-limit-source"),
+            response_cache=headers.get("x-nr-response-cache"),
+            response_cache_age=optional_int("x-nr-response-cache-age"),
         )

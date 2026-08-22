@@ -1,21 +1,23 @@
 # nRouter SDKs
 
-OpenAI-compatible SDKs for the [nRouter](https://nrouter.ai) LLM gateway. One key, one bill,
+SDKs for the [nRouter](https://nrouter.ai) LLM gateway — one API key for models across six
+provider clouds. One key, one bill,
 the live multi-provider catalog, built-in guardrails, and prompt management. The exact current
 models are published at [nrouter.ai/api/public/models](https://nrouter.ai/api/public/models).
 
 ## SDKs
 
-> ⚠️ **Status corrected 2026-08-02.** This table used to mark six branded SDKs "Ready" with
-> copy-pasteable install commands. Only **Python** exists on disk (`sdks/` contains exactly one
-> directory) and only Python is published. Every other install line 404s. Verified against the
-> registries on 2026-08-02: `pypi.org/pypi/nroutersdk` → 200 (v0.1.0, uploaded 2026-03-31);
-> `registry.npmjs.org/@nrouter/sdk` → 404. Do not restore a "Ready" status without a
-> registry check.
+> ⚠️ **Status re-measured 2026-08-21.** The 2026-08-02 note this replaces was wrong in
+> two ways: it said `sdks/` held one directory (it holds five — java, js, python, r, rust)
+> and that `pypi.org/pypi/nroutersdk` returned 200. That name has never existed; the 200
+> was `nemoroutersdk`, the retired-brand package still live from 2026-03-31. Measured
+> today: `nrouter-sdk` -> 200 (v2.0.0, published 2026-08-21), `nroutersdk` -> 404,
+> `registry.npmjs.org/@nrouter/sdk` -> 404. Do not restore a status line without a
+> registry check on the day you write it.
 
 | Language | Package | Install | Status |
 |----------|---------|---------|--------|
-| **Python** | `nroutersdk` | `pip install nroutersdk` | **Published** — v0.1.0 on PyPI |
+| **Python** | `nrouter-sdk` | `pip install nrouter-sdk` | **Published** — v2.0.0 on PyPI (imports as `nroutersdk`) |
 | **cURL** | None needed | Built-in | **Available** — see `examples/curl.sh` |
 | **Node.js** | `@nrouter/sdk` *(reserved name)* | — | **NOT BUILT** — no `sdks/node/`, not on npm |
 | **Go** | `github.com/nrouter/nrouter-go` | — | **NOT BUILT** — no repo, no `sdks/go/` |
@@ -35,7 +37,7 @@ Every SDK is a thin wrapper around the language's OpenAI SDK. The magic happens 
 spec/nrouter-sdk-spec.json          ← Single source of truth
     ↓
 sdks/
-└── python/                       ← pip install nroutersdk   (the ONLY one that exists)
+└── python/                       ← pip install nrouter-sdk  (the only PUBLISHED one)
 
 (planned, not built: node/ go/ java/ ruby/ php/ — see the status table above)
 ```
@@ -45,7 +47,7 @@ sdks/
 1. **Pre-configured** — `base_url` and `api_key` (from `NROUTER_API_KEY`) set automatically
 2. **Auto-captures metadata** — `last_response` populated from the gateway's canonical `x-nr-*` cost, model, token, request, and limit headers
 3. **Typed errors** — `GuardrailBlockedError`, `CreditError`, `RateLimitError` (not generic 400/402/429)
-4. **Blocks unsupported endpoints** — `audio`, `files`, `fine_tuning`, etc. give clear errors, not confusing 404s
+4. **Blocks unsupported endpoints** — `files`, `fine_tuning`, batches, and other unmounted resources give clear errors, not confusing 404s
 5. **nRouter APIs** — `credits.balance()`, `guardrails.list()`, `prompts.list()`, `nrouterModels.pricing()`
 6. **Prompt template override** — `nrouter_prompt_template_id` + `nrouter_prompt_variables` per request
 
@@ -81,9 +83,11 @@ from nroutersdk import nRouter
 client = nRouter()
 response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "Hello!"}])
 print(f"Cost: ${client.last_response.cost}")
+print(client.last_response.response_cache)      # "hit", "miss", or None
+print(client.last_response.response_cache_age)  # seconds on hits, otherwise None
 ```
 
-### Anthropic Messages (first provider-complete slice)
+### Anthropic Messages
 ```python
 message = client.messages.create(
     model="claude-sonnet-4-5",
@@ -97,6 +101,12 @@ print(f"Cost: ${client.last_response.cost}")
 Buffered Messages calls are supported in both `nRouter` and `AsyncnRouter`. `stream=True` refuses
 explicitly until the branded SDK has a tested SSE parser; use the official Anthropic-compatible
 HTTP endpoint directly if you need streaming today.
+
+The Python client also exposes every mounted OpenAI-compatible namespace: chat completions,
+legacy completions, Responses, embeddings, image generation, speech, transcription, translation,
+model list/retrieve, and the video create/retrieve/download collection. `messages.count_tokens()`
+is available in both sync and async clients. Binary audio/video responses remain bytes; multipart
+audio uploads remain multipart; large JSON message bodies are not truncated by the wrapper.
 
 ### Node.js
 ```typescript

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 from openai import APIStatusError, AsyncOpenAI as _AsyncOpenAI, OpenAI as _OpenAI
@@ -181,6 +182,19 @@ class _Messages:
         }
         return self._c._nrouter_post("/v1/messages", json=payload)
 
+    def count_tokens(
+        self,
+        *,
+        model: str,
+        messages: List[Dict[str, Any]],
+        **kwargs,
+    ) -> dict:
+        """Count input tokens without generating a response."""
+        return self._c._nrouter_post(
+            "/v1/messages/count_tokens",
+            json={"model": model, "messages": messages, **kwargs},
+        )
+
 
 class _AsyncMessages:
     """Async Anthropic-compatible Messages API."""
@@ -209,6 +223,61 @@ class _AsyncMessages:
             **kwargs,
         }
         return await self._c._nrouter_post("/v1/messages", json=payload)
+
+    async def count_tokens(
+        self,
+        *,
+        model: str,
+        messages: List[Dict[str, Any]],
+        **kwargs,
+    ) -> dict:
+        """Count input tokens without generating a response."""
+        return await self._c._nrouter_post(
+            "/v1/messages/count_tokens",
+            json={"model": model, "messages": messages, **kwargs},
+        )
+
+
+class _Videos:
+    """Create, inspect, and download video generation jobs."""
+
+    def __init__(self, client) -> None:
+        self._c = client
+
+    def create(self, *, model: str, prompt: str, **kwargs) -> dict:
+        return self._c._nrouter_post(
+            "/v1/videos",
+            json={"model": model, "prompt": prompt, **kwargs},
+        )
+
+    def retrieve(self, video_id: str) -> dict:
+        return self._c._nrouter_get(f"/v1/videos/{quote(video_id, safe='')}")
+
+    def download_content(self, video_id: str) -> bytes:
+        return self._c._nrouter_get_bytes(
+            f"/v1/videos/{quote(video_id, safe='')}/content"
+        )
+
+
+class _AsyncVideos:
+    """Async video generation collection."""
+
+    def __init__(self, client) -> None:
+        self._c = client
+
+    async def create(self, *, model: str, prompt: str, **kwargs) -> dict:
+        return await self._c._nrouter_post(
+            "/v1/videos",
+            json={"model": model, "prompt": prompt, **kwargs},
+        )
+
+    async def retrieve(self, video_id: str) -> dict:
+        return await self._c._nrouter_get(f"/v1/videos/{quote(video_id, safe='')}")
+
+    async def download_content(self, video_id: str) -> bytes:
+        return await self._c._nrouter_get_bytes(
+            f"/v1/videos/{quote(video_id, safe='')}/content"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +343,8 @@ class nRouter(_OpenAI):
 
     Supported:
         ``chat.completions``, ``completions``, ``embeddings``,
-        ``images``, ``models``, buffered ``messages.create``
+        ``images``, ``audio``, ``responses``, ``models``, ``videos``,
+        buffered ``messages.create`` and ``messages.count_tokens``
 
     nRouter extras:
         ``nrouter.chat()``, ``credits``, ``guardrails``, ``prompts``,
@@ -285,8 +355,7 @@ class nRouter(_OpenAI):
         base_url: Override default ``https://api.nrouter.ai/v1``.
     """
 
-    # Supported: chat, completions, embeddings, images, models, audio, moderations
-    # Block unsupported OpenAI resources (audio/moderations now supported)
+    # Block only resources the Rust gateway does not mount.
     files = UNSUPPORTED["files"]  # type: ignore[assignment]
     fine_tuning = UNSUPPORTED["fine_tuning"]  # type: ignore[assignment]
     batches = UNSUPPORTED["batches"]  # type: ignore[assignment]
@@ -296,7 +365,6 @@ class nRouter(_OpenAI):
     containers = UNSUPPORTED["containers"]  # type: ignore[assignment]
     conversations = UNSUPPORTED["conversations"]  # type: ignore[assignment]
     evals = UNSUPPORTED["evals"]  # type: ignore[assignment]
-    responses = UNSUPPORTED["responses"]  # type: ignore[assignment]
     webhooks = UNSUPPORTED["webhooks"]  # type: ignore[assignment]
 
     credits: _Credits
@@ -304,6 +372,7 @@ class nRouter(_OpenAI):
     prompts: _Prompts
     nrouter_models: _nRouterModels
     messages: _Messages
+    videos: _Videos
     nrouter: _nRouterChat
     last_response: Optional[nRouterResponseMeta]
 
@@ -330,6 +399,7 @@ class nRouter(_OpenAI):
         self.prompts = _Prompts(self)
         self.nrouter_models = _nRouterModels(self)
         self.messages = _Messages(self)
+        self.videos = _Videos(self)
         self.nrouter = _nRouterChat(self)
 
         # Response metadata — updated after every API call
@@ -360,6 +430,11 @@ class nRouter(_OpenAI):
         r.raise_for_status()
         return r.json()
 
+    def _nrouter_get_bytes(self, path: str) -> bytes:
+        r = self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
+        r.raise_for_status()
+        return r.content
+
 
 # ---------------------------------------------------------------------------
 # Async client
@@ -368,8 +443,7 @@ class nRouter(_OpenAI):
 class AsyncnRouter(_AsyncOpenAI):
     """Async version of :class:`nRouter`. Same API surface."""
 
-    # Supported: chat, completions, embeddings, images, models, audio, moderations
-    # Block unsupported OpenAI resources (audio/moderations now supported)
+    # Block only resources the Rust gateway does not mount.
     files = UNSUPPORTED["files"]  # type: ignore[assignment]
     fine_tuning = UNSUPPORTED["fine_tuning"]  # type: ignore[assignment]
     batches = UNSUPPORTED["batches"]  # type: ignore[assignment]
@@ -379,7 +453,6 @@ class AsyncnRouter(_AsyncOpenAI):
     containers = UNSUPPORTED["containers"]  # type: ignore[assignment]
     conversations = UNSUPPORTED["conversations"]  # type: ignore[assignment]
     evals = UNSUPPORTED["evals"]  # type: ignore[assignment]
-    responses = UNSUPPORTED["responses"]  # type: ignore[assignment]
     webhooks = UNSUPPORTED["webhooks"]  # type: ignore[assignment]
 
     credits: _Credits
@@ -387,6 +460,7 @@ class AsyncnRouter(_AsyncOpenAI):
     prompts: _Prompts
     nrouter_models: _nRouterModels
     messages: _AsyncMessages
+    videos: _AsyncVideos
     nrouter: _nRouterChat
     last_response: Optional[nRouterResponseMeta]
 
@@ -412,6 +486,7 @@ class AsyncnRouter(_AsyncOpenAI):
         self.prompts = _Prompts(self)
         self.nrouter_models = _nRouterModels(self)
         self.messages = _AsyncMessages(self)
+        self.videos = _AsyncVideos(self)
         self.nrouter = _nRouterChat(self)
         self.last_response = None
 
@@ -437,3 +512,8 @@ class AsyncnRouter(_AsyncOpenAI):
         )
         r.raise_for_status()
         return r.json()
+
+    async def _nrouter_get_bytes(self, path: str) -> bytes:
+        r = await self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
+        r.raise_for_status()
+        return r.content

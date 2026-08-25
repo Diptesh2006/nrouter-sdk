@@ -10,9 +10,14 @@ import httpx
 from openai import APIStatusError, AsyncOpenAI as _AsyncOpenAI, OpenAI as _OpenAI
 
 from nroutersdk._errors import (
+    nRouterAuthenticationError,
     nRouterCreditError,
+    nRouterError,
     nRouterGuardrailBlockedError,
+    nRouterNotFoundError,
     nRouterRateLimitError,
+    nRouterRequestError,
+    nRouterServiceError,
 )
 from nroutersdk._response import nRouterResponseMeta
 from nroutersdk._unsupported import UNSUPPORTED
@@ -20,6 +25,13 @@ from nroutersdk._unsupported import UNSUPPORTED
 _DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 _ENV_KEY = "NROUTER_API_KEY"
 _KEY_PREFIX = "sk-nrouter-"
+
+#: Default model for the convenience wrapper.
+#:
+#: Kept in ONE place because it was previously a literal in a keyword default,
+#: which is how it drifted to `gpt-4o` and stayed there. Any surface that needs
+#: a default imports this name.
+DEFAULT_MODEL = "gpt-5.5"
 
 
 def _resolve_api_key(api_key: Optional[str]) -> str:
@@ -37,104 +49,88 @@ def _resolve_api_key(api_key: Optional[str]) -> str:
 # ---------------------------------------------------------------------------
 
 def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
-    """Re-raise as a typed nRouter error if the response matches known codes."""
+    """Re-raise an OpenAI ``APIStatusError`` as the matching nRouter error.
+
+    THE ENVELOPE. Measured against a live gateway on 2026-08-25, every gateway
+    error body is built by `GatewayError::into_response` and looks like::
+
+        {"error": {"type": "gateway_error", "message": "unknown model: gpt-9"}}
+
+    Two things follow, and the pre-2.1.0 client got both wrong. There is no
+    top-level ``code`` key, and the top-level ``error`` is an OBJECT, not a
+    string. That client read ``body["code"]`` (always absent, so no branch ever
+    matched) and ``body["error"]`` as the message (a dict, so a customer's log
+    would have received a stringified mapping). It also read ``type``, which is
+    the constant ``"gateway_error"`` on every single error and therefore
+    classifies nothing.
+
+    Classification is by STATUS plus the message, because status is what the
+    gateway actually varies. The two 400s are separated on the message because
+    that is the only signal present: a guardrail block and a malformed body
+    share a status code.
+
+    Returning ``None`` leaves the original ``APIStatusError`` to propagate,
+    which is correct for anything outside this table — reclassifying an
+    unrecognised failure would assert knowledge we do not have.
+    """
     try:
         body = err.response.json()
     except Exception:
         return
+    if not isinstance(body, dict):
+        return
 
-    code = body.get("code", "")
-    message = body.get("error", str(err))
-    request_id = body.get("request_id")
+    error = body.get("error")
+    if isinstance(error, dict):
+        message = error.get("message") or str(err)
+    elif isinstance(error, str):
+        message = error
+    else:
+        message = str(err)
 
-    if err.status_code == 400 and code == "guardrail_blocked":
-        raise nRouterGuardrailBlockedError(
-            message, request_id=request_id
+    headers = err.response.headers
+    request_id = headers.get("x-nr-request-id") or body.get("request_id")
+    status = err.status_code
+
+    if status == 400:
+        if "guardrail" in message.lower():
+            raise nRouterGuardrailBlockedError(message, request_id=request_id) from err
+        raise nRouterRequestError(message, request_id=request_id) from err
+
+    if status == 401:
+        raise nRouterAuthenticationError(
+            message,
+            request_id=request_id,
+            auth_reason=headers.get("x-nr-auth-reason"),
         ) from err
 
-    if err.status_code == 402 and code == "insufficient_credits":
+    if status == 402:
         raise nRouterCreditError(message, request_id=request_id) from err
 
-    if err.status_code == 429:
-        limit_type = "tpm" if code == "tpm_limit_exceeded" else "rpm"
+    if status == 404:
+        raise nRouterNotFoundError(message, request_id=request_id) from err
+
+    if status == 429:
+        retry_after = headers.get("retry-after")
         raise nRouterRateLimitError(
-            message, request_id=request_id, code=code, limit_type=limit_type
+            message,
+            request_id=request_id,
+            # GATE 7: read the source the gateway measured. `None` when it could
+            # not attribute the refusal — never a guessed "rpm".
+            limit_source=headers.get("x-nr-limit-source"),
+            retry_after=int(retry_after) if retry_after and retry_after.isdigit() else None,
         ) from err
+
+    if status == 503:
+        raise nRouterServiceError(message, request_id=request_id) from err
 
 
 # ---------------------------------------------------------------------------
 # nRouter-specific resource namespaces
 # ---------------------------------------------------------------------------
 
-class _Credits:
-    """Check credit balance and transaction history."""
-
-    def __init__(self, client) -> None:
-        self._c = client
-
-    def balance(self) -> dict:
-        """Return current credit balance, reserved amount, and available credits."""
-        return self._c._nrouter_get("/api/credits/balance")
-
-    def history(self, limit: int = 50, offset: int = 0) -> dict:
-        """Return credit transaction history."""
-        return self._c._nrouter_get(f"/api/credits/history?limit={limit}&offset={offset}")
-
-
-class _Guardrails:
-    """View and inspect guardrails on your organization.
-
-    Guardrails are applied automatically to every chat completion request.
-    You cannot override them per-request — they are configured in the dashboard.
-    """
-
-    def __init__(self, client) -> None:
-        self._c = client
-
-    def list(self) -> dict:
-        """List all guardrails configured for your org."""
-        return self._c._nrouter_get("/nrouter/guardrail/list")
-
-    def get(self, guardrail_id: str) -> dict:
-        """Get full config for a specific guardrail."""
-        return self._c._nrouter_get(f"/nrouter/guardrail/info?guardrail_id={guardrail_id}")
-
-    def logs(self, limit: int = 50) -> dict:
-        """Get guardrail execution logs."""
-        return self._c._nrouter_get(f"/nrouter/guardrail/logs?limit={limit}")
-
-
-class _Prompts:
-    """View and select prompt templates for your organization.
-
-    Override which template to use per-request via ``client.nrouter.chat()``
-    or ``extra_body={"nrouter_prompt_template_id": "..."}``
-    """
-
-    def __init__(self, client) -> None:
-        self._c = client
-
-    def list(self) -> dict:
-        """List all prompt templates."""
-        return self._c._nrouter_get("/nrouter/prompt/list")
-
-    def get(self, prompt_id: str) -> dict:
-        """Get full template details including all versions."""
-        return self._c._nrouter_get(f"/nrouter/prompt/info?prompt_id={prompt_id}")
-
-    def versions(self, prompt_id: str) -> dict:
-        """List all versions of a prompt template."""
-        return self._c._nrouter_get(f"/nrouter/prompt/info?prompt_id={prompt_id}")
-
-    def diff(self, version_id_1: str, version_id_2: str) -> dict:
-        """Compare two prompt versions side by side."""
-        return self._c._nrouter_get(
-            f"/nrouter/prompt/version/diff?v1={version_id_1}&v2={version_id_2}"
-        )
-
-
 class _nRouterModels:
-    """List available models and pricing."""
+    """List the models this key can reach."""
 
     def __init__(self, client) -> None:
         self._c = client
@@ -142,10 +138,6 @@ class _nRouterModels:
     def list(self) -> dict:
         """List all models available through nRouter."""
         return self._c._nrouter_get("/v1/models")
-
-    def pricing(self) -> dict:
-        """Get per-model pricing information."""
-        return self._c._nrouter_get("/api/models/pricing")
 
 
 class _Messages:
@@ -293,7 +285,7 @@ class _nRouterChat:
     def chat(
         self,
         messages: List[Dict[str, Any]],
-        model: str = "gpt-4o",
+        model: str = DEFAULT_MODEL,
         *,
         prompt_template_id: Optional[str] = None,
         prompt_variables: Optional[Dict[str, str]] = None,
@@ -347,8 +339,8 @@ class nRouter(_OpenAI):
         buffered ``messages.create`` and ``messages.count_tokens``
 
     nRouter extras:
-        ``nrouter.chat()``, ``credits``, ``guardrails``, ``prompts``,
-        ``nrouter_models``, ``messages``, ``last_response``
+        ``nrouter.chat()``, ``nrouter_models``, ``messages``, ``videos``,
+        ``last_response``
 
     Args:
         api_key: nRouter API key (or ``NROUTER_API_KEY`` env var).
@@ -367,9 +359,6 @@ class nRouter(_OpenAI):
     evals = UNSUPPORTED["evals"]  # type: ignore[assignment]
     webhooks = UNSUPPORTED["webhooks"]  # type: ignore[assignment]
 
-    credits: _Credits
-    guardrails: _Guardrails
-    prompts: _Prompts
     nrouter_models: _nRouterModels
     messages: _Messages
     videos: _Videos
@@ -394,9 +383,6 @@ class nRouter(_OpenAI):
         }
 
         # Attach nRouter namespaces
-        self.credits = _Credits(self)
-        self.guardrails = _Guardrails(self)
-        self.prompts = _Prompts(self)
         self.nrouter_models = _nRouterModels(self)
         self.messages = _Messages(self)
         self.videos = _Videos(self)
@@ -414,11 +400,46 @@ class nRouter(_OpenAI):
         if any(k.startswith("x-nr-") for k in headers):
             self.last_response = nRouterResponseMeta.from_headers(headers)
 
+
+    # -- error typing ------------------------------------------------------
+
+    def _make_status_error(self, err_msg: str, *, body: object, response: httpx.Response):
+        """Return the nRouter error for a failed response, else OpenAI's.
+
+        THIS IS THE WIRING. Until 2.1.0 `_maybe_raise_nrouter_error` existed,
+        was documented, was exported through the error classes — and was called
+        from nowhere at all. Every typed error the README promised was
+        unreachable; customers got a raw `openai.APIStatusError` and had to
+        string-match it.
+
+        `_make_status_error` is the correct seam rather than an httpx event
+        hook: the OpenAI SDK exhausts its own retries BEFORE constructing the
+        error, so a 429 that succeeds on retry never lands here, while a hook
+        would raise on the first attempt and defeat the retry entirely.
+        """
+        try:
+            _maybe_raise_nrouter_error(super()._make_status_error(err_msg, body=body, response=response))
+        except nRouterError as typed:
+            return typed
+        return super()._make_status_error(err_msg, body=body, response=response)
+
     # -- internal helpers --------------------------------------------------
+
+    def _raise_for_status(self, r: httpx.Response) -> None:
+        """Type a failure from the nRouter-native helpers.
+
+        These calls bypass the OpenAI SDK's transport, so nothing else converts
+        their failures. Before 2.1.0 they raised a bare
+        `httpx.HTTPStatusError`, which is neither an OpenAI error nor an
+        nRouter one — a third exception type from the same client object.
+        """
+        if r.is_success:
+            return
+        raise self._make_status_error_from_response(r)
 
     def _nrouter_get(self, path: str) -> dict:
         r = self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
-        r.raise_for_status()
+        self._raise_for_status(r)
         return r.json()
 
     def _nrouter_post(self, path: str, json: Optional[dict] = None) -> dict:
@@ -427,12 +448,12 @@ class nRouter(_OpenAI):
             headers=self._nrouter_headers,
             json=json,
         )
-        r.raise_for_status()
+        self._raise_for_status(r)
         return r.json()
 
     def _nrouter_get_bytes(self, path: str) -> bytes:
         r = self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
-        r.raise_for_status()
+        self._raise_for_status(r)
         return r.content
 
 
@@ -455,9 +476,6 @@ class AsyncnRouter(_AsyncOpenAI):
     evals = UNSUPPORTED["evals"]  # type: ignore[assignment]
     webhooks = UNSUPPORTED["webhooks"]  # type: ignore[assignment]
 
-    credits: _Credits
-    guardrails: _Guardrails
-    prompts: _Prompts
     nrouter_models: _nRouterModels
     messages: _AsyncMessages
     videos: _AsyncVideos
@@ -481,9 +499,6 @@ class AsyncnRouter(_AsyncOpenAI):
             "Content-Type": "application/json",
         }
 
-        self.credits = _Credits(self)
-        self.guardrails = _Guardrails(self)
-        self.prompts = _Prompts(self)
         self.nrouter_models = _nRouterModels(self)
         self.messages = _AsyncMessages(self)
         self.videos = _AsyncVideos(self)
@@ -499,9 +514,38 @@ class AsyncnRouter(_AsyncOpenAI):
         if any(k.startswith("x-nr-") for k in headers):
             self.last_response = nRouterResponseMeta.from_headers(headers)
 
+
+    # -- error typing ------------------------------------------------------
+
+    def _make_status_error(self, err_msg: str, *, body: object, response: httpx.Response):
+        """Return the nRouter error for a failed response, else OpenAI's.
+
+        THIS IS THE WIRING. Until 2.1.0 `_maybe_raise_nrouter_error` existed,
+        was documented, was exported through the error classes — and was called
+        from nowhere at all. Every typed error the README promised was
+        unreachable; customers got a raw `openai.APIStatusError` and had to
+        string-match it.
+
+        `_make_status_error` is the correct seam rather than an httpx event
+        hook: the OpenAI SDK exhausts its own retries BEFORE constructing the
+        error, so a 429 that succeeds on retry never lands here, while a hook
+        would raise on the first attempt and defeat the retry entirely.
+        """
+        try:
+            _maybe_raise_nrouter_error(super()._make_status_error(err_msg, body=body, response=response))
+        except nRouterError as typed:
+            return typed
+        return super()._make_status_error(err_msg, body=body, response=response)
+
+    def _raise_for_status(self, r: httpx.Response) -> None:
+        """See `nRouter._raise_for_status`."""
+        if r.is_success:
+            return
+        raise self._make_status_error_from_response(r)
+
     async def _nrouter_get(self, path: str) -> dict:
         r = await self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
-        r.raise_for_status()
+        self._raise_for_status(r)
         return r.json()
 
     async def _nrouter_post(self, path: str, json: Optional[dict] = None) -> dict:
@@ -510,10 +554,10 @@ class AsyncnRouter(_AsyncOpenAI):
             headers=self._nrouter_headers,
             json=json,
         )
-        r.raise_for_status()
+        self._raise_for_status(r)
         return r.json()
 
     async def _nrouter_get_bytes(self, path: str) -> bytes:
         r = await self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
-        r.raise_for_status()
+        self._raise_for_status(r)
         return r.content

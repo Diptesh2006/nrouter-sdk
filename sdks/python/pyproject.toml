@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nrouter-sdk"
-version = "2.0.2"
+version = "2.1.0"
 description = "nRouter SDK — one API key for models across six provider clouds. Native OpenAI and Anthropic wire formats, plus embeddings, audio, images and video."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 authors = [
     { name = "nRouter", email = "hello@nrouter.ai" },
 ]
@@ -18,21 +18,34 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-# openai floor is 1.66.0 because the Responses namespace is ABSENT in 1.65.5
-# and PRESENT in 1.66.0 (measured, not inferred). The client exposes
-# `responses`, so anything lower resolves to a package without it.
+# MEASURED 2026-08-25. The previous floors were `openai>=1.66.0` and
+# `httpx>=0.24.1` against `requires-python = ">=3.8"`, and that combination was
+# incoherent: openai 3.x itself requires Python >=3.10, so on 3.8 or 3.9 pip
+# resolved SILENTLY down to an openai from two years ago and the customer got a
+# client this SDK was never tested against. Claiming 3.8 support was the defect,
+# not the openai floor.
+#
+# The floor is now the version this SDK is tested against, with an upper bound.
+# `nRouter._make_status_error` and the `_client.event_hooks` metadata capture
+# both reach into OpenAI-SDK internals, so a major bump is a real break and must
+# be an explicit, tested release rather than something a customer discovers.
 dependencies = [
-    "openai>=1.66.0",
-    "httpx>=0.24.1",
+    "openai>=3.3.1,<4",
+    "httpx>=0.28.1,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
 ]
 
 [project.urls]

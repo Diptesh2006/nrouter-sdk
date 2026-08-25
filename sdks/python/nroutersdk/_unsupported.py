@@ -25,8 +25,18 @@ class _Blocked:
 
 
 # ---------------------------------------------------------------------------
-# Pre-built blockers for unsupported OpenAI resources.
-# Audio, moderations, and rerank are NOW SUPPORTED — removed from blockers.
+# Pre-built blockers for OpenAI resources the Rust gateway does not mount.
+#
+# Derive the served set, never retype it:
+#   grep -oE '"/v1[^"]*"' nrouter-rust-gateway/src/http/routes.rs | sort -u
+#
+# `responses` was in this table until 2.1.0, telling customers the Responses API
+# was unavailable. It is mounted at `/v1/responses`, it was never actually
+# applied to the class (the attribute was declared and the blocker ignored), and
+# it answered 200 when measured on 2026-08-25. Audio, images, embeddings and
+# videos are all served and are correctly absent here. `moderations` and
+# `rerank` are NOT served and never were — the note claiming they were
+# "NOW SUPPORTED" was wrong in both directions.
 # ---------------------------------------------------------------------------
 
 UNSUPPORTED = {
@@ -67,11 +77,6 @@ UNSUPPORTED = {
     "evals": _Blocked(
         "client.evals",
         "Evals API is not available via nRouter.",
-    ),
-    "responses": _Blocked(
-        "client.responses",
-        "Responses API is not available via nRouter. "
-        "Use client.chat.completions.create() instead.",
     ),
     "webhooks": _Blocked(
         "client.webhooks",

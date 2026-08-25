@@ -14,17 +14,16 @@ from crewai import Agent, Task, Crew
 # nRouter SDK for guardrails, credits, prompts.
 # CrewAI uses env vars (OPENAI_API_KEY/OPENAI_API_BASE) for LLM calls.
 client = nRouter()  # reads NROUTER_API_KEY from env
+MODEL = "gpt-5.5"
 
-# ━━━ 1. SEE WHAT'S PROTECTING YOUR AGENTS ━━━━━━━━━━━━━━━━━
+# ━━━ 1. SEE WHAT THIS KEY CAN REACH ━━━━━━━━━━━━━━━━━━━━━━━
 
-guardrails = client.guardrails.list()
-print("Guardrails protecting all agents:")
-for g in guardrails.get("data", []):
-    if g.get("enabled"):
-        print(f"  • {g['guardrail_name']} ({g['provider']})")
+# Scoped to your key: exactly the models you may call.
+print("Models:", [m.id for m in client.models.list().data])
 
-balance = client.credits.balance()
-print(f"Credits: ${balance.get('available', 0):.2f}")
+# Guardrails, prompt templates and budgets are configured in the dashboard and
+# applied server-side to every request. There is deliberately no client call to
+# list or override them — a request cannot opt out of its own org's policy.
 
 # ━━━ 2. MULTI-MODEL AGENTS (each can use a different model) ━
 
@@ -33,7 +32,7 @@ researcher = Agent(
     role="Researcher",
     goal="Find accurate information about a topic",
     backstory="You are an expert researcher with attention to detail.",
-    llm="claude-sonnet-4-20250514",
+    llm="claude-sonnet-4-5",
     verbose=True,
 )
 
@@ -42,7 +41,7 @@ writer = Agent(
     role="Writer",
     goal="Write clear, engaging content",
     backstory="You are a skilled technical writer.",
-    llm="gpt-4o",
+    llm="gpt-5.5",
     verbose=True,
 )
 
@@ -84,8 +83,26 @@ crew = Crew(agents=[researcher, writer], tasks=[research_task, write_task], verb
 result = crew.kickoff()
 print(f"\nResult: {result}")
 
-# ━━━ 4. CHECK COST FOR THE ENTIRE CREW RUN ━━━━━━━━━━━━━━━━
+# ━━━ 4. WHAT THAT COST ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-new_balance = client.credits.balance()
-print(f"\nCrew cost: ${balance.get('available', 0) - new_balance.get('available', 0):.4f}")
-print(f"Remaining: ${new_balance.get('available', 0):.2f}")
+# Cost is reported per request on the response itself, not polled from a
+# balance endpoint. Call through the nRouter client to read it.
+client.chat.completions.create(
+    model=MODEL,
+    messages=[{"role": "user", "content": "One-line summary of the run."}],
+    max_tokens=256,
+)
+
+meta = client.last_response
+print(f"\nrequest  {meta.request_id}")
+print(f"tokens   {meta.input_tokens} in / {meta.output_tokens} out")
+
+# `cost` is None when the model is unpriced — nRouter never reports a
+# confident $0. Always branch on `cost_status`.
+if meta.cost_status == "exact":
+    print(f"cost     ${meta.cost:.6f}")
+else:
+    print(f"cost     unpriced ({meta.cost_status})")
+
+# Balances and spend history live in the dashboard at https://app.nrouter.ai —
+# they are org-scoped billing data, not inference.

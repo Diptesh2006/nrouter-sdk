@@ -40,9 +40,9 @@ sdks/
 
 1. **Pre-configured** — `base_url` and `api_key` (from `NROUTER_API_KEY`) set automatically
 2. **Auto-captures metadata** — `last_response` populated from the gateway's canonical `x-nr-*` cost, model, token, request, and limit headers
-3. **Typed errors** — `GuardrailBlockedError`, `CreditError`, `RateLimitError` (not generic 400/402/429)
+3. **Typed errors** — `nRouterGuardrailBlockedError`, `nRouterCreditError`, `nRouterRateLimitError`, `nRouterAuthenticationError`, `nRouterNotFoundError`, `nRouterRequestError`, `nRouterServiceError` (not a generic 400/401/402/404/429/503)
 4. **Blocks unsupported endpoints** — `files`, `fine_tuning`, batches, and other unmounted resources give clear errors, not confusing 404s
-5. **nRouter APIs** — `credits.balance()`, `guardrails.list()`, `prompts.list()`, `nrouterModels.pricing()`
+5. **Anthropic wire on the same key** — `messages.create()` and `messages.count_tokens()`
 6. **Prompt template override** — `nrouter_prompt_template_id` + `nrouter_prompt_variables` per request
 
 ## Keeping SDKs in Sync
@@ -53,9 +53,8 @@ All SDKs are driven by `spec/nrouter-sdk-spec.json`:
 {
   "version": "2.0.0",
   "response_headers": { "x-nr-request-cost": { "type": "float" }, ... },
-  "errors": { "guardrail_blocked": { "http": 400, "class": "GuardrailBlockedError" }, ... },
-  "unsupported_endpoints": { "audio": "...", "files": "...", ... },
-  "nrouter_apis": { "credits": { "balance": "/api/credits/balance" }, ... }
+  "errors": { "guardrail_blocked": { "http": 400, "class": "nRouterGuardrailBlockedError" }, ... },
+  "unsupported_endpoints": { "files": "...", "fine_tuning": "...", ... }
 }
 ```
 
@@ -75,7 +74,7 @@ SDKs that have **not** been built — do not paste them into a customer doc.
 ```python
 from nroutersdk import nRouter
 client = nRouter()
-response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "Hello!"}])
+response = client.chat.completions.create(model="gpt-5.5", messages=[{"role": "user", "content": "Hello!"}])
 print(f"Cost: ${client.last_response.cost}")
 print(client.last_response.response_cache)      # "hit", "miss", or None
 print(client.last_response.response_cache_age)  # seconds on hits, otherwise None
@@ -106,7 +105,7 @@ audio uploads remain multipart; large JSON message bodies are not truncated by t
 ```typescript
 import { nRouter } from "@nrouter/sdk";
 const client = new nRouter();
-const res = await client.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: "Hello!" }] });
+const res = await client.chat.completions.create({ model: "gpt-5.5", messages: [{ role: "user", content: "Hello!" }] });
 ```
 
 ### Go
@@ -119,7 +118,7 @@ fmt.Println(client.LastResponse.Cost)
 ### Ruby
 ```ruby
 client = nRouter::Client.new
-response = client.chat(parameters: { model: "gpt-4o", messages: [{ role: "user", content: "Hello!" }] })
+response = client.chat(parameters: { model: "gpt-5.5", messages: [{ role: "user", content: "Hello!" }] })
 ```
 
 ### PHP
@@ -139,7 +138,7 @@ ChatCompletion resp = nrouter.openai().chat().completions().create(...);
 curl https://api.nrouter.ai/v1/chat/completions \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"gpt-5.5","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 ---
@@ -213,7 +212,7 @@ curl https://api.nrouter.ai/v1/chat/completions \
 | New model added | Just use `model="new-model-name"` — no SDK change |
 | Guardrail config change | Dashboard config, not SDK |
 | Prompt template change | Dashboard config, not SDK |
-| Pricing change | Server-side, returned via `nrouterModels.pricing()` |
+| Pricing change | Server-side; per-request cost arrives on `x-nr-request-cost` |
 | Rate limit change | Server-side enforcement |
 | New provider key | Server-side routing |
 

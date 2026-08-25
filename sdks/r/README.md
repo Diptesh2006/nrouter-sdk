@@ -17,7 +17,7 @@ library(nrouter)
 
 response <- nrouter_chat(
   messages = list(list(role = "user", content = "Hello!")),
-  model = "claude-sonnet-4-20250514"
+  model = "claude-sonnet-4-5"
 ) # reads NROUTER_API_KEY from env
 
 cat(response$choices[[1]]$message$content)

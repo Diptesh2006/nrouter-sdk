@@ -13,43 +13,28 @@ from langchain_core.tools import tool
 # nRouter SDK handles auth, base URL, and nRouter-specific APIs.
 # LangChain's ChatOpenAI handles LLM calls pointed at nRouter.
 client = nRouter()  # reads NROUTER_API_KEY from env
+MODEL = "gpt-5.5"
 NROUTER_BASE = "https://api.nrouter.ai"
 NROUTER_KEY = os.environ["NROUTER_API_KEY"]
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 1. CHECK WHAT'S PROTECTING YOUR REQUESTS
+# 1. SEE WHAT THIS KEY CAN REACH
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# See active guardrails before you start
-guardrails = client.guardrails.list()
-print("Active guardrails:")
-for g in guardrails.get("data", []):
-    if g.get("enabled"):
-        print(f"  • {g['guardrail_name']} ({g['provider']}) — {g['mode']}/{g['action']}")
-# Output:
-#   • pii-detection (presidio) — pre_call/block
-#   • prompt-injection (prompt_injection) — pre_call/block
-#   • keyword-filter (keyword) — pre_call/block
+# The model list is scoped to your key: you see exactly what you may call.
+for model in client.models.list().data:
+    print(f"  • {model.id}")
 
-# See available prompt templates
-prompts = client.prompts.list()
-print("\nPrompt templates:")
-for p in prompts.get("data", []):
-    print(f"  • {p['name']} (v{p.get('active_version_number', '?')})")
-# Output:
-#   • summarizer (v3) — variables: language, max_length
-#   • customer-support (v1) — variables: product_name, tone
-
-# Check credit balance
-balance = client.credits.balance()
-print(f"\nCredits: ${balance.get('available', 0):.2f}")
+# Guardrails, prompt templates and budgets are configured in the dashboard and
+# applied server-side to every request. There is deliberately no client call to
+# list or override them — a request cannot opt out of its own org's policy.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 2. LANGCHAIN WITH GUARDRAILS (automatic — zero code)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 llm = ChatOpenAI(
-    model="claude-sonnet-4-20250514",
+    model=MODEL,
     api_key=NROUTER_KEY,
     base_url=f"{NROUTER_BASE}/v1",
 )
@@ -76,7 +61,7 @@ except (nRouterGuardrailBlockedError, BadRequestError) as e:
 # Use a nRouter prompt template — injected server-side before the model sees it
 # The template's system prompt wraps your message automatically
 llm_with_prompt = ChatOpenAI(
-    model="gpt-4o",
+    model="gpt-5.5",
     api_key=NROUTER_KEY,
     base_url=f"{NROUTER_BASE}/v1",
     model_kwargs={
@@ -94,7 +79,7 @@ print(f"\nSummarized (Spanish): {response.content}")
 # By default, ALL org-enabled guardrails apply automatically.
 # Pass nrouter_guardrail_ids to run only specific guardrails on this request.
 llm_selective_guardrails = ChatOpenAI(
-    model="gpt-4o",
+    model="gpt-5.5",
     api_key=NROUTER_KEY,
     base_url=f"{NROUTER_BASE}/v1",
     model_kwargs={
@@ -105,7 +90,7 @@ llm_selective_guardrails = ChatOpenAI(
 # Disable cache for a single request
 # Cache is enabled by default. Pass nrouter_cache: False for a fresh response.
 llm_no_cache = ChatOpenAI(
-    model="gpt-4o",
+    model="gpt-5.5",
     api_key=NROUTER_KEY,
     base_url=f"{NROUTER_BASE}/v1",
     model_kwargs={
@@ -189,19 +174,31 @@ print(f"\nRAG answer: {answer}")
 # the guardrail blocks before retrieval even starts.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 8. CHECK COST AFTER RUNNING
+# 8. WHAT THAT COST
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-new_balance = client.credits.balance()
-spent = balance.get("available", 0) - new_balance.get("available", 0)
-print(f"\nCredits spent this session: ${spent:.4f}")
-print(f"Remaining: ${new_balance.get('available', 0):.2f}")
+# Cost is reported per request on the response itself, not polled from a
+# balance endpoint. Call through the nRouter client to read it.
+client.chat.completions.create(
+    model=MODEL,
+    messages=[{"role": "user", "content": "Summarise our safety posture."}],
+    max_tokens=512,
+)
 
-# Check guardrail execution logs
-logs = client.guardrails.logs(limit=5)
-print("\nRecent guardrail activity:")
-for log in logs.get("data", []):
-    print(f"  {log.get('created_at')} | {log.get('guardrail_name')} | {log.get('result')}")
+meta = client.last_response
+print(f"\nrequest  {meta.request_id}")
+print(f"model    {meta.model}")
+print(f"tokens   {meta.input_tokens} in / {meta.output_tokens} out")
+
+# `cost` is None when the model is unpriced — nRouter never reports a
+# confident $0. Always branch on `cost_status`.
+if meta.cost_status == "exact":
+    print(f"cost     ${meta.cost:.6f}")
+else:
+    print(f"cost     unpriced ({meta.cost_status})")
+
+# Balances, spend history and guardrail logs live in the dashboard at
+# https://app.nrouter.ai — they are org-scoped data, not inference.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # WHY NROUTER + LANGCHAIN?

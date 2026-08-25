@@ -11,7 +11,6 @@ import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.*;
 import java.net.URI;
-import java.net.http.*;
 
 public class nRouterExample {
     static final String NROUTER_BASE = "https://api.nrouter.ai";
@@ -19,28 +18,14 @@ public class nRouterExample {
 
     public static void main(String[] args) throws Exception {
 
-        // ━━━ 1. Check guardrails + balance ━━━━━━━━━━━━━━━━━━━
-        HttpClient http = HttpClient.newHttpClient();
+        // Guardrails, prompt templates, rate limits and budgets are configured in
+        // the dashboard and enforced server-side on every request. There is
+        // deliberately no endpoint to list or override them: a request cannot opt
+        // out of its own org policy. Balances and spend history live at
+        // https://app.nrouter.ai — org billing data, not inference. Per-request
+        // cost arrives on the x-nr-request-cost response header.
 
-        String guardrails = http.send(
-            HttpRequest.newBuilder()
-                .uri(URI.create(NROUTER_BASE + "/nrouter/guardrail/list"))
-                .header("Authorization", "Bearer " + NROUTER_KEY)
-                .build(),
-            HttpResponse.BodyHandlers.ofString()
-        ).body();
-        System.out.println("Guardrails: " + guardrails);
-
-        String balance = http.send(
-            HttpRequest.newBuilder()
-                .uri(URI.create(NROUTER_BASE + "/api/credits/balance"))
-                .header("Authorization", "Bearer " + NROUTER_KEY)
-                .build(),
-            HttpResponse.BodyHandlers.ofString()
-        ).body();
-        System.out.println("Balance: " + balance);
-
-        // ━━━ 2. Chat (org defaults auto-apply) ━━━━━━━━━━━━━━━━
+        // ━━━ 1. Chat (org defaults auto-apply) ━━━━━━━━━━━━━━━━
         // Cache, guardrails, and rate limits auto-apply from org config.
         OpenAIClient client = OpenAIOkHttpClient.builder()
                 .apiKey(NROUTER_KEY)
@@ -49,7 +34,7 @@ public class nRouterExample {
 
         ChatCompletion response = client.chat().completions().create(
                 ChatCompletionCreateParams.builder()
-                        .model("claude-sonnet-4-20250514")
+                        .model("claude-sonnet-4-5")
                         .addMessage(ChatCompletionMessageParam.ofUser(
                                 ChatCompletionUserMessageParam.builder()
                                         .content("Hello!")
@@ -68,11 +53,11 @@ public class nRouterExample {
         //   "nrouter_prompt_variables": {"language": "Spanish", "max_length": "100"}
         //   "nrouter_cache": false   // disable cache for this request
 
-        // ━━━ 3. PII blocked by guardrail ━━━━━━━━━━━━━━━━━━━━━
+        // ━━━ 2. PII blocked by guardrail ━━━━━━━━━━━━━━━━━━━━━
         try {
             client.chat().completions().create(
                 ChatCompletionCreateParams.builder()
-                    .model("gpt-4o")
+                    .model("gpt-5.5")
                     .addMessage(ChatCompletionMessageParam.ofUser(
                         ChatCompletionUserMessageParam.builder()
                             .content("My SSN is 123-45-6789")

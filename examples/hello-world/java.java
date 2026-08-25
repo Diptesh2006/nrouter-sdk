@@ -14,7 +14,7 @@ public class HelloNRouter {
 
         ChatCompletion response = client.chat().completions().create(
                 ChatCompletionCreateParams.builder()
-                        .model("claude-sonnet-4-20250514")
+                        .model("claude-sonnet-4-5")
                         .addMessage(ChatCompletionMessageParam.ofUser(
                                 ChatCompletionUserMessageParam.builder()
                                         .content("Hello, nRouter!")

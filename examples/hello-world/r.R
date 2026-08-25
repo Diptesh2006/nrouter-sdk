@@ -12,7 +12,7 @@ response <- POST(
   add_headers(Authorization = paste("Bearer", nrouter_key)),
   content_type_json(),
   body = toJSON(list(
-    model = "claude-sonnet-4-20250514",
+    model = "claude-sonnet-4-5",
     messages = list(list(role = "user", content = "Hello, nRouter!"))
   ), auto_unbox = TRUE)
 )

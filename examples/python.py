@@ -1,100 +1,122 @@
 # nRouter — Python
-# OpenAI SDK + guardrails + prompt templates + cache + cost tracking.
 #
-# pip install openai
+#   pip install nrouter-sdk
+#
+# One key, one base URL, models across six provider clouds. Every line below was
+# executed against a live gateway on 2026-08-25 before being committed.
+#
+# `nrouter-sdk` subclasses the OpenAI SDK, so everything you already know works.
+# What it adds: typed nRouter errors, and per-request cost on `last_response`.
 
 import os
-import httpx
-from openai import OpenAI
 
-NROUTER_BASE = "https://api.nrouter.ai"
-NROUTER_KEY = os.environ.get("NROUTER_API_KEY")
-if not NROUTER_KEY:
-    raise SystemExit("Set NROUTER_API_KEY environment variable. Get your key at https://nrouter.ai/keys")
-headers = {"Authorization": f"Bearer {NROUTER_KEY}"}
+from nroutersdk import (
+    nRouter,
+    nRouterAuthenticationError,
+    nRouterCreditError,
+    nRouterGuardrailBlockedError,
+    nRouterNotFoundError,
+    nRouterRateLimitError,
+)
 
-client = OpenAI(api_key=NROUTER_KEY, base_url=f"{NROUTER_BASE}/v1")
+if not os.environ.get("NROUTER_API_KEY"):
+    raise SystemExit("Set NROUTER_API_KEY. Get a key at https://nrouter.ai/keys")
 
-# ━━━ 1. DISCOVER ORG CONFIG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-guardrails = httpx.get(f"{NROUTER_BASE}/nrouter/guardrail/list", headers=headers).json()
-print("Guardrails:", [g["guardrail_name"] for g in guardrails.get("data", [])])
+# Reads NROUTER_API_KEY and defaults to https://api.nrouter.ai/v1.
+client = nRouter()
 
-prompts = httpx.get(f"{NROUTER_BASE}/nrouter/prompt/list", headers=headers).json()
-print("Prompts:", [p["name"] for p in prompts.get("data", [])])
+MODEL = "gpt-5.5"
 
-balance = httpx.get(f"{NROUTER_BASE}/api/credits/balance", headers=headers).json()
-print(f"Credits: ${balance['available']}")
+# ━━━ 1. WHAT THIS KEY CAN REACH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Scoped to your key — you see exactly the models you may call.
+print("Models:", [m.id for m in client.models.list().data][:5], "...")
 
-# ━━━ 2. BASIC CALL (org defaults auto-apply) ━━━━━━━━━━━━━━━
-# Guardrails, cache, and rate limits are all enforced server-side.
-# No extra code needed — just call the API normally.
+# Guardrails, prompt templates, rate limits and budgets are configured in the
+# dashboard and enforced server-side on every request. There is no client call
+# to list or override them, by design: a request cannot opt out of its org's
+# own policy.
+
+# ━━━ 2. A BASIC CALL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 response = client.chat.completions.create(
-    model="claude-sonnet-4-20250514",
+    model=MODEL,
     messages=[{"role": "user", "content": "Hello!"}],
+    max_tokens=512,
 )
 print(response.choices[0].message.content)
 
-# ━━━ 3. WITH PROMPT TEMPLATE + VARIABLES ━━━━━━━━━━━━━━━━━━━
-# Prompt templates are opt-in: pass the template ID + Jinja2 variables.
-# The template's system prompt is injected server-side before the LLM call.
-with_prompt = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[{"role": "user", "content": "Q1 revenue was $4.2M..."}],
-    extra_body={
-        "nrouter_prompt_template_id": "your-summarizer-id",
-        "nrouter_prompt_variables": {"language": "Spanish", "max_length": "100"},
-    },
-)
+# ━━━ 3. WHAT IT COST ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Populated after every call from the x-nr-* response headers.
+meta = client.last_response
+print(f"request {meta.request_id} | model {meta.model} | "
+      f"{meta.input_tokens} in / {meta.output_tokens} out")
 
-# ━━━ 4. OVERRIDE GUARDRAILS (run only specific ones) ━━━━━━━
-# By default, ALL org-enabled guardrails apply automatically.
-# Pass nrouter_guardrail_ids to run only a subset on this request.
-with_guardrails = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[{"role": "user", "content": "Summarize Q1 earnings..."}],
-    extra_body={"nrouter_guardrail_ids": ["guardrail-uuid-1", "guardrail-uuid-2"]},
-)
+# `cost` is None when the model is unpriced. nRouter never reports a confident
+# $0 — branch on `cost_status`, never on `cost` being falsy.
+if meta.cost_status == "exact":
+    print(f"cost ${meta.cost:.6f}")
+else:
+    print(f"cost unpriced ({meta.cost_status})")
 
-# ━━━ 5. DISABLE CACHE (per-request opt-out) ━━━━━━━━━━━━━━━━
-# Cache is enabled by default. Pass nrouter_cache: false for fresh responses.
-no_cache = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[{"role": "user", "content": "What's the latest news?"}],
-    extra_body={"nrouter_cache": False},
-)
-
-# ━━━ 6. READ COST + METADATA FROM RESPONSE ━━━━━━━━━━━━━━━━━
-raw = client.chat.completions.with_raw_response.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Hi"}],
-)
-cost = raw.headers.get("x-nr-request-cost")
-cost_status = raw.headers.get("x-nr-cost-status")
-print(f"Cost: ${cost}" if cost is not None else f"Cost status: {cost_status}")
-print(f"Model: {raw.headers.get('x-nr-model')}")
-print(f"Total tokens: {raw.headers.get('x-nr-total-tokens')}")
-
-# ━━━ 7. HANDLE ERRORS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-from openai import BadRequestError
-try:
-    client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": "My SSN is 123-45-6789"}],
-    )
-except BadRequestError as e:
-    if e.status_code == 400: print(f"Guardrail blocked: {e.message}")
-    if e.status_code == 402: print(f"Insufficient credits: {e.message}")
-    if e.status_code == 429: print(f"Rate limited: {e.message}")
-
-# ━━━ 8. STREAMING + EMBEDDINGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━ 4. STREAMING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# The FINAL chunk carries usage and an EMPTY `choices` list. Indexing
+# `choices[0]` unguarded raises IndexError at the very end of an otherwise
+# successful stream — guard it.
 stream = client.chat.completions.create(
-    model="gpt-4o", messages=[{"role": "user", "content": "Write a haiku"}], stream=True
+    model=MODEL,
+    messages=[{"role": "user", "content": "Write a haiku about routing."}],
+    max_tokens=512,
+    stream=True,
 )
 for chunk in stream:
-    print(chunk.choices[0].delta.content or "", end="", flush=True)
+    if chunk.choices:
+        print(chunk.choices[0].delta.content or "", end="", flush=True)
+print()
 
-embed = client.embeddings.create(model="text-embedding-3-small", input="Hello world")
+# ━━━ 5. THE ANTHROPIC WIRE, SAME KEY ━━━━━━━━━━━━━━━━━━━━━━━
+# `/v1/messages` speaks Anthropic's format. Use it with an Anthropic model.
+message = client.messages.create(
+    model="claude-sonnet-4-5",
+    messages=[{"role": "user", "content": "Hello!"}],
+    max_tokens=512,
+)
+print(message["content"][0]["text"])
 
-# ━━━ 9. CHECK SPEND ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-new_balance = httpx.get(f"{NROUTER_BASE}/api/credits/balance", headers=headers).json()
-print(f"\nSpent: ${balance['available'] - new_balance['available']:.4f}")
+# Count input tokens without generating anything.
+print(client.messages.count_tokens(
+    model="claude-sonnet-4-5",
+    messages=[{"role": "user", "content": "Hello!"}],
+))
+
+# ━━━ 6. THE RESPONSES API ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+print(client.responses.create(model=MODEL, input="Hello!").output_text)
+
+# ━━━ 7. HANDLING FAILURE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Typed errors, so you branch on a class rather than string-matching a message.
+try:
+    client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": "My SSN is 123-45-6789"}],
+        max_tokens=512,
+    )
+except nRouterGuardrailBlockedError as e:
+    print(f"blocked by a guardrail: {e} (request {e.request_id})")
+except nRouterCreditError as e:
+    # The reserve happens BEFORE the provider call, so nothing was spent.
+    print(f"top up at https://app.nrouter.ai/billing: {e}")
+except nRouterRateLimitError as e:
+    # `limit_source` names WHICH ceiling refused: key, plan, team, user or
+    # budget. It is None when the gateway could not attribute the refusal —
+    # it does not guess, and neither should you.
+    print(f"rate limited by {e.limit_source}; retry after {e.retry_after}s")
+except nRouterNotFoundError as e:
+    print(f"no such model, or not visible to this key: {e}")
+except nRouterAuthenticationError as e:
+    # `auth_reason` is the stable refusal reason from x-nr-auth-reason —
+    # e.g. key_route_not_allowed, meaning the key's endpoint scope does not
+    # cover this path. The key itself may be perfectly valid.
+    print(f"key refused ({e.auth_reason}): {e}")
+
+# ━━━ 8. ASYNC ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# from nroutersdk import AsyncnRouter
+# client = AsyncnRouter()
+# response = await client.chat.completions.create(...)

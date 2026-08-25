@@ -19,7 +19,7 @@ from nroutersdk import nRouter
 
 client = nRouter()  # reads NROUTER_API_KEY from env
 response = client.chat.completions.create(
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-5",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)

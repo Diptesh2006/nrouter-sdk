@@ -18,7 +18,7 @@ async fn main() {
     let client = Client::with_config(config);
 
     let request = CreateChatCompletionRequestArgs::default()
-        .model("claude-sonnet-4-20250514")
+        .model("claude-sonnet-4-5")
         .messages(vec![ChatCompletionRequestUserMessageArgs::default()
             .content("Hello, nRouter!")
             .build()

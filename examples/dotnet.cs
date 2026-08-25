@@ -19,16 +19,15 @@ var nrouterKey = Environment.GetEnvironmentVariable("NROUTER_API_KEY")!;
 var http = new HttpClient();
 http.DefaultRequestHeaders.Add("Authorization", $"Bearer {nrouterKey}");
 
-var guardrails = await http.GetStringAsync($"{nrouterBase}/nrouter/guardrail/list");
-Console.WriteLine($"Guardrails: {guardrails}");
-
-var balance = await http.GetStringAsync($"{nrouterBase}/api/credits/balance");
-Console.WriteLine($"Balance: {balance}");
-
+// Guardrails, prompt templates, rate limits and budgets are configured in the
+// dashboard and enforced server-side on every request. There is deliberately no
+// endpoint to list or override them: a request cannot opt out of its org policy.
+// Balances and spend history live at https://app.nrouter.ai — org billing data,
+// not inference. Per-request cost arrives on the x-nr-request-cost header.
 // ━━━ 2. Chat (org defaults auto-apply) ━━━━━━━━━━━━━━━━━━━━━━
 // Cache, guardrails, and rate limits auto-apply from org config.
 var client = new ChatClient(
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-5",
     credential: new ApiKeyCredential(nrouterKey),
     options: new OpenAIClientOptions { Endpoint = new Uri($"{nrouterBase}/v1") }
 );
@@ -55,6 +54,3 @@ try {
     Console.WriteLine($"Guardrail blocked: {e.Message}");
 }
 
-// ━━━ 4. Check spend ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-var newBalance = await http.GetStringAsync($"{nrouterBase}/api/credits/balance");
-Console.WriteLine($"New balance: {newBalance}");

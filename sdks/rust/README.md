@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = nrouter::client()?; // reads NROUTER_API_KEY from env
 
     let request = CreateChatCompletionRequestArgs::default()
-        .model("claude-sonnet-4-20250514")
+        .model("claude-sonnet-4-5")
         .messages(vec![ChatCompletionRequestUserMessageArgs::default()
             .content("Hello!")
             .build()?

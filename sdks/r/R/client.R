@@ -6,7 +6,7 @@
 #'
 #' @param messages List of message objects, e.g.
 #'   \code{list(list(role = "user", content = "Hello!"))}.
-#' @param model Model name. Defaults to \code{"gpt-4o"}.
+#' @param model Model name. Defaults to \code{"gpt-5.5"}.
 #' @param api_key nRouter API key. Defaults to the \code{NROUTER_API_KEY}
 #'   environment variable.
 #' @param base_url Gateway base URL. Defaults to
@@ -14,7 +14,7 @@
 #'
 #' @return The parsed JSON response as an R list.
 #' @export
-nrouter_chat <- function(messages, model = "gpt-4o", api_key = NULL,
+nrouter_chat <- function(messages, model = "gpt-5.5", api_key = NULL,
                           base_url = "https://api.nrouter.ai/v1") {
   key <- resolve_api_key(api_key)
 

@@ -17,20 +17,16 @@ const nrouterRouter = createOpenAI({
 const nrouterBase = "https://api.nrouter.ai";
 const headers = { Authorization: `Bearer ${process.env.NROUTER_API_KEY}` };
 
-const guardrails = await fetch(`${nrouterBase}/nrouter/guardrail/list`, { headers }).then((r) => r.json());
-console.log("Guardrails:", guardrails.data?.map((g: any) => g.guardrail_name));
-
-const prompts = await fetch(`${nrouterBase}/nrouter/prompt/list`, { headers }).then((r) => r.json());
-console.log("Prompts:", prompts.data?.map((p: any) => p.name));
-
-const balance = await fetch(`${nrouterBase}/api/credits/balance`, { headers }).then((r) => r.json());
-console.log(`Credits: $${balance.available}`);
-
+// Guardrails, prompt templates, rate limits and budgets are configured in the
+// dashboard and enforced server-side on every request. There is deliberately no
+// endpoint to list or override them: a request cannot opt out of its org policy.
+// Balances and spend history live at https://app.nrouter.ai — org billing data,
+// not inference. Per-request cost arrives on the x-nr-request-cost header.
 // ━━━ 2. GENERATE (org defaults auto-apply) ━━━━━━━━━━━━━━━━
 // Cache, guardrails, and rate limits auto-apply from org config.
 
 const { text } = await generateText({
-  model: nrouterRouter("claude-sonnet-4-20250514"),
+  model: nrouterRouter("claude-sonnet-4-5"),
   prompt: "What is quantum computing?",
 });
 console.log(text);
@@ -39,7 +35,7 @@ console.log(text);
 // ━━━ 3. STREAMING WITH GUARDRAILS ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const stream = await streamText({
-  model: nrouterRouter("gpt-4o"),
+  model: nrouterRouter("gpt-5.5"),
   prompt: "Write a haiku about API security",
 });
 for await (const chunk of stream.textStream) {
@@ -49,7 +45,7 @@ for await (const chunk of stream.textStream) {
 // ━━━ 4. WITH PROMPT TEMPLATE + VARIABLES ━━━━━━━━━━━━━━━━━━━
 
 const { text: summarized } = await generateText({
-  model: nrouterRouter("gpt-4o"),
+  model: nrouterRouter("gpt-5.5"),
   prompt: "Q1 revenue was $4.2M, up 23% YoY with strong enterprise growth...",
   // nRouter-specific: inject a server-side prompt template with Jinja2 variables
   body: {
@@ -63,7 +59,7 @@ console.log(`\nSummarized: ${summarized}`);
 // By default, ALL org-enabled guardrails apply automatically.
 // Pass nrouter_guardrail_ids to run only specific guardrails on this request.
 const { text: guarded } = await generateText({
-  model: nrouterRouter("gpt-4o"),
+  model: nrouterRouter("gpt-5.5"),
   prompt: "Summarize Q1 earnings...",
   body: {
     nrouter_guardrail_ids: ["guardrail-uuid-1", "guardrail-uuid-2"],
@@ -73,7 +69,7 @@ const { text: guarded } = await generateText({
 // Disable cache for a single request
 // Cache is enabled by default. Pass nrouter_cache: false for a fresh response.
 const { text: fresh } = await generateText({
-  model: nrouterRouter("gpt-4o"),
+  model: nrouterRouter("gpt-5.5"),
   prompt: "What's the latest news?",
   body: {
     nrouter_cache: false,
@@ -83,7 +79,7 @@ const { text: fresh } = await generateText({
 // ━━━ 5. TOOL CALLING WITH GUARDRAILS ━━━━━━━━━━━━━━━━━━━━━━
 
 const { text: weatherResult } = await generateText({
-  model: nrouterRouter("gpt-4o"),
+  model: nrouterRouter("gpt-5.5"),
   prompt: "What's the weather in Tokyo?",
   tools: {
     getWeather: tool({
@@ -115,7 +111,7 @@ const { text: weatherResult } = await generateText({
 //   // Prompt templates injected server-side.
 //   // Cost tracked per-request.
 //   const result = streamText({
-//     model: nrouter("gpt-4o"),
+//     model: nrouter("gpt-5.5"),
 //     messages,
 //     body: {
 //       nrouter_prompt_template_id: "customer-support-template",
@@ -126,7 +122,3 @@ const { text: weatherResult } = await generateText({
 //   return result.toDataStreamResponse();
 // }
 
-// ━━━ 7. CHECK COST ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-const newBalance = await fetch(`${nrouterBase}/api/credits/balance`, { headers }).then((r) => r.json());
-console.log(`\nSpent: $${(balance.available - newBalance.available).toFixed(4)}`);

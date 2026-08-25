@@ -21,7 +21,7 @@ HTTP/1.1 200 OK
 x-nr-request-id: nrouter-a1b2c3d4e5f67890
 x-nr-request-cost: 0.00347
 x-nr-cost-status: exact
-x-nr-model: gpt-4o
+x-nr-model: gpt-5.5
 x-nr-input-tokens: 42
 x-nr-output-tokens: 18
 x-nr-total-tokens: 60
@@ -55,13 +55,19 @@ The cost in the header is the **model cost only**. Your platform fee (0-4%) was 
 
 ## cURL
 
+> **Model availability.** `/v1/embeddings` and `/v1/images/generations` are
+> mounted, but the model has to be enabled for your organization. Measured on
+> 2026-08-25 the served catalogue carried no embedding and no image model, so
+> the names in these snippets are illustrative. List what your key can actually
+> reach with `GET /v1/models` before copying one.
+
 ```bash
 # Chat completion
 curl https://api.nrouter.ai/v1/chat/completions \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-sonnet-4-20250514",
+    "model": "claude-sonnet-4-5",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 
@@ -70,7 +76,7 @@ curl https://api.nrouter.ai/v1/chat/completions \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4o",
+    "model": "gpt-5.5",
     "messages": [{"role": "user", "content": "Summarize this report..."}],
     "nrouter_prompt_template_id": "your-template-id",
     "nrouter_prompt_variables": {"language": "Spanish", "max_length": "100"}
@@ -81,7 +87,7 @@ curl -i https://api.nrouter.ai/v1/chat/completions \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4o-mini",
+    "model": "gpt-5.4-mini",
     "messages": [{"role": "user", "content": "Hi"}]
   }' 2>&1 | grep -i "x-nr-request-cost"
 # x-nr-request-cost: 0.000015
@@ -109,25 +115,13 @@ curl https://api.nrouter.ai/v1/images/generations \
 curl https://api.nrouter.ai/v1/models \
   -H "Authorization: Bearer $NROUTER_API_KEY"
 
-# Check credit balance
-curl https://api.nrouter.ai/api/credits/balance \
-  -H "Authorization: Bearer $NROUTER_API_KEY"
-
-# List active guardrails
-curl https://api.nrouter.ai/nrouter/guardrail/list \
-  -H "Authorization: Bearer $NROUTER_API_KEY"
-
-# List prompt templates
-curl https://api.nrouter.ai/nrouter/prompt/list \
-  -H "Authorization: Bearer $NROUTER_API_KEY"
-
 # Streaming
 curl https://api.nrouter.ai/v1/chat/completions \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -N \
   -d '{
-    "model": "claude-sonnet-4-20250514",
+    "model": "claude-sonnet-4-5",
     "messages": [{"role": "user", "content": "Count to 10"}],
     "stream": true
   }'
@@ -149,27 +143,30 @@ client = nRouter()  # reads NROUTER_API_KEY from env
 
 # Chat
 response = client.chat.completions.create(
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-5",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)
 
 # With prompt template
 response = client.nrouter.chat(
-    model="gpt-4o",
+    model="gpt-5.5",
     messages=[{"role": "user", "content": "Summarize this..."}],
     prompt_template_id="your-template-id",
     prompt_variables={"language": "Spanish"},
 )
 
-# Check cost
-balance = client.credits.balance()
-print(f"Credits remaining: ${balance['available']:.2f}")
+# Check what that call cost — reported per request, not polled from a balance.
+meta = client.last_response
+if meta.cost_status == "exact":
+    print(f"cost ${meta.cost:.6f} | request {meta.request_id}")
+else:
+    print(f"cost unpriced ({meta.cost_status})")
 
 # Error handling
 try:
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": "My SSN is 123-45-6789"}],
     )
 except nRouterGuardrailBlockedError as e:
@@ -196,14 +193,14 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-5",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)
 
 # With prompt template (via extra_body)
 response = client.chat.completions.create(
-    model="gpt-4o",
+    model="gpt-5.5",
     messages=[{"role": "user", "content": "Summarize this..."}],
     extra_body={
         "nrouter_prompt_template_id": "your-template-id",
@@ -213,7 +210,7 @@ response = client.chat.completions.create(
 
 # Read cost from raw response
 response = client.chat.completions.with_raw_response.create(
-    model="gpt-4o-mini",
+    model="gpt-5.4-mini",
     messages=[{"role": "user", "content": "Hi"}],
 )
 cost = response.headers.get("x-nr-request-cost")
@@ -241,14 +238,14 @@ const client = new OpenAI({
 
 // Chat
 const response = await client.chat.completions.create({
-  model: "claude-sonnet-4-20250514",
+  model: "claude-sonnet-4-5",
   messages: [{ role: "user", content: "Hello!" }],
 });
 console.log(response.choices[0].message.content);
 
 // Streaming
 const stream = await client.chat.completions.create({
-  model: "gpt-4o",
+  model: "gpt-5.5",
   messages: [{ role: "user", content: "Write a poem" }],
   stream: true,
 });
@@ -258,7 +255,7 @@ for await (const chunk of stream) {
 
 // With prompt template
 const withPrompt = await client.chat.completions.create({
-  model: "gpt-4o",
+  model: "gpt-5.5",
   messages: [{ role: "user", content: "Summarize this..." }],
   // @ts-ignore — nRouter-specific fields
   nrouter_prompt_template_id: "your-template-id",
@@ -268,7 +265,7 @@ const withPrompt = await client.chat.completions.create({
 // Read cost from raw response
 const raw = await client.chat.completions
   .create({
-    model: "gpt-4o-mini",
+    model: "gpt-5.4-mini",
     messages: [{ role: "user", content: "Hi" }],
   })
   .asResponse();
@@ -278,7 +275,7 @@ console.log(cost === null ? `Cost status: ${costStatus}` : `Cost: $${cost}`);
 
 // Tool calling
 const tools = await client.chat.completions.create({
-  model: "gpt-4o",
+  model: "gpt-5.5",
   messages: [{ role: "user", content: "What's the weather in Tokyo?" }],
   tools: [
     {
@@ -326,7 +323,7 @@ func main() {
     // Chat
     response, err := client.Chat.Completions.New(context.Background(),
         openai.ChatCompletionNewParams{
-            Model: "claude-sonnet-4-20250514",
+            Model: "claude-sonnet-4-5",
             Messages: []openai.ChatCompletionMessageParamUnion{
                 openai.UserMessage("Hello!"),
             },
@@ -370,7 +367,7 @@ public class nRouterExample {
         // Chat
         ChatCompletion response = client.chat().completions().create(
             ChatCompletionCreateParams.builder()
-                .model("claude-sonnet-4-20250514")
+                .model("claude-sonnet-4-5")
                 .addMessage(ChatCompletionMessageParam.ofUser(
                     ChatCompletionUserMessageParam.builder()
                         .content("Hello!")
@@ -403,7 +400,7 @@ client = OpenAI::Client.new(
 # Chat
 response = client.chat(
   parameters: {
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-5",
     messages: [{ role: "user", content: "Hello!" }],
   }
 )
@@ -412,7 +409,7 @@ puts response.dig("choices", 0, "message", "content")
 # Streaming
 client.chat(
   parameters: {
-    model: "gpt-4o",
+    model: "gpt-5.5",
     messages: [{ role: "user", content: "Write a haiku" }],
     stream: proc do |chunk, _bytesize|
       content = chunk.dig("choices", 0, "delta", "content")
@@ -424,7 +421,7 @@ client.chat(
 # With prompt template
 response = client.chat(
   parameters: {
-    model: "gpt-4o",
+    model: "gpt-5.5",
     messages: [{ role: "user", content: "Summarize this..." }],
     nrouter_prompt_template_id: "your-template-id",
     nrouter_prompt_variables: { language: "Spanish" },
@@ -460,7 +457,7 @@ $client = OpenAI::factory()
 
 // Chat
 $response = $client->chat()->create([
-    'model' => 'claude-sonnet-4-20250514',
+    'model' => 'claude-sonnet-4-5',
     'messages' => [
         ['role' => 'user', 'content' => 'Hello!'],
     ],
@@ -469,7 +466,7 @@ echo $response->choices[0]->message->content;
 
 // Streaming
 $stream = $client->chat()->createStreamed([
-    'model' => 'gpt-4o',
+    'model' => 'gpt-5.5',
     'messages' => [
         ['role' => 'user', 'content' => 'Write a poem'],
     ],
@@ -500,7 +497,7 @@ using OpenAI.Chat;
 
 // Configure client
 var client = new ChatClient(
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-5",
     credential: new ApiKeyCredential(Environment.GetEnvironmentVariable("NROUTER_API_KEY")!),
     options: new OpenAIClientOptions
     {
@@ -545,7 +542,7 @@ async fn main() {
     let client = Client::with_config(config);
 
     let request = CreateChatCompletionRequestArgs::default()
-        .model("claude-sonnet-4-20250514")
+        .model("claude-sonnet-4-5")
         .messages(vec![
             ChatCompletionRequestUserMessageArgs::default()
                 .content("Hello!")
@@ -574,7 +571,7 @@ val client = OpenAI(
 
 val response = client.chatCompletion(
     ChatCompletionRequest(
-        model = ModelId("claude-sonnet-4-20250514"),
+        model = ModelId("claude-sonnet-4-5"),
         messages = listOf(
             ChatMessage(role = ChatRole.User, content = "Hello!")
         ),
@@ -598,7 +595,7 @@ let openAI = OpenAI(configuration: configuration)
 
 let query = ChatQuery(
     messages: [.init(role: .user, content: "Hello!")],
-    model: .init("claude-sonnet-4-20250514")
+    model: .init("claude-sonnet-4-5")
 )
 
 let result = try await openAI.chats(query: query)
@@ -623,7 +620,7 @@ void main() async {
   OpenAI.baseUrl = 'https://api.nrouter.ai';
 
   final response = await OpenAI.instance.chat.create(
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-5',
     messages: [
       OpenAIChatCompletionChoiceMessageModel(
         role: OpenAIChatMessageRole.user,
@@ -647,7 +644,7 @@ config :openai,
 
 # Usage
 {:ok, response} = OpenAI.chat_completion(
-  model: "claude-sonnet-4-20250514",
+  model: "claude-sonnet-4-5",
   messages: [%{role: "user", content: "Hello!"}]
 )
 IO.puts(hd(response.choices)["message"]["content"])
@@ -661,12 +658,8 @@ IO.puts(hd(response.choices)["message"]["content"])
 # Quick one-liner
 http POST https://api.nrouter.ai/v1/chat/completions \
   Authorization:"Bearer $NROUTER_API_KEY" \
-  model=claude-sonnet-4-20250514 \
+  model=claude-sonnet-4-5 \
   messages:='[{"role":"user","content":"Hello!"}]'
-
-# Check balance
-http GET https://api.nrouter.ai/api/credits/balance \
-  Authorization:"Bearer $NROUTER_API_KEY"
 ```
 
 ---
@@ -692,29 +685,42 @@ Every language can read the cost header from the raw HTTP response:
 
 ```bash
 # Check model pricing
-curl https://api.nrouter.ai/api/models/pricing \
+curl https://api.nrouter.ai/v1/models \
   -H "Authorization: Bearer $NROUTER_API_KEY"
 ```
 
 ```python
-# Python
-pricing = client.nrouter_models.pricing()
-for m in pricing["models"]:
-    print(f"{m['model']:30s}  in: ${m['input_cost_per_token']:.6f}  out: ${m['output_cost_per_token']:.6f}")
+# Python — the models this key can reach
+for model in client.models.list().data:
+    print(model.id)
 ```
 
-### Real-Time Balance Monitoring
+Per-request cost is reported on the response itself, on the `x-nr-request-cost`
+header, paired with `x-nr-cost-status`. The header is **absent** when the model
+is unpriced — nRouter never reports a confident `0`.
 
-```bash
-# Check balance (any language via HTTP)
-curl https://api.nrouter.ai/api/credits/balance \
-  -H "Authorization: Bearer $NROUTER_API_KEY"
-# {"balance": 96.50, "reserved": 0.05, "available": 96.45}
-```
+### Per-Request Cost
 
 ```python
-# Python — programmatic budget alerts
-balance = client.credits.balance()
-if balance["available"] < 10.0:
-    send_alert(f"Low credits: ${balance['available']:.2f}")
+# Python — every call populates last_response from the x-nr-* headers
+client.chat.completions.create(
+    model="gpt-5.5",
+    messages=[{"role": "user", "content": "Hello!"}],
+    max_tokens=512,
+)
+
+meta = client.last_response
+print(f"request {meta.request_id} | model {meta.model}")
+print(f"tokens  {meta.input_tokens} in / {meta.output_tokens} out")
+
+# Branch on cost_status, never on `cost` being falsy: an unpriced model reports
+# cost=None, and treating that as $0 is how a margin leak looks like revenue.
+if meta.cost_status == "exact":
+    print(f"cost    ${meta.cost:.6f}")
+else:
+    print(f"cost    unpriced")
 ```
+
+Balances, spend history and guardrail logs are org-scoped billing data and live
+in the dashboard at <https://app.nrouter.ai>, not on the inference API.
+

@@ -19,18 +19,12 @@ def nrouter_get(path)
   JSON.parse(res.body)
 end
 
-# ━━━ 1. See guardrails + prompts + balance ━━━━━━━━━━━━━━━━━
-
-guardrails = nrouter_get("/nrouter/guardrail/list")
-puts "Guardrails: #{guardrails['data']&.select { |g| g['enabled'] }&.map { |g| g['guardrail_name'] }}"
-
-prompts = nrouter_get("/nrouter/prompt/list")
-puts "Prompts: #{prompts['data']&.map { |p| p['name'] }}"
-
-balance = nrouter_get("/api/credits/balance")
-puts "Credits: $#{balance['available']}"
-
-# ━━━ 2. Chat (org defaults auto-apply) ━━━━━━━━━━━━━━━━━━━━━━
+# Guardrails, prompt templates, rate limits and budgets are configured in the
+# dashboard and enforced server-side on every request. There is deliberately no
+# endpoint to list or override them: a request cannot opt out of its org policy.
+# Balances and spend history live at https://app.nrouter.ai — org billing data,
+# not inference. Per-request cost arrives on the x-nr-request-cost header.
+# ━━━ 1. Chat (org defaults auto-apply) ━━━━━━━━━━━━━━━━━━━━━━
 # Cache, guardrails, and rate limits auto-apply from org config.
 
 client = OpenAI::Client.new(
@@ -40,17 +34,17 @@ client = OpenAI::Client.new(
 
 response = client.chat(
   parameters: {
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-5",
     messages: [{ role: "user", content: "Hello!" }],
   }
 )
 puts response.dig("choices", 0, "message", "content")
 
-# ━━━ 3. With prompt template ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━ 2. With prompt template ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 response = client.chat(
   parameters: {
-    model: "gpt-4o",
+    model: "gpt-5.5",
     messages: [{ role: "user", content: "Summarize Q1 earnings..." }],
     nrouter_prompt_template_id: "your-summarizer-id",
     nrouter_prompt_variables: { language: "Spanish", max_length: "100" },
@@ -62,7 +56,7 @@ response = client.chat(
 # Pass nrouter_guardrail_ids to run only specific guardrails on this request.
 response = client.chat(
   parameters: {
-    model: "gpt-4o",
+    model: "gpt-5.5",
     messages: [{ role: "user", content: "Summarize Q1 earnings..." }],
     nrouter_guardrail_ids: ["guardrail-uuid-1", "guardrail-uuid-2"],
   }
@@ -72,18 +66,18 @@ response = client.chat(
 # Cache is enabled by default. Pass nrouter_cache: false for a fresh response.
 response = client.chat(
   parameters: {
-    model: "gpt-4o",
+    model: "gpt-5.5",
     messages: [{ role: "user", content: "What is the latest news?" }],
     nrouter_cache: false,
   }
 )
 
-# ━━━ 4. PII blocked by guardrail ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━ 3. PII blocked by guardrail ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 begin
   client.chat(
     parameters: {
-      model: "gpt-4o",
+      model: "gpt-5.5",
       messages: [{ role: "user", content: "My SSN is 123-45-6789" }],
     }
   )
@@ -91,8 +85,3 @@ rescue => e
   puts "Guardrail blocked: #{e.message}"
 end
 
-# ━━━ 5. Check spend ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-new_balance = nrouter_get("/api/credits/balance")
-spent = balance["available"].to_f - new_balance["available"].to_f
-puts "Spent: $#{spent.round(4)}"

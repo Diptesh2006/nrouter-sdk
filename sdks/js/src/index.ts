@@ -6,7 +6,7 @@
  *
  *   const client = new nRouter(); // reads NROUTER_API_KEY from env
  *   const response = await client.chat.completions.create({
- *     model: "claude-sonnet-4-20250514",
+ *     model: "claude-sonnet-4-5",
  *     messages: [{ role: "user", content: "Hello!" }],
  *   });
  */

@@ -13,24 +13,23 @@ from llama_index.core.llms import ChatMessage
 # nRouter SDK for guardrails, credits, prompts.
 # LlamaIndex's OpenAI client handles LLM calls pointed at nRouter.
 client = nRouter()  # reads NROUTER_API_KEY from env
+MODEL = "gpt-5.5"
 NROUTER_BASE = "https://api.nrouter.ai"
 NROUTER_KEY = os.environ["NROUTER_API_KEY"]
 
-# ━━━ 1. SEE YOUR GUARDRAILS + PROMPTS + BALANCE ━━━━━━━━━━━
+# ━━━ 1. SEE WHAT THIS KEY CAN REACH ━━━━━━━━━━━━━━━━━━━━━━━
 
-guardrails = client.guardrails.list()
-print("Guardrails:", [g["guardrail_name"] for g in guardrails.get("data", []) if g.get("enabled")])
+# Scoped to your key: exactly the models you may call.
+print("Models:", [m.id for m in client.models.list().data])
 
-prompts = client.prompts.list()
-print("Prompts:", [p["name"] for p in prompts.get("data", [])])
-
-balance = client.credits.balance()
-print(f"Credits: ${balance.get('available', 0):.2f}")
+# Guardrails, prompt templates and budgets are configured in the dashboard and
+# applied server-side to every request. There is deliberately no client call to
+# list or override them — a request cannot opt out of its own org's policy.
 
 # ━━━ 2. CONFIGURE LLAMAINDEX WITH NROUTER ━━━━━━━━━━━━━
 
 llm = OpenAI(
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-5",
     api_key=NROUTER_KEY,
     api_base=f"{NROUTER_BASE}/v1",
 )
@@ -58,7 +57,7 @@ except Exception as e:
 # ━━━ 4. WITH PROMPT TEMPLATE (per-request) ━━━━━━━━━━━━━━━━
 
 llm_with_prompt = OpenAI(
-    model="gpt-4o",
+    model="gpt-5.5",
     api_key=NROUTER_KEY,
     api_base=f"{NROUTER_BASE}/v1",
     additional_kwargs={
@@ -73,7 +72,7 @@ print(f"\nSummarized (Spanish): {response.text}")
 # By default, ALL org-enabled guardrails apply automatically.
 # Pass nrouter_guardrail_ids to run only specific guardrails on this request.
 llm_selective_guardrails = OpenAI(
-    model="gpt-4o",
+    model="gpt-5.5",
     api_key=NROUTER_KEY,
     api_base=f"{NROUTER_BASE}/v1",
     additional_kwargs={
@@ -84,7 +83,7 @@ llm_selective_guardrails = OpenAI(
 # Disable cache for a single request
 # Cache is enabled by default. Pass nrouter_cache: False for a fresh response.
 llm_no_cache = OpenAI(
-    model="gpt-4o",
+    model="gpt-5.5",
     api_key=NROUTER_KEY,
     api_base=f"{NROUTER_BASE}/v1",
     additional_kwargs={
@@ -112,7 +111,26 @@ try:
 except Exception as e:
     print(f"Guardrail blocked RAG injection: {e}")
 
-# ━━━ 6. CHECK SPEND ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━ 6. WHAT THAT COST ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-new_balance = client.credits.balance()
-print(f"\nSpent: ${balance.get('available', 0) - new_balance.get('available', 0):.4f}")
+# Cost is reported per request on the response itself, not polled from a
+# balance endpoint. Call through the nRouter client to read it.
+client.chat.completions.create(
+    model=MODEL,
+    messages=[{"role": "user", "content": "One-line summary of the run."}],
+    max_tokens=256,
+)
+
+meta = client.last_response
+print(f"\nrequest  {meta.request_id}")
+print(f"tokens   {meta.input_tokens} in / {meta.output_tokens} out")
+
+# `cost` is None when the model is unpriced — nRouter never reports a
+# confident $0. Always branch on `cost_status`.
+if meta.cost_status == "exact":
+    print(f"cost     ${meta.cost:.6f}")
+else:
+    print(f"cost     unpriced ({meta.cost_status})")
+
+# Balances and spend history live in the dashboard at https://app.nrouter.ai —
+# they are org-scoped billing data, not inference.

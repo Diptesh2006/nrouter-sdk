@@ -1,4 +1,4 @@
-// nRouter client — thin wrapper around the OpenAI SDK.
+// nRouter client: thin wrapper around the OpenAI SDK.
 
 import OpenAI from "openai";
 
@@ -18,19 +18,79 @@ function resolveApiKey(apiKey?: string): string {
 
 type NRouterOptions = ConstructorParameters<typeof OpenAI>[0];
 
+export type NRouterModel = {
+  id: string;
+  object?: string;
+  owned_by?: string;
+  [key: string]: unknown;
+};
+
+export type NRouterModelList = {
+  data: NRouterModel[];
+  object?: string;
+  [key: string]: unknown;
+};
+
+export class NRouterModels {
+  constructor(private readonly apiKey: string, private readonly baseURL: string) {}
+
+  /**
+   * List models using nRouter's raw JSON response.
+   *
+   * The OpenAI JS SDK currently receives the right raw body from nRouter, but
+   * its page parser exposes an empty `data` array. This helper stays direct so
+   * model discovery remains reliable.
+   */
+  async list(): Promise<NRouterModelList> {
+    const fetchImpl = (globalThis as any).fetch;
+    if (typeof fetchImpl !== "function") {
+      throw new Error("nRouter model listing requires a global fetch implementation.");
+    }
+
+    const response = await fetchImpl(`${this.baseURL.replace(/\/+$/, "")}/models`, {
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+    });
+
+    if (!response.ok) {
+      let message = `nRouter models request failed with status ${response.status}`;
+      try {
+        const body = await response.json();
+        message = body?.error?.message || body?.error || message;
+      } catch {
+        // Keep the status-based message when the body is not JSON.
+      }
+      throw new Error(message);
+    }
+
+    return response.json();
+  }
+}
+
 /**
  * Client pre-configured for nRouter (OpenAI wire format).
  *
  * Supports the same resources as the OpenAI SDK (chat.completions,
- * completions, embeddings, images, models, ...) — nRouter proxies the
- * standard OpenAI wire format, so every method works unmodified.
+ * completions, embeddings, images, ...). Use `client.nrouterModels.list()` for
+ * model discovery because OpenAI JS currently mis-parses nRouter's otherwise
+ * valid raw model list.
  */
 export class nRouter extends OpenAI {
+  readonly nrouterModels: NRouterModels;
+  readonly nrouter_models: NRouterModels;
+
   constructor(options: NRouterOptions = {}) {
+    const apiKey = resolveApiKey(options?.apiKey);
+    const baseURL = options?.baseURL || DEFAULT_BASE_URL;
+
     super({
       ...options,
-      apiKey: resolveApiKey(options?.apiKey),
-      baseURL: options?.baseURL || DEFAULT_BASE_URL,
+      apiKey,
+      baseURL,
     });
+
+    this.nrouterModels = new NRouterModels(apiKey, baseURL);
+    this.nrouter_models = this.nrouterModels;
   }
 }

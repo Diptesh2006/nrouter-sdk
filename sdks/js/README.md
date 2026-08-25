@@ -32,6 +32,19 @@ const client = new nRouter({ apiKey: process.env.NROUTER_API_KEY });
 `nRouter` extends the `OpenAI` class directly, so every resource the `openai` package
 supports (`chat.completions`, `embeddings`, `images`, streaming, ...) works unmodified.
 
+## Model discovery
+
+Use the nRouter helper for model listing:
+
+```typescript
+const models = await client.nrouterModels.list();
+console.log(models.data[0].id);
+```
+
+The raw nRouter `/models` response is valid JSON, but the current OpenAI JS SDK page
+parser exposes it with an empty `data` array. `nrouterModels.list()` bypasses that
+parser and returns the gateway response directly.
+
 ## Basic only, for now
 
 This is a minimal wrapper: API key resolution/validation (`sk-nrouter-...`) and a

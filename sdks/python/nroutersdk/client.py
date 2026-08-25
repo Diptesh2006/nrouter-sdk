@@ -135,8 +135,10 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             retry_after=int(retry_after) if retry_after and retry_after.isdigit() else None,
         ) from err
 
-    if status == 503:
-        raise nRouterServiceError(message, request_id=request_id) from err
+    if status == 500 or status == 503:
+        raise nRouterServiceError(
+            message, request_id=request_id, status_code=status
+        ) from err
 
 
 # ---------------------------------------------------------------------------

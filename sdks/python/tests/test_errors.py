@@ -62,6 +62,7 @@ def status_error(status: int, message: str, headers: dict | None = None) -> APIS
         # answer with a confident stable code attached.
         (404, "video not found: vid_123", nRouterError),
         (429, "rate limit exceeded", nRouterRateLimitError),
+        (500, "a backend service is temporarily unavailable", nRouterServiceError),
         (503, "authentication is temporarily unavailable", nRouterServiceError),
     ],
 )
@@ -101,6 +102,14 @@ def test_the_request_id_is_carried_through():
     with pytest.raises(nRouterCreditError) as caught:
         _maybe_raise_nrouter_error(err)
     assert caught.value.request_id == "req-abc"
+
+
+def test_service_errors_carry_the_actual_status_code():
+    with pytest.raises(nRouterServiceError) as caught:
+        _maybe_raise_nrouter_error(
+            status_error(500, "a backend service is temporarily unavailable")
+        )
+    assert caught.value.status_code == 500
 
 
 def test_an_unmapped_status_is_left_for_the_openai_sdk():

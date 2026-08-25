@@ -99,14 +99,15 @@ curl "$BASE/v1/audio/speech" \
 
 # ━━━ 7. EMBEDDINGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# NOTE: embeddings and image generation are MOUNTED endpoints, but the model
+# must be enabled for your org before it will answer. Measured on 2026-08-25 the
+# served catalogue carried no embedding and no image model, so the names in the
+# next two sections are illustrative. Check what YOUR key can reach first:
+#     curl -s "$BASE/v1/models" -H "Authorization: Bearer $NROUTER_API_KEY"
+
 curl "$BASE/v1/embeddings" \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
-# NOTE: embeddings and image generation are MOUNTED endpoints, but the model
-# must be enabled for your org before it will answer. Measured on 2026-08-25 the
-# served catalogue carried no embedding and no image model, so the names below
-# are illustrative. Check what YOUR key can reach first:
-#     print([m.id for m in client.models.list().data])
   -d '{"model": "text-embedding-3-small", "input": "The quick brown fox"}'
 
 # ━━━ 8. IMAGE GENERATION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

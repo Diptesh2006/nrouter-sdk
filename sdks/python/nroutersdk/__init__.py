@@ -13,6 +13,7 @@ Usage:
 
 from nroutersdk._errors import (
     nRouterAuthenticationError,
+    nRouterBudgetExceededError,
     nRouterCreditError,
     nRouterError,
     nRouterGuardrailBlockedError,
@@ -35,6 +36,7 @@ __all__ = [
     "nRouterGuardrailBlockedError",
     "nRouterAuthenticationError",
     "nRouterCreditError",
+    "nRouterBudgetExceededError",
     "nRouterNotFoundError",
     "nRouterRateLimitError",
     "nRouterServiceError",

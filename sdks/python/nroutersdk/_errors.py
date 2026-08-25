@@ -114,11 +114,38 @@ class nRouterCreditError(nRouterError):
         super().__init__(message, request_id=request_id)
 
 
+class nRouterBudgetExceededError(nRouterError):
+    """A configured spend ceiling refused the request — NOT a credit shortfall.
+
+    Deliberately NOT a subclass of :class:`nRouterCreditError`, and that is the
+    whole point of the class. The gateway answers 402 for three different
+    conditions and two of them are budgets:
+
+        insufficient credits: 0.0100 available, 0.5000 required
+        budget exceeded: spent 5.0000 of 5.0000
+        budget 'team-cap' (team) exceeded: spent 5.0000 of 5.0000
+
+    The fixes are opposite. A credit shortfall is cleared by topping up; a
+    budget ceiling is not cleared by topping up at all — the org may hold plenty
+    of credit and still be refused. Collapsing both into "please top up" hands
+    the caller a confident, wrong instruction.
+    """
+
+    code = "budget_exceeded"
+    status_code = 402
+
+
 class nRouterNotFoundError(nRouterError):
-    """The model alias does not exist, or is not visible to this key.
+    """The MODEL alias does not exist, or is not visible to this key.
 
     Both cases answer 404 deliberately: telling an unauthorised caller that a
     model exists but is out of reach is itself a disclosure.
+
+    Scoped to models on purpose. The gateway also answers 404 for a missing
+    video job, an unknown MCP server and an unknown agent run; raising this
+    class for those would attach a confident, wrong stable code
+    (``model_not_found``) to a resource that is not a model. Those surface as
+    the base :class:`nRouterError`.
     """
 
     code = "model_not_found"
@@ -171,6 +198,7 @@ __all__ = [
     "nRouterGuardrailBlockedError",
     "nRouterAuthenticationError",
     "nRouterCreditError",
+    "nRouterBudgetExceededError",
     "nRouterNotFoundError",
     "nRouterRateLimitError",
     "nRouterServiceError",

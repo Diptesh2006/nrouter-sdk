@@ -20,6 +20,7 @@ from openai import APIStatusError
 
 from nroutersdk import (
     nRouterAuthenticationError,
+    nRouterBudgetExceededError,
     nRouterCreditError,
     nRouterError,
     nRouterGuardrailBlockedError,
@@ -49,8 +50,17 @@ def status_error(status: int, message: str, headers: dict | None = None) -> APIS
         (400, "blocked by guardrail 'pii'", nRouterGuardrailBlockedError),
         (400, "invalid request: messages must be an array", nRouterRequestError),
         (401, "unauthorized", nRouterAuthenticationError),
-        (402, "insufficient credits", nRouterCreditError),
+        (402, "insufficient credits: 0.0100 available, 0.5000 required", nRouterCreditError),
+        # A 402 is NOT always "top up". The gateway emits three of them and two
+        # are budget ceilings, whose fix is to RAISE THE BUDGET — telling that
+        # caller to add funds sends them to the wrong place entirely.
+        (402, "budget exceeded: spent 5.0000 of 5.0000", nRouterBudgetExceededError),
+        (402, "budget 'team-cap' (team) exceeded: spent 5.0000 of 5.0000", nRouterBudgetExceededError),
         (404, "unknown model: gpt-9", nRouterNotFoundError),
+        # 404 also covers a missing video job, an unknown MCP server and an
+        # unknown agent run. Reporting those as a missing MODEL is a wrong
+        # answer with a confident stable code attached.
+        (404, "video not found: vid_123", nRouterError),
         (429, "rate limit exceeded", nRouterRateLimitError),
         (503, "authentication is temporarily unavailable", nRouterServiceError),
     ],
@@ -108,6 +118,7 @@ def test_every_error_class_the_api_contract_names_is_importable():
     """`nrouter-app/src/data/api-reference/api-contract.ts` publishes these class
     names to customers. A name in the docs with no class behind it is a lie."""
     for cls in (
+        nRouterBudgetExceededError,
         nRouterRequestError,
         nRouterGuardrailBlockedError,
         nRouterAuthenticationError,
@@ -117,3 +128,20 @@ def test_every_error_class_the_api_contract_names_is_importable():
         nRouterServiceError,
     ):
         assert issubclass(cls, nRouterError)
+
+
+def test_a_budget_ceiling_is_not_swallowed_by_a_credit_handler():
+    """`except nRouterCreditError` must NOT catch a budget refusal.
+
+    If it did, the caller would be told to top up while the actual fix is to
+    raise a budget — and topping up would not clear the refusal.
+    """
+    assert not issubclass(nRouterBudgetExceededError, nRouterCreditError)
+    assert not issubclass(nRouterCreditError, nRouterBudgetExceededError)
+
+
+def test_a_generic_404_is_not_reported_as_a_missing_model():
+    err = status_error(404, "video not found: vid_123")
+    with pytest.raises(nRouterError) as caught:
+        _maybe_raise_nrouter_error(err)
+    assert not isinstance(caught.value, nRouterNotFoundError)

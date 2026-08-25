@@ -1,6 +1,6 @@
 {
   "$schema": "https://nrouter.ai/sdk-spec/v1",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "base_url": "https://api.nrouter.ai/v1",
   "env_var": "NROUTER_API_KEY",
   "response_headers": {
@@ -83,7 +83,10 @@
       "type": "string",
       "description": "nRouter response-cache outcome for this request",
       "always": false,
-      "values": ["hit", "miss"]
+      "values": [
+        "hit",
+        "miss"
+      ]
     },
     "x-nr-response-cache-age": {
       "type": "integer",
@@ -92,30 +95,50 @@
     }
   },
   "errors": {
+    "invalid_request": {
+      "http": 400,
+      "class": "nRouterRequestError",
+      "description": "Invalid JSON or request shape"
+    },
     "guardrail_blocked": {
       "http": 400,
       "class": "nRouterGuardrailBlockedError",
-      "description": "Guardrail blocked the request"
+      "description": "Guardrail denied the request"
+    },
+    "invalid_api_key": {
+      "http": 401,
+      "class": "nRouterAuthenticationError",
+      "description": "Virtual-key authentication refused; see x-nr-auth-reason"
     },
     "insufficient_credits": {
       "http": 402,
       "class": "nRouterCreditError",
-      "description": "Not enough credits"
+      "description": "Reserve failed; nothing was spent"
+    },
+    "model_not_found": {
+      "http": 404,
+      "class": "nRouterNotFoundError",
+      "description": "Model alias absent or not visible to this key"
     },
     "rate_limit_exceeded": {
       "http": 429,
       "class": "nRouterRateLimitError",
-      "description": "RPM limit exceeded"
+      "description": "RPM limit exceeded; see x-nr-limit-source"
     },
     "tpm_limit_exceeded": {
       "http": 429,
       "class": "nRouterRateLimitError",
-      "description": "TPM limit exceeded"
+      "description": "TPM limit exceeded; see x-nr-limit-source"
     },
     "credit_check_failed": {
       "http": 503,
       "class": "nRouterServiceError",
       "description": "Credit system unavailable"
+    },
+    "service_unavailable": {
+      "http": 503,
+      "class": "nRouterServiceError",
+      "description": "A required gateway dependency is unavailable"
     }
   },
   "supported_endpoints": [

@@ -11,6 +11,7 @@ from openai import APIStatusError, AsyncOpenAI as _AsyncOpenAI, OpenAI as _OpenA
 
 from nroutersdk._errors import (
     nRouterAuthenticationError,
+    nRouterBudgetExceededError,
     nRouterCreditError,
     nRouterError,
     nRouterGuardrailBlockedError,
@@ -105,10 +106,23 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
         ) from err
 
     if status == 402:
+        # THREE conditions share this status and two are budget ceilings, whose
+        # fix is the opposite of a credit shortfall's: raise the budget, not top
+        # up. The gateway's own wording is the only discriminator it gives us,
+        # and it is stable — `GatewayError::{BudgetExceeded, ScopedBudgetExceeded}`
+        # both start their Display with "budget".
+        if message.lstrip().lower().startswith("budget"):
+            raise nRouterBudgetExceededError(message, request_id=request_id) from err
         raise nRouterCreditError(message, request_id=request_id) from err
 
     if status == 404:
-        raise nRouterNotFoundError(message, request_id=request_id) from err
+        # Scoped to MODELS. A 404 is also a missing video job, an unknown MCP
+        # server or an unknown agent run; calling those `model_not_found` is a
+        # wrong answer with a confident stable code on it. Anything we cannot
+        # identify keeps the base class rather than a fabricated one.
+        if "model" in message.lower():
+            raise nRouterNotFoundError(message, request_id=request_id) from err
+        raise nRouterError(message, request_id=request_id, status_code=404) from err
 
     if status == 429:
         retry_after = headers.get("retry-after")

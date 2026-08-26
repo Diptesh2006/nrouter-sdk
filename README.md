@@ -28,15 +28,32 @@ print(f"Cost: ${client.last_response.cost}")
 
 ### Other Branded SDKs
 
-Four more branded packages exist, each a thin wrapper pre-configured for nRouter (basic
-wrappers, not yet at Python's feature depth — see each package's own README):
+Eight more branded packages, each pre-configured for nRouter. Every one of them
+resolves `NROUTER_API_KEY`, validates the `sk-nrouter-` prefix before any request, and
+points at `https://api.nrouter.ai/v1`:
 
-| Language | Install | Package |
-|----------|---------|---------|
-| **TypeScript / JS** | `npm install @nrouter/sdk` | [`sdks/js/`](sdks/js/) |
-| **Java** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) |
-| **Rust** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) |
-| **R** | `remotes::install_github(..., subdir = "nrouter-sdk/sdks/r")` | [`sdks/r/`](sdks/r/) |
+| Language | Install | Package | Typed errors | `x-nr-*` metadata |
+|----------|---------|---------|---|---|
+| **TypeScript / JS** | `npm install @nrouter/sdk` | [`sdks/js/`](sdks/js/) | vendor SDK's | via `.asResponse()` |
+| **Java** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) | vendor SDK's | via an OkHttp interceptor |
+| **Kotlin** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
+| **Android** | Maven `ai.nrouter:nrouter-sdk-android` | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
+| **Swift** | SwiftPM `nrouter-sdk-swift` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
+| **Rust** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
+| **Dart / Flutter** | `dart pub add nrouter` | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
+| **R** | `install.packages("nrouter", repos = "https://nrouterai.r-universe.dev")` | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
+
+The JS and Java SDKs extend a vendor OpenAI client, which owns the transport and its own
+error types; the rest are native clients that map the gateway's nine stable error codes to
+typed errors and hand back all thirteen `x-nr-*` headers beside every response.
+
+**Every SDK is held to one contract.** `conformance/check_conformance.py` reads
+[`spec/nrouter-sdk-spec.json`](spec/nrouter-sdk-spec.json) and fails if any SDK drifts on
+the base URL, the environment variable, the key prefix, a response header or an error code.
+It needs no toolchains, and its `--self-test` proves it goes red rather than merely
+printing green. See [`conformance/`](conformance/).
+
+Publishing each package is documented in its own `PUBLISHING.md`, per registry.
 
 ### Any Other Language (OpenAI SDK)
 ```

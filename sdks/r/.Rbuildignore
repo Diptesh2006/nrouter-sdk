@@ -1,0 +1,6 @@
+# Repo-facing files that are not part of the installable package. CRAN flags
+# anything non-standard at the top level, so these are excluded from the tarball
+# while staying in the repository where a maintainer needs them.
+^PUBLISHING\.md$
+^LICENSE\.note$
+^\.Rbuildignore$

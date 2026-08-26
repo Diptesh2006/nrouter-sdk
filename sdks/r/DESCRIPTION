@@ -1,14 +1,22 @@
 Package: nrouter
 Type: Package
 Title: OpenAI-Compatible SDK for the nRouter LLM Gateway
-Version: 1.0.0
+Version: 2.1.0
 Authors@R: person("nRouter", email = "hello@nrouter.ai", role = c("aut", "cre"))
-Description: A thin client for the nRouter LLM gateway (<https://nrouter.ai>),
-    an OpenAI-compatible API. No official OpenAI SDK exists for R, so this
-    package calls the HTTP API directly via httr.
+Description: A client for the nRouter LLM gateway (<https://nrouter.ai>), an
+    OpenAI-compatible API giving one key access to models across six provider
+    clouds. No official OpenAI SDK exists for R, so this package calls the HTTP
+    API directly via 'httr'. Gateway refusals are raised as classed conditions,
+    and per-request cost and token metadata are returned alongside every
+    response.
 License: MIT + file LICENSE
+URL: https://nrouter.ai, https://github.com/nRouterAI/nrouter-sdk
+BugReports: https://github.com/nRouterAI/nrouter-sdk/issues
 Encoding: UTF-8
 Imports:
     httr,
     jsonlite
-RoxygenNote: 7.3.1
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.0

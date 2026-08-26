@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Declared by the library so a consumer cannot ship an app that builds
+         cleanly and then fails every call at runtime for want of it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+</manifest>

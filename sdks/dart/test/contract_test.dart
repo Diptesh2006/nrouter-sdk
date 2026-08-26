@@ -1,0 +1,197 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:nrouter/nrouter.dart';
+import 'package:test/test.dart';
+
+/// The gateway contract this SDK must keep, asserted against the values in
+/// `spec/nrouter-sdk-spec.json`.
+void main() {
+  group('constants', () {
+    test('match the spec', () {
+      expect(NRouter.defaultBaseUrl, 'https://api.nrouter.ai/v1');
+      expect(NRouter.envKey, 'NROUTER_API_KEY');
+      expect(NRouter.keyPrefix, 'sk-nrouter-');
+    });
+
+    test('every spec header is read', () {
+      const expected = [
+        'x-nr-request-id', 'x-nr-request-cost', 'x-nr-cost-status', 'x-nr-model',
+        'x-nr-input-tokens', 'x-nr-output-tokens', 'x-nr-total-tokens',
+        'x-nr-cache-read-tokens', 'x-nr-cache-write-tokens', 'x-nr-limit-source',
+        'x-nr-auth-reason', 'x-nr-response-cache', 'x-nr-response-cache-age',
+      ];
+      expect(NRouterResponseMeta.headerNames.length, 13);
+      for (final name in expected) {
+        expect(NRouterResponseMeta.headerNames, contains(name),
+            reason: '$name is not read by this SDK');
+      }
+    });
+  });
+
+  group('error mapping', () {
+    NRouterError build(String code) => NRouterError.fromCode(
+          NRouterErrorBody(message: 'boom', code: code),
+        );
+
+    test('each gateway code maps to its type', () {
+      expect(build('invalid_request'), isA<NRouterRequestError>());
+      expect(build('guardrail_blocked'), isA<NRouterGuardrailBlockedError>());
+      expect(build('invalid_api_key'), isA<NRouterAuthenticationError>());
+      expect(build('insufficient_credits'), isA<NRouterCreditError>());
+      expect(build('model_not_found'), isA<NRouterNotFoundError>());
+      expect(build('rate_limit_exceeded'), isA<NRouterRateLimitError>());
+      expect(build('tpm_limit_exceeded'), isA<NRouterRateLimitError>());
+      expect(build('credit_check_failed'), isA<NRouterServiceError>());
+      expect(build('service_unavailable'), isA<NRouterServiceError>());
+    });
+
+    test('an unknown code is never reclassified', () {
+      expect(build('some_future_code'), isA<NRouterOtherError>());
+    });
+
+    test('only transient failures are retryable', () {
+      for (final code in [
+        'rate_limit_exceeded',
+        'service_unavailable',
+        'credit_check_failed',
+      ]) {
+        expect(build(code).isRetryable, isTrue, reason: code);
+      }
+      for (final code in [
+        'invalid_request',
+        'guardrail_blocked',
+        'invalid_api_key',
+        'insufficient_credits',
+        'model_not_found',
+      ]) {
+        expect(build(code).isRetryable, isFalse,
+            reason: '$code must not be advertised as retryable');
+      }
+      expect(const NRouterTransportError('dns').isRetryable, isTrue);
+    });
+  });
+
+  group('response metadata', () {
+    test('an unpriced response reports no cost rather than zero', () {
+      final meta = NRouterResponseMeta.fromHeaders({
+        'x-nr-cost-status': 'unpriced',
+        'x-nr-request-id': 'req_1',
+      });
+      expect(meta.cost, isNull, reason: 'unpriced must not become a number');
+      expect(meta.isPriced, isFalse);
+      expect(meta.requestId, 'req_1');
+    });
+
+    test('a priced response parses its numbers', () {
+      final meta = NRouterResponseMeta.fromHeaders({
+        'x-nr-request-cost': '0.00042',
+        'x-nr-cost-status': 'exact',
+        'x-nr-input-tokens': '11',
+        'x-nr-response-cache': 'hit',
+        'x-nr-response-cache-age': '7',
+      });
+      expect(meta.cost, 0.00042);
+      expect(meta.isPriced, isTrue);
+      expect(meta.inputTokens, 11);
+      expect(meta.responseCache, 'hit');
+      expect(meta.responseCacheAge, 7);
+    });
+  });
+
+  group('key handling', () {
+    test('a key without the prefix is refused before any request', () {
+      expect(() => NRouter(apiKey: 'sk-openai-nope'),
+          throwsA(isA<NRouterTransportError>()));
+      expect(() => NRouter(apiKey: ''), throwsA(isA<NRouterTransportError>()));
+      expect(NRouter.validateApiKey('sk-nrouter-abc'), 'sk-nrouter-abc');
+    });
+
+    test('a trailing slash on the base URL is normalised', () {
+      final client = NRouter(
+        apiKey: 'sk-nrouter-abc',
+        baseUrl: 'https://api.nrouter.ai/v1/',
+      );
+      expect(client.baseUrl, 'https://api.nrouter.ai/v1');
+    });
+  });
+
+  group('over the wire', () {
+    test('a call carries the key and returns the gateway metadata', () async {
+      late http.Request seen;
+      final mock = MockClient((request) async {
+        seen = request;
+        return http.Response(
+          jsonEncode({'choices': []}),
+          200,
+          headers: {
+            'content-type': 'application/json',
+            'x-nr-request-id': 'req_42',
+            'x-nr-request-cost': '0.00042',
+            'x-nr-cost-status': 'exact',
+            'x-nr-input-tokens': '11',
+          },
+        );
+      });
+
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+      final result = await client.chatCompletions({'model': 'claude-sonnet-4-5'});
+
+      expect(seen.headers['Authorization'], 'Bearer sk-nrouter-test');
+      expect(seen.url.path, '/v1/chat/completions');
+      expect(result.meta.requestId, 'req_42');
+      expect(result.meta.cost, 0.00042);
+      expect(result.meta.inputTokens, 11);
+    });
+
+    test('a gateway error becomes its typed exception with metadata', () async {
+      final mock = MockClient((request) async => http.Response(
+            jsonEncode({
+              'error': {'message': 'slow down', 'code': 'tpm_limit_exceeded'}
+            }),
+            429,
+            headers: {
+              'content-type': 'application/json',
+              'x-nr-request-id': 'req_9',
+              'x-nr-limit-source': 'tpm',
+            },
+          ));
+
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+
+      await expectLater(
+        client.chatCompletions({}),
+        throwsA(
+          isA<NRouterRateLimitError>()
+              .having((e) => e.body?.code, 'code', 'tpm_limit_exceeded')
+              .having((e) => e.body?.limitSource, 'limitSource', 'tpm')
+              .having((e) => e.body?.requestId, 'requestId', 'req_9')
+              .having((e) => e.isRetryable, 'isRetryable', isTrue),
+        ),
+      );
+    });
+
+    test('a bare error envelope still yields a typed error with its code',
+        () async {
+      // A proxy that unwraps `error` must not downgrade a typed error. Assert
+      // the CODE, not just the type — the HTTP-status fallback would produce
+      // the same type for a 402 even if the bare envelope were ignored.
+      final mock = MockClient((request) async => http.Response(
+            jsonEncode({'message': 'no credits', 'code': 'insufficient_credits'}),
+            402,
+            headers: {'content-type': 'application/json'},
+          ));
+
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+      await expectLater(
+        client.chatCompletions({}),
+        throwsA(
+          isA<NRouterCreditError>()
+              .having((e) => e.body?.code, 'code', 'insufficient_credits')
+              .having((e) => e.body?.message, 'message', 'no credits'),
+        ),
+      );
+    });
+  });
+}

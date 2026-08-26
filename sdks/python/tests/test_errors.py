@@ -32,14 +32,26 @@ from nroutersdk import (
 from nroutersdk.client import _maybe_raise_nrouter_error
 
 
-def status_error(status: int, message: str, headers: dict | None = None) -> APIStatusError:
-    """An APIStatusError carrying the gateway's real envelope."""
+def status_error(
+    status: int,
+    message: str,
+    headers: dict | None = None,
+    code: str | None = None,
+) -> APIStatusError:
+    """An APIStatusError carrying the gateway's real envelope.
+
+    `code` is optional because the gateway does not always send one; omitting it
+    is the shape this SDK saw before 2.1.0 and must keep handling.
+    """
     request = httpx.Request("POST", "https://api.nrouter.ai/v1/chat/completions")
+    error: dict = {"type": "gateway_error", "message": message}
+    if code is not None:
+        error["code"] = code
     response = httpx.Response(
         status,
         request=request,
         headers=headers or {},
-        json={"error": {"type": "gateway_error", "message": message}},
+        json={"error": error},
     )
     return APIStatusError(message, response=response, body=None)
 
@@ -145,3 +157,32 @@ def test_a_generic_404_is_not_reported_as_a_missing_model():
     with pytest.raises(nRouterError) as caught:
         _maybe_raise_nrouter_error(err)
     assert not isinstance(caught.value, nRouterNotFoundError)
+
+
+def test_a_tpm_refusal_reports_its_own_code_not_the_class_default():
+    """`tpm_limit_exceeded` and `rate_limit_exceeded` share status 429.
+
+    Both correctly raise nRouterRateLimitError, but reporting the class default
+    `rate_limit_exceeded` for a TPM refusal is a wrong stable code on a right
+    exception — and `code` is what a caller branches on when `limit_source` is
+    absent.
+    """
+    with pytest.raises(nRouterRateLimitError) as caught:
+        _maybe_raise_nrouter_error(
+            status_error(429, "token rate exceeded", code="tpm_limit_exceeded")
+        )
+    assert caught.value.code == "tpm_limit_exceeded"
+
+
+def test_an_rpm_refusal_keeps_its_own_code_too():
+    with pytest.raises(nRouterRateLimitError) as caught:
+        _maybe_raise_nrouter_error(
+            status_error(429, "too many requests", code="rate_limit_exceeded")
+        )
+    assert caught.value.code == "rate_limit_exceeded"
+
+
+def test_a_429_without_a_code_falls_back_to_the_class_default():
+    with pytest.raises(nRouterRateLimitError) as caught:
+        _maybe_raise_nrouter_error(status_error(429, "too many requests"))
+    assert caught.value.code == "rate_limit_exceeded"

@@ -84,10 +84,16 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
     error = body.get("error")
     if isinstance(error, dict):
         message = error.get("message") or str(err)
+        # The gateway names a stable code inside the error object when it can.
+        # It is not the classifier — status is, per the note above — but where
+        # two codes share one status it is the only thing that separates them.
+        gateway_code = error.get("code") if isinstance(error.get("code"), str) else None
     elif isinstance(error, str):
         message = error
+        gateway_code = None
     else:
         message = str(err)
+        gateway_code = None
 
     headers = err.response.headers
     request_id = headers.get("x-nr-request-id") or body.get("request_id")
@@ -133,6 +139,9 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             # not attribute the refusal — never a guessed "rpm".
             limit_source=headers.get("x-nr-limit-source"),
             retry_after=int(retry_after) if retry_after and retry_after.isdigit() else None,
+            # `tpm_limit_exceeded` and `rate_limit_exceeded` share this status;
+            # keep whichever the gateway named rather than the class default.
+            code=gateway_code,
         ) from err
 
     if status == 503:

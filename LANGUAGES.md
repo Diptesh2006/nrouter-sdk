@@ -517,7 +517,33 @@ Console.WriteLine(response.Content[0].Text);
 
 ---
 
-## Rust
+## Rust (Branded SDK)
+
+```toml
+[dependencies]
+nrouter = "2.1"
+```
+
+```rust
+use serde_json::json;
+
+let client = nrouter::http::Client::from_env()?;      // reads NROUTER_API_KEY
+let out = client.chat_completions(&json!({
+    "model": "claude-sonnet-4-5",
+    "messages": [{"role": "user", "content": "Hello!"}]
+})).await?;
+
+// Unpriced is unknown, not free — never render a None cost as 0.0.
+match out.meta.cost {
+    Some(usd) => println!("cost ${usd}"),
+    None => println!("unpriced ({:?})", out.meta.cost_status),
+}
+```
+
+`nrouter::client()` also returns an `async-openai` client pointed at the gateway,
+for the OpenAI-shaped surface. See [`sdks/rust/`](sdks/rust/).
+
+### Rust (Plain OpenAI SDK)
 
 ```toml
 # Cargo.toml
@@ -558,7 +584,35 @@ async fn main() {
 
 ---
 
-## Kotlin
+## Kotlin (Branded SDK)
+
+```kotlin
+// build.gradle.kts
+implementation("ai.nrouter:nrouter-sdk:2.1.0")
+```
+
+```kotlin
+import ai.nrouter.sdk.NRouter
+import org.json.JSONObject
+
+val client = NRouter()                        // reads NROUTER_API_KEY
+
+val result = client.chatCompletions(
+    JSONObject()
+        .put("model", "claude-sonnet-4-5")
+        .put("messages", listOf(mapOf("role" to "user", "content" to "Hello!")))
+)
+
+// Typed errors from the gateway's nine codes, and all 13 x-nr-* headers.
+// Unpriced is unknown, not free — never render a null cost as 0.
+println(if (result.meta.isPriced) "cost $${result.meta.cost}" else "unpriced")
+```
+
+**Android:** use `ai.nrouter:nrouter-sdk-android` instead — `System.getenv` returns
+null on Android, so the env fallback silently resolves to nothing there. See
+[`sdks/android/`](sdks/android/).
+
+### Kotlin (Plain OpenAI SDK)
 
 ```kotlin
 // Using OpenAI Kotlin SDK
@@ -582,7 +636,31 @@ println(response.choices[0].message.content)
 
 ---
 
-## Swift
+## Swift (Branded SDK)
+
+```swift
+// Package.swift
+.package(url: "https://github.com/nRouterAI/nrouter-sdk-swift.git", from: "2.1.0")
+```
+
+```swift
+import NRouter
+
+let client = try NRouter(apiKey: myKey)        // no env on iOS — pass the key
+
+let result = try await client.chatCompletions([
+    "model": "claude-sonnet-4-5",
+    "messages": [["role": "user", "content": "Hello!"]],
+])
+
+// Unpriced is unknown, not free — never render a nil cost as 0.
+print(result.meta.isPriced ? "cost $\(result.meta.cost!)" : "unpriced")
+```
+
+Zero external dependencies; URLSession and async/await only. See
+[`sdks/swift/`](sdks/swift/).
+
+### Swift (Plain OpenAI SDK)
 
 ```swift
 import OpenAI
@@ -604,7 +682,34 @@ print(result.choices[0].message.content ?? "")
 
 ---
 
-## Dart / Flutter
+## Dart / Flutter (Branded SDK)
+
+```yaml
+dependencies:
+  nrouter: ^2.1.0
+```
+
+```dart
+import 'package:nrouter/nrouter.dart';
+
+final client = NRouter(apiKey: myKey);
+
+final result = await client.chatCompletions({
+  'model': 'claude-sonnet-4-5',
+  'messages': [{'role': 'user', 'content': 'Hello!'}],
+});
+
+// Unpriced is unknown, not free — never render a null cost as 0.
+print(result.meta.isPriced ? 'cost \$${result.meta.cost}' : 'unpriced');
+client.close();
+```
+
+One dependency (`http`), so the same code runs on Flutter mobile, desktop, **web**
+and the plain Dart VM. There is deliberately no `NROUTER_API_KEY` fallback:
+`Platform.environment` needs `dart:io`, which does not exist in a web build. See
+[`sdks/dart/`](sdks/dart/).
+
+### Dart / Flutter (Plain OpenAI SDK)
 
 ```yaml
 # pubspec.yaml

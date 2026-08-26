@@ -7,48 +7,48 @@ assert.throws(
   "invalid keys should be rejected before a request is made"
 );
 
-let requestedUrl = "";
-let requestedAuth = "";
-global.fetch = async (url, options) => {
-  requestedUrl = url;
-  requestedAuth = options.headers.Authorization;
-  return {
-    ok: true,
-    status: 200,
-    async json() {
-      return {
-        data: [{ id: "claude-haiku", object: "model", owned_by: "nrouter" }],
-      };
-    },
-  };
-};
+function authOf(init) {
+  const h = init && init.headers;
+  if (!h) return undefined;
+  if (typeof h.get === "function") return h.get("authorization");
+  return h.Authorization || h.authorization;
+}
 
 (async () => {
-  const client = new nRouter({ apiKey: "sk-nrouter-test" });
+  // Model listing must travel the client's OWN request pipeline, so a caller's
+  // fetch override / timeout / proxy / default headers apply to it too. Poison
+  // the global fetch to prove the configured transport is what runs.
+  global.fetch = async () => {
+    throw new Error("global fetch must not be used when a transport is configured");
+  };
+
+  let seenUrl = "";
+  let seenAuth = "";
+  let calls = 0;
+  const client = new nRouter({
+    apiKey: "sk-nrouter-test",
+    fetch: async (url, init) => {
+      calls += 1;
+      seenUrl = String(url);
+      seenAuth = authOf(init);
+      return new Response(
+        JSON.stringify({
+          object: "list",
+          data: [{ id: "claude-haiku", object: "model", owned_by: "nrouter" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    },
+  });
+
   const models = await client.nrouterModels.list();
 
-  assert.equal(requestedUrl, "https://api.nrouter.ai/v1/models");
-  assert.equal(requestedAuth, "Bearer sk-nrouter-test");
+  assert.equal(calls, 1, "the configured transport should be the one used");
+  assert.equal(seenUrl, "https://api.nrouter.ai/v1/models");
+  assert.equal(seenAuth, "Bearer sk-nrouter-test");
   assert.equal(models.data.length, 1);
   assert.equal(models.data[0].id, "claude-haiku");
   assert.equal(client.nrouter_models, client.nrouterModels);
-
-  // A caller-supplied `fetch` override must win over the global one, so a
-  // configured proxy / timeout / instrumentation hook still applies to model
-  // discovery. Poison the global to prove the override is the one used.
-  let overrideCalls = 0;
-  global.fetch = async () => {
-    throw new Error("global fetch must not be used when an override is configured");
-  };
-  const overridden = new nRouter({
-    apiKey: "sk-nrouter-test",
-    fetch: async () => {
-      overrideCalls += 1;
-      return { ok: true, status: 200, async json() { return { data: [] }; } };
-    },
-  });
-  await overridden.nrouterModels.list();
-  assert.equal(overrideCalls, 1, "the configured fetch override should be used");
 
   console.log("JS smoke tests passed");
 })().catch((error) => {

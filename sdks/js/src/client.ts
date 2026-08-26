@@ -31,8 +31,19 @@ export type NRouterModelList = {
   [key: string]: unknown;
 };
 
+type FetchLike = (url: string, init?: any) => Promise<any>;
+
 export class NRouterModels {
-  constructor(private readonly apiKey: string, private readonly baseURL: string) {}
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    /**
+     * The transport the client was configured with. Falls back to the global
+     * `fetch` only when the caller passed no override, so a configured proxy,
+     * timeout or instrumentation hook still applies to model discovery.
+     */
+    private readonly fetchImpl?: FetchLike,
+  ) {}
 
   /**
    * List models using nRouter's raw JSON response.
@@ -42,9 +53,12 @@ export class NRouterModels {
    * model discovery remains reliable.
    */
   async list(): Promise<NRouterModelList> {
-    const fetchImpl = (globalThis as any).fetch;
+    const fetchImpl = this.fetchImpl ?? ((globalThis as any).fetch as FetchLike | undefined);
     if (typeof fetchImpl !== "function") {
-      throw new Error("nRouter model listing requires a global fetch implementation.");
+      throw new Error(
+        "nRouter model listing requires a fetch implementation: pass `fetch` to the " +
+          "nRouter constructor, or run on a runtime with a global fetch.",
+      );
     }
 
     const response = await fetchImpl(`${this.baseURL.replace(/\/+$/, "")}/models`, {
@@ -90,7 +104,11 @@ export class nRouter extends OpenAI {
       baseURL,
     });
 
-    this.nrouterModels = new NRouterModels(apiKey, baseURL);
+    this.nrouterModels = new NRouterModels(
+      apiKey,
+      baseURL,
+      (options as { fetch?: FetchLike } | undefined)?.fetch,
+    );
     this.nrouter_models = this.nrouterModels;
   }
 }

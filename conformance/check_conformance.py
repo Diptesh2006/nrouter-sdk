@@ -24,6 +24,7 @@ this gate exists to prevent.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -145,6 +146,49 @@ def load_spec() -> dict:
     return json.loads(SPEC.read_text())
 
 
+def check_swift_manifests(root: Path = ROOT) -> list[str]:
+    """The Swift package is declared twice; make them agree.
+
+    SwiftPM reads `Package.swift` from the repository ROOT, so the shipping
+    manifest is `Package.swift` at the SDK root (which is the public repo's
+    root). `sdks/swift/Package.swift` is kept for the local dev loop. Only the
+    root one reaches a consumer, so a platform floor or a product name changed
+    in the nested one alone builds fine locally and is wrong for everybody —
+    silently, which is why this is a check and not a comment.
+    """
+    failures: list[str] = []
+    shipping = root / "Package.swift"
+    nested = root / "sdks/swift/Package.swift"
+    if not shipping.exists():
+        return [f"swift: {shipping.name} is missing from the SDK root — SwiftPM "
+                f"reads the manifest from the repository root and consumers "
+                f"cannot resolve the package without it"]
+    if not nested.exists():
+        return []
+
+    def platforms(text: str) -> set[str]:
+        block = re.search(r"platforms:\s*\[(.*?)\]", text, re.S)
+        return set(re.findall(r"\.(\w+)\(\.(\w+)\)", block.group(1))) if block else set()
+
+    def names(text: str, kind: str) -> set[str]:
+        return set(re.findall(rf'\.{kind}\(\s*name:\s*"([^"]+)"', text))
+
+    a, b = shipping.read_text(), nested.read_text()
+
+    if platforms(a) != platforms(b):
+        failures.append(
+            f"swift: platform floors differ between Package.swift and "
+            f"sdks/swift/Package.swift — {sorted(platforms(a))} vs {sorted(platforms(b))}"
+        )
+    for kind in ("library", "target", "testTarget"):
+        if names(a, kind) != names(b, kind):
+            failures.append(
+                f"swift: {kind} names differ between the two manifests — "
+                f"{sorted(names(a, kind))} vs {sorted(names(b, kind))}"
+            )
+    return failures
+
+
 def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
     """Return a list of failure strings; empty means conformant."""
     spec = spec or load_spec()
@@ -251,6 +295,7 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
                     f"response with that status cannot be classified"
                 )
 
+    failures.extend(check_swift_manifests(root))
     return failures
 
 
@@ -301,6 +346,12 @@ def self_test() -> int:
             shutil.copy(src, dst)
         (fake_root / "spec").mkdir(parents=True, exist_ok=True)
         shutil.copy(SPEC, fake_root / "spec" / SPEC.name)
+        for extra in ("Package.swift", "sdks/swift/Package.swift"):
+            src = ROOT / extra
+            if src.exists():
+                dst = fake_root / extra
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(src, dst)
 
         if check(root=fake_root):
             problems.append("an unmodified copy of the tree did not pass")
@@ -330,6 +381,27 @@ def self_test() -> int:
         if not any("retired spelling" in f for f in check(root=fake_root)):
             problems.append("a retired spelling in a real SDK did not fail the check")
         victim.write_text(text)
+
+        # The two Swift manifests must be held together: only the root one
+        # ships, so a floor changed in the nested one alone is invisible.
+        victim = fake_root / "sdks/swift/Package.swift"
+        if victim.exists():
+            text = victim.read_text()
+            victim.write_text(text.replace(".macOS(.v12)", ".macOS(.v13)"))
+            if not any("platform floors differ" in f for f in check(root=fake_root)):
+                problems.append("a Swift manifest platform drift did not fail the check")
+            victim.write_text(text)
+
+        # A missing root manifest must ERROR: without it SwiftPM cannot resolve
+        # the package at all.
+        shipping = fake_root / "Package.swift"
+        if shipping.exists():
+            text = shipping.read_text()
+            shipping.unlink()
+            if not any("reads the manifest from the repository root" in f
+                       for f in check(root=fake_root)):
+                problems.append("a missing root Package.swift did not fail the check")
+            shipping.write_text(text)
 
         # Remove a whole SDK file: must ERROR, never silently skip.
         (fake_root / "sdks/rust/src/errors.rs").unlink()

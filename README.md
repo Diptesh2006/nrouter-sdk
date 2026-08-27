@@ -46,7 +46,7 @@ nothing):
 | **Java** | Maven `ai.nrouter:nrouter-sdk` | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | vendor SDK's | via an OkHttp interceptor |
 | **Kotlin** | Maven `ai.nrouter:nrouter-sdk-kotlin` | ⛔ not published | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
 | **Android** | Maven `ai.nrouter:nrouter-sdk-android` | ⛔ not published | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
-| **Swift** | SwiftPM `nrouter-sdk-swift` | ⛔ not published (repo not created) | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
+| **Swift** | SwiftPM, this repo's URL | ⛔ not published (needs a semver tag) | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
 | **Rust** | `cargo add nrouter` | ⛔ not published | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
 | **Dart / Flutter** | `dart pub add nrouter` | ⛔ not published | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
 | **R** | `install.packages("nrouter", repos = "https://nrouterai.r-universe.dev")` | ⛔ not published | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
@@ -74,6 +74,16 @@ It needs no toolchains, and its `--self-test` proves it goes red rather than mer
 printing green. See [`conformance/`](conformance/).
 
 Publishing each package is documented in its own `PUBLISHING.md`, per registry.
+
+Swift is the one that does not use a registry: SwiftPM resolves a git repo by
+tag, and it reads `Package.swift` from the repository ROOT. That is what
+[`Package.swift`](Package.swift) here is for — this directory is the root of the
+public `nrouter-sdk` repo, and the manifest uses `path:` to reach
+`sdks/swift/`, so the Swift sources stay beside the other eight. Consumers use:
+
+```swift
+.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.1.0")
+```
 
 ### Any Other Language (OpenAI SDK)
 ```

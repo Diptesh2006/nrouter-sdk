@@ -42,7 +42,7 @@ nothing):
 
 | Language | Install | Registry status | Package | Typed errors | `x-nr-*` metadata |
 |----------|---------|---|---------|---|---|
-| **TypeScript / JS** | `npm install @nrouter/sdk` | ⛔ not published | [`sdks/js/`](sdks/js/) | vendor SDK's | via `.asResponse()` |
+| **TypeScript / JS** | `npm install @nrouter_ai/sdk` | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | vendor SDK's | via `.asResponse()` |
 | **Java** | Maven `ai.nrouter:nrouter-sdk` | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | vendor SDK's | via an OkHttp interceptor |
 | **Kotlin** | Maven `ai.nrouter:nrouter-sdk-kotlin` | ⛔ not published | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
 | **Android** | Maven `ai.nrouter:nrouter-sdk-android` | ⛔ not published | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
@@ -56,7 +56,7 @@ Verify any row rather than trusting it:
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" https://pypi.org/pypi/nrouter-sdk/json
-curl -s -o /dev/null -w "%{http_code}\n" https://registry.npmjs.org/@nrouter%2Fsdk
+curl -s -o /dev/null -w "%{http_code}\n" https://registry.npmjs.org/@nrouter_ai%2Fsdk
 # crates.io blocks curl's default user agent with a 403, which is NOT an
 # answer about the crate. Send one it accepts.
 curl -s -A "nrouter-registry-check" -o /dev/null -w "%{http_code}\n" https://crates.io/api/v1/crates/nrouter
@@ -146,7 +146,7 @@ example for any of these without first adding the route to the gateway and the s
 | Language | Install | Example |
 |----------|---------|---------|
 | **Python (branded)** | `pip install nrouter-sdk` | [`sdks/python/`](sdks/python/) |
-| **TypeScript / JS (branded)** | `npm install @nrouter/sdk` | [`sdks/js/`](sdks/js/) · [`examples/hello-world/typescript.ts`](examples/hello-world/typescript.ts), [`javascript.js`](examples/hello-world/javascript.js) |
+| **TypeScript / JS (branded)** | `npm install @nrouter_ai/sdk` | [`sdks/js/`](sdks/js/) · [`examples/hello-world/typescript.ts`](examples/hello-world/typescript.ts), [`javascript.js`](examples/hello-world/javascript.js) |
 | **Java (branded)** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) · [`examples/hello-world/java.java`](examples/hello-world/java.java) |
 | **Rust (branded)** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) · [`examples/hello-world/rust.rs`](examples/hello-world/rust.rs) |
 | **R (branded)** | `remotes::install_github(..., subdir = "nrouter-sdk/sdks/r")` | [`sdks/r/`](sdks/r/) · [`examples/hello-world/r.R`](examples/hello-world/r.R) |
@@ -211,7 +211,7 @@ nrouter-sdk/
 ├── spec/nrouter-sdk-spec.json       ← Source of truth (headers, errors, endpoints, Rule #14)
 ├── sdks/
 │   ├── python/                      ← Branded SDK → pip install nrouter-sdk
-│   ├── js/                          ← Branded SDK → npm install @nrouter/sdk
+│   ├── js/                          ← Branded SDK → npm install @nrouter_ai/sdk
 │   ├── java/                        ← Branded SDK → Maven ai.nrouter:nrouter-sdk
 │   ├── rust/                        ← Branded SDK → cargo add nrouter
 │   ├── go/                          ← Branded SDK → go get .../sdks/go

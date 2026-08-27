@@ -1,4 +1,4 @@
-# @nrouter/sdk (JS/TS)
+# @nrouter_ai/sdk (JS/TS)
 
 SDK for the [nRouter](https://nrouter.ai) LLM gateway — one API key for models across six provider clouds (Alibaba US, OpenAI, AWS Bedrock, Azure Foundry, Google Vertex AI, Anthropic). A thin wrapper
 around the official `openai` package — same API surface, pre-configured for nRouter.
@@ -6,13 +6,13 @@ around the official `openai` package — same API surface, pre-configured for nR
 ## Install
 
 ```bash
-npm install @nrouter/sdk
+npm install @nrouter_ai/sdk
 ```
 
 ## Usage
 
 ```typescript
-import { nRouter } from "@nrouter/sdk";
+import { nRouter } from "@nrouter_ai/sdk";
 
 const client = new nRouter(); // reads NROUTER_API_KEY from env
 
@@ -24,7 +24,7 @@ console.log(response.choices[0].message.content);
 ```
 
 ```javascript
-const { nRouter } = require("@nrouter/sdk");
+const { nRouter } = require("@nrouter_ai/sdk");
 
 const client = new nRouter({ apiKey: process.env.NROUTER_API_KEY });
 ```

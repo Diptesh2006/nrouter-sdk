@@ -11,7 +11,7 @@ models are published at [nrouter.ai/api/public/models](https://nrouter.ai/api/pu
 |----------|---------|---------|--------|
 | **Python** | `nrouter-sdk` | `pip install nrouter-sdk` | **Published** on PyPI — imports as `nroutersdk` |
 | **cURL** | none needed | built in | **Ready** — see `examples/curl.sh` |
-| **JavaScript / TypeScript** | `@nrouter/sdk` | — | Source in `sdks/js/`; npm publish pending |
+| **JavaScript / TypeScript** | `@nrouter_ai/sdk` | — | `npm install @nrouter_ai/sdk` — PUBLISHED; source in `sdks/js/` |
 | **Java** | — | — | Source in `sdks/java/`; not on Maven Central |
 | **Rust** | — | — | Source in `sdks/rust/`; not on crates.io |
 | **R** | — | — | Source in `sdks/r/`; not on CRAN |
@@ -103,7 +103,7 @@ audio uploads remain multipart; large JSON message bodies are not truncated by t
 
 ### Node.js
 ```typescript
-import { nRouter } from "@nrouter/sdk";
+import { nRouter } from "@nrouter_ai/sdk";
 const client = new nRouter();
 const res = await client.chat.completions.create({ model: "gpt-5.5", messages: [{ role: "user", content: "Hello!" }] });
 ```

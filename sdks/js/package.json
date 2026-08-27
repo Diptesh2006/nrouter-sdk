@@ -41,7 +41,7 @@
     "access": "public"
   },
   "dependencies": {
-    "openai": "^4.0.0"
+    "openai": "^4.50.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0"

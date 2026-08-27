@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const util = require('node:util');
 
-const { nRouter, isRetryable } = require('../dist/index');
+const { nRouter, isRetryable, nRouterError } = require('../dist/index');
 
 const KEY_PREFIX = 'sk-nrouter-';
 const ENV_KEY = 'NROUTER_API_KEY';
@@ -317,4 +317,45 @@ test('a body-read failure keeps the status and request id', async () => {
       return true;
     },
   );
+});
+
+// MEASURED: `__binaryRequest` landed in openai 4.50.0 (absent in 4.49.0). The
+// declared range was `^4.0.0`, so a consumer could resolve 4.44 — a client
+// that ignores the flag and JSON.stringify's our Uint8Array bodies into
+// {"0":82,…}. Every nr call would send corrupt data while THIS suite stayed
+// green, because the lockfile pins 4.104.0. A test, not a comment, because a
+// comment does not stop the range widening back.
+test('the openai dependency floor keeps byte request bodies working', () => {
+  const pkg = require('../package.json');
+  const range: string = pkg.dependencies.openai;
+  const floor = range.replace(/^[^0-9]*/, '');
+  const [maj, min] = floor.split('.').map(Number);
+  assert.equal(maj, 4, `unexpected major in ${range}`);
+  assert.ok(min >= 50, `openai floor ${floor} predates __binaryRequest (4.50.0); byte bodies would be corrupted`);
+});
+
+// A BigInt or a circular reference in `extra` throws before anything is sent.
+// It used to surface as a RETRYABLE transport failure, so a caller honouring
+// isRetryable() looped forever on a permanent mistake in its own input.
+test('an unencodable request body is permanent, not retryable', async () => {
+  const client = new nRouter({ apiKey: TEST_KEY, maxRetries: 0, fetch: async () => new Response('{}') });
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  for (const bad of [{ big: BigInt(1) }, circular]) {
+    await assert.rejects(
+      () => client.nr.chat({ model: 'm', prompt: 'x', extra: bad }),
+      (err: unknown) => {
+        // BOTH halves. `isRetryable` alone is not enough: it answers false for
+        // any non-nRouterError too, so a RAW TypeError escaping unnormalized
+        // would satisfy it and the test would pass while the SDK leaked a
+        // vendor-shaped failure. That is exactly what the first version of
+        // this test did — the mutation stayed green and said so.
+        assert.ok(err instanceof nRouterError, 'must be inside the SDK error hierarchy');
+        assert.equal((err as { kind?: string }).kind, 'configuration', 'local and permanent');
+        assert.equal(isRetryable(err), false, 'nothing was sent; a retry cannot help');
+        assert.match((err as Error).message, /cannot be JSON-encoded/);
+        return true;
+      },
+    );
+  }
 });

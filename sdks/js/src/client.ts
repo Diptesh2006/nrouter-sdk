@@ -357,6 +357,14 @@ export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
       // GET keeps the caller's setting: re-reading /models costs nothing.
       ...(req.method === 'GET' ? {} : { maxRetries: 0 }),
       // The vendor client would otherwise JSON-encode `body` a second time.
+      //
+      // MEASURED FLOOR: `__binaryRequest` landed in openai 4.50.0 — absent in
+      // 4.45/4.47/4.48/4.49, present in 4.50.0. package.json used to declare
+      // `^4.0.0`, so a consumer resolving 4.44 got a client that IGNORED this
+      // flag and JSON.stringify'd the Uint8Array into {"0":82,"1":73,…} —
+      // corrupt bodies on EVERY nr call — while this repo's suite stayed green
+      // because the lockfile pins 4.104.0. The floor is now ^4.50.0 and
+      // test/client.test.ts asserts it, so the range cannot quietly widen back.
       __binaryRequest: true,
     } as unknown as Record<string, unknown>;
 
@@ -393,7 +401,19 @@ interface FetchResponse {
 }
 
 function encodeJson(body: unknown): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(body ?? {}));
+  // A BigInt or a circular reference in `opts.extra` throws here, before
+  // anything is sent. It used to surface through the chat and streaming paths
+  // as a RETRYABLE transport failure, so a caller honouring isRetryable()
+  // looped forever on a permanent mistake in its own input that no retry could
+  // fix. Configuration: local, and permanent.
+  try {
+    return new TextEncoder().encode(JSON.stringify(body ?? {}));
+  } catch (err) {
+    throw configurationError(
+      `the request body cannot be JSON-encoded (${err instanceof Error ? err.message : String(err)}). ` +
+        'A BigInt or a circular reference in `extra` is the usual cause; nothing was sent.',
+    );
+  }
 }
 
 /**

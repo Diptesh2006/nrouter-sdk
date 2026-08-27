@@ -154,9 +154,20 @@ export class nRouterError extends Error {
     this.retryAfter = options.retryAfter ?? null;
     this.meta = meta;
     if (options.cause !== undefined) {
+      // SANITIZED, never the raw object. A fetch/undici failure commonly holds
+      // a reference to the originating Request — headers included — so
+      // `console.error(err)` and `util.inspect(err)` traverse `cause` and print
+      // the whole `Authorization` value. Neither `toJSON()` nor message
+      // redaction covers that path, and it is the single most common way an
+      // error reaches a log (Rule #5).
+      //
+      // The NAME is preserved because that is what the abort walk below reads,
+      // so `AbortError` and `TimeoutError` are still recognised and still
+      // report non-retryable.
+      //
       // Declared as a property rather than passed to `super(msg, {cause})`:
       // the ES2020 lib this package compiles against has no Error `cause`.
-      this.cause = options.cause;
+      this.cause = sanitizeCause(options.cause);
     }
 
     // Keep the SDK frame out of the trace where the runtime supports it.
@@ -526,7 +537,15 @@ export function parseRetryAfter(
   // RFC 9110 allows three date forms; all of them carry a comma and a
   // timezone. Requiring that shape first is what keeps a bare float, a bare
   // year, or `1e3` from being read as a date at all.
-  if (!/^[A-Za-z]{3,9},?\s+\d/.test(trimmed) || !/(GMT|UTC|[+-]\d{4})$/i.test(trimmed)) {
+  // RFC 9110 defines THREE HTTP-date forms and a recipient must accept all of
+  // them. The first two carry a comma and a timezone; the obsolete asctime
+  // form — `Sun Nov  6 08:49:37 1994` — carries NEITHER, so requiring both
+  // rejected a valid backoff. The doc comment above claimed all three were
+  // supported while the code took two, which is the sort of gap that only
+  // shows up as a customer hammering a rate limit.
+  const imf = /^[A-Za-z]{3,9},\s+\d/.test(trimmed) && /(GMT|UTC|[+-]\d{4})$/i.test(trimmed);
+  const asctime = /^[A-Za-z]{3}\s+[A-Za-z]{3}\s+[\s\d]\d\s+\d{2}:\d{2}:\d{2}\s+\d{4}$/.test(trimmed);
+  if (!imf && !asctime) {
     return null;
   }
   const at = Date.parse(trimmed);
@@ -618,4 +637,25 @@ export function errorEnvelopeOnSuccess(
   // asymmetry that made guardrail_blocked unreachable across these SDKs.
   const raw = typeof err.code === 'string' ? err.code : typeof err.type === 'string' ? err.type : null;
   return { code: raw, message };
+}
+
+/**
+ * A cause that is safe to print.
+ *
+ * Keeps the name (the abort walk reads it) and a redacted message, and drops
+ * every other property — which is where a fetch failure keeps the originating
+ * Request and therefore the Authorization header.
+ */
+function sanitizeCause(cause: unknown): unknown {
+  if (cause instanceof Error) {
+    const safe = new Error(redactKeys(cause.message));
+    safe.name = cause.name;
+    // No `stack` copy: a stack can quote a URL that carries a token.
+    safe.stack = `${cause.name}: ${redactKeys(cause.message)}`;
+    return safe;
+  }
+  if (typeof cause === 'string') return redactKeys(cause);
+  // An arbitrary object may hold anything at all. Its shape is not worth the
+  // risk; the message above already says what happened.
+  return undefined;
 }

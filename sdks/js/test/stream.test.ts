@@ -16,9 +16,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { inspect } = require('node:util');
 
 const { parseSSE, streamChat, isAbortError } = require('../dist/stream');
-const { nRouterError, isRetryable } = require('../dist/errors');
+const { nRouterError, isRetryable, transportError } = require('../dist/errors');
 
 const encoder = new TextEncoder();
 
@@ -363,4 +364,71 @@ test('...and text() re-throws rather than handing back the truncated answer', as
   const res = await streamChat(chunkRunner([frame('half an ans')]), { model: 'm', prompt: 'hi' });
   await assert.rejects(async () => { for await (const _ of res.chunks) { /* drain */ } });
   await assert.rejects(() => res.text(), /\[DONE\]/);
+});
+
+// Rule #5: a fetch failure commonly holds the originating Request — headers
+// included — so a RAW cause makes console.error(err) print the Authorization
+// value. Neither toJSON nor message redaction covers that path.
+test('a sanitized cause cannot carry the Authorization header into a log', () => {
+  const leaky: Error & { request?: unknown } = new Error('socket hang up');
+  leaky.name = 'AbortError';
+  leaky.request = { headers: { authorization: 'Bearer sk-nrouter-secrettail1234' } };
+
+  const err = transportError('the stream failed', { cause: leaky });
+  const rendered = inspect(err, { depth: 10 });
+  assert.ok(!rendered.includes('secrettail1234'), `the key leaked:\n${rendered}`);
+  assert.ok(!rendered.includes('Bearer'), `an Authorization header leaked:\n${rendered}`);
+  // ...and the abort is still recognisable, which is what the name is for.
+  assert.equal(isRetryable(err), false, 'an abort must stay non-retryable through a sanitized cause');
+});
+
+// The buffered and media paths honour Retry-After; the streaming path returned
+// null for it, so a caller could not respect the backoff the gateway asked for.
+test('a streaming 429 carries its Retry-After', async () => {
+  const runner = {
+    open: async () => ({
+      status: 429,
+      headers: { 'content-type': 'application/json', 'retry-after': '42' },
+      body: null,
+      text: async () => JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'slow' } }),
+    }),
+  };
+  await assert.rejects(
+    () => streamChat(runner as never, { model: 'm', prompt: 'x' }),
+    (err: unknown) => {
+      assert.equal((err as { retryAfter?: number | null }).retryAfter, 42);
+      return true;
+    },
+  );
+});
+
+// A socket that dies WHILE the body is being read. Rethrowing it raw meant
+// nr.stream() left the advertised nRouterError hierarchy entirely: isRetryable
+// answered false and the status and request id were lost, for a request that
+// DID reach the gateway and was billed for what it delivered.
+test('a raw failure out of the body iterator is normalized, not leaked', async () => {
+  const runner = {
+    open: async () => ({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream', 'x-nr-request-id': 'nrouter-cut' },
+      body: (async function* () {
+        yield new TextEncoder().encode('data: {"choices":[{"delta":{"content":"par"}}]}\n\n');
+        throw new Error('ECONNRESET');
+      })(),
+    }),
+  };
+  const res = await streamChat(runner as never, { model: 'm', prompt: 'x' });
+  await assert.rejects(
+    async () => {
+      for await (const _ of res.chunks) { /* drain */ }
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof nRouterError, 'must stay inside the nRouterError hierarchy');
+      const e = err as { status?: number | null; requestId?: string | null };
+      assert.equal(e.status, 200, 'the response DID arrive');
+      assert.equal(e.requestId, 'nrouter-cut', 'the request id must survive');
+      assert.equal(isRetryable(err), true, 'a dropped socket can succeed on a retry');
+      return true;
+    },
+  );
 });

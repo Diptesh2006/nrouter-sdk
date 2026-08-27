@@ -12,7 +12,13 @@
 
 import type { NRouterCallOptions, ResponseMeta } from './types';
 import { metaFromHeaders , type HeaderSource } from './meta';
-import { createError, type nRouterError , isSpecErrorCode , transportError } from './errors';
+import {
+  createError,
+  nRouterError,
+  isSpecErrorCode,
+  transportError,
+  parseRetryAfter,
+} from './errors';
 import { buildChatBody } from './options';
 import { buildSamplingParams } from './sampling';
 
@@ -193,7 +199,11 @@ export async function streamChat(
 
   if (response.status < 200 || response.status >= 300) {
     const rawBody = response.text ? await response.text().catch(() => '') : '';
-    throw errorFromBody(rawBody, response.status, meta);
+    // Retry-After too. The buffered and media paths both honour it; leaving it
+    // out here made every streaming nRouterRateLimitError.retryAfter null, so a
+    // caller could not respect the backoff the gateway actually asked for.
+    const retryAfter = parseRetryAfter(headerValue(response.headers, 'retry-after'));
+    throw errorFromBody(rawBody, response.status, meta, retryAfter);
   }
 
   const body = response.body;
@@ -334,8 +344,25 @@ async function* readFrames(
     // `text()` cannot return the partial answer as if it were whole — but it
     // is re-thrown unwrapped, so `isAbortError` still recognises it and no
     // retry layer mistakes it for a transient failure.
-    state.failure = err instanceof Error ? err : new Error(String(err));
-    throw err;
+    // An abort and an nRouterError are re-thrown UNWRAPPED — the first so
+    // `isAbortError` still recognises it and no retry layer treats it as
+    // transient, the second because it is already classified.
+    //
+    // Anything else is a raw socket or runtime failure escaping out of the
+    // body iterator, and rethrowing it meant nr.stream() left the advertised
+    // nRouterError hierarchy entirely: `isRetryable` answered false and the
+    // status and request id were lost, for a request that DID reach the
+    // gateway.
+    if (err instanceof nRouterError || isAbortError(err)) {
+      state.failure = err instanceof Error ? err : new Error(String(err));
+      throw err;
+    }
+    const wrapped = transportError(
+      `the stream failed while being read (${err instanceof Error ? err.message : String(err)})`,
+      { status, meta, cause: err },
+    );
+    state.failure = wrapped;
+    throw wrapped;
   }
 }
 
@@ -446,10 +473,15 @@ function extractDelta(raw: Record<string, unknown>): string {
 // ---------------------------------------------------------------------------
 
 /** Classify a non-2xx response body. */
-function errorFromBody(rawBody: string, status: number, meta: ResponseMeta): nRouterError {
+function errorFromBody(
+  rawBody: string,
+  status: number,
+  meta: ResponseMeta,
+  retryAfter: number | null = null,
+): nRouterError {
   const trimmed = rawBody.trim();
   if (trimmed === '') {
-    return createError(`gateway returned HTTP ${status}`, { status, meta });
+    return createError(`gateway returned HTTP ${status}`, { status, meta, retryAfter });
   }
   let parsed: unknown;
   try {
@@ -457,12 +489,12 @@ function errorFromBody(rawBody: string, status: number, meta: ResponseMeta): nRo
   } catch {
     // Not JSON — an intermediary's HTML error page, or a truncated body. The
     // status is still authoritative, so classify on that.
-    return createError(truncate(trimmed), { status, meta });
+    return createError(truncate(trimmed), { status, meta, retryAfter });
   }
   if (typeof parsed !== 'object' || parsed === null) {
-    return createError(truncate(trimmed), { status, meta });
+    return createError(truncate(trimmed), { status, meta, retryAfter });
   }
-  return errorFromValue(parsed as Record<string, unknown>, trimmed, status, meta);
+  return errorFromValue(parsed as Record<string, unknown>, trimmed, status, meta, retryAfter);
 }
 
 /**
@@ -478,11 +510,12 @@ function errorFromValue(
   fallbackText: string,
   status: number,
   meta: ResponseMeta,
+  retryAfter: number | null = null,
 ): nRouterError {
   const inner = value.error;
 
   if (typeof inner === 'string') {
-    return createError(truncate(inner), { status, meta });
+    return createError(truncate(inner), { status, meta, retryAfter });
   }
 
   if (typeof inner === 'object' && inner !== null) {
@@ -502,18 +535,18 @@ function errorFromValue(
       typeof err.message === 'string' && err.message.trim() !== ''
         ? err.message
         : fallbackText;
-    return createError(truncate(message), { code, status, meta });
+    return createError(truncate(message), { code, status, meta, retryAfter });
   }
 
   // Some upstream shapes answer `{"detail": "..."}` rather than `{"error": …}`.
   if (typeof value.detail === 'string') {
-    return createError(truncate(value.detail), { status, meta });
+    return createError(truncate(value.detail), { status, meta, retryAfter });
   }
   if (typeof value.message === 'string') {
-    return createError(truncate(value.message), { status, meta });
+    return createError(truncate(value.message), { status, meta, retryAfter });
   }
 
-  return createError(truncate(fallbackText), { status, meta });
+  return createError(truncate(fallbackText), { status, meta, retryAfter });
 }
 
 function truncate(text: string): string {
@@ -594,4 +627,15 @@ function throwIfAborted(signal?: AbortSignal): void {
   // explicitly so a cancellation is never counted as a retryable failure.
   err.name = 'AbortError';
   throw err;
+}
+
+/** One raw header value out of any of the three shapes a runner may hand back. */
+function headerValue(headers: HeaderSource, name: string): string | null {
+  if (typeof (headers as { get?: unknown }).get === 'function') {
+    return (headers as { get(n: string): string | null | undefined }).get(name) ?? null;
+  }
+  const record = headers as Record<string, string | string[] | undefined>;
+  const raw = record[name] ?? record[name.toLowerCase()];
+  const single = Array.isArray(raw) ? raw[0] : raw;
+  return single ?? null;
 }

@@ -485,3 +485,18 @@ test('Retry-After is found whatever case the runner spells it in', async () => {
     );
   }
 });
+
+// errors.ts already treats TimeoutError and APIUserAbortError as aborts. This
+// exported helper recognised only 'AbortError', so the same package answered
+// two different things about the same cancellation and a caller using this one
+// to decide whether to retry took the wrong branch.
+test('isAbortError knows every name a runtime gives a cancellation', () => {
+  for (const name of ['AbortError', 'TimeoutError', 'APIUserAbortError']) {
+    const err = new Error('cancelled');
+    err.name = name;
+    assert.equal(isAbortError(err), true, `should recognise ${name}`);
+  }
+  const other = new Error('ECONNRESET');
+  other.name = 'TypeError';
+  assert.equal(isAbortError(other), false, 'must not swallow a real failure');
+});

@@ -18,6 +18,7 @@ import {
   isSpecErrorCode,
   transportError,
   parseRetryAfter,
+  ABORT_NAMES,
 } from './errors';
 import { buildChatBody } from './options';
 import { buildSamplingParams } from './sampling';
@@ -246,11 +247,19 @@ export async function streamChat(
  * but agree on `name`.
  */
 export function isAbortError(err: unknown): boolean {
+  // The SHARED name set, not a local `=== 'AbortError'`.
+  //
+  // `AbortSignal.timeout()` names its reason `TimeoutError` and the openai
+  // client raises `APIUserAbortError`; errors.ts already treats both as
+  // aborts, and this exported helper did not. So the same package answered
+  // two different things about the same cancellation, and a caller using this
+  // one to decide whether to retry a cancelled stream took the wrong branch.
+  // One implementation per cross-cutting concern.
   return (
     typeof err === 'object' &&
     err !== null &&
     'name' in err &&
-    (err as { name?: unknown }).name === 'AbortError'
+    ABORT_NAMES.has(String((err as { name?: unknown }).name))
   );
 }
 

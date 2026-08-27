@@ -644,6 +644,15 @@ export function dataUrlToPart(url: string): ChatContentPart {
     // contains — `data:image/png;base64,A` passed the character check and then
     // failed at the provider, AFTER the request was billed. Refusing locally
     // is free; refusing at the provider is not.
+    // Padding implies a COMPLETE final group. `A=` is length 2 and `AA=` is 3,
+    // so both slipped past a remainder-of-1 check while being invalid standard
+    // base64 — and then failed at the provider, after the request was billed.
+    if (/=/.test(payload) && payload.length % 4 !== 0) {
+      throw configurationError(
+        `data: image payload is padded but not a multiple of 4 (${payload.length} characters); ` +
+          'padding only appears on a complete final group, so this cannot decode',
+      );
+    }
     if (payload.length % 4 === 1) {
       throw configurationError(
         `data: image payload is not a valid base64 length (${payload.length} characters; ` +

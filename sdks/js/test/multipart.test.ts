@@ -262,6 +262,9 @@ test('dataUrlToPart refuses references that cannot possibly work', () => {
   const bad: [string, RegExp][] = [
     // base64 encodes in groups of 4; a remainder of 1 can never decode.
     ['data:image/png;base64,A', /base64 length/],
+    // Padding implies a complete final group; both of these are length 2 and 3.
+    ['data:image/png;base64,A=', /padded but not a multiple of 4/],
+    ['data:image/png;base64,AA=', /padded but not a multiple of 4/],
     // A prefix match called this an https URL. No fetcher accepts a space.
     ['https://example.com bad', /well-formed https URL/],
     ['https://', /well-formed https URL/],

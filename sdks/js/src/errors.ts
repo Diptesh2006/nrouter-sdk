@@ -430,7 +430,7 @@ export function transportError(message: string, options: nRouterErrorOptions = {
  * and Node's `fetch`; `TimeoutError` is `AbortSignal.timeout()`;
  * `APIUserAbortError` is the `openai` client this SDK is built on.
  */
-const ABORT_NAMES = new Set(['AbortError', 'TimeoutError', 'APIUserAbortError']);
+export const ABORT_NAMES = new Set(['AbortError', 'TimeoutError', 'APIUserAbortError']);
 
 /** Walk a cause chain looking for an abort, bounded so a cycle cannot hang the caller. */
 function wasAborted(err: unknown): boolean {

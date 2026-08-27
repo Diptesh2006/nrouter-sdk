@@ -461,3 +461,27 @@ test('a CUSTOM abort reason is still a cancellation, not a retryable failure', a
     },
   );
 });
+
+// HTTP header names are case-insensitive on the wire, and a hand-written
+// runner returning a plain object reasonably spells it `Retry-After`. An exact
+// lowercase lookup missed it, so the caller retried immediately against the
+// limit that had just refused them.
+test('Retry-After is found whatever case the runner spells it in', async () => {
+  for (const spelling of ['retry-after', 'Retry-After', 'RETRY-AFTER']) {
+    const runner = {
+      open: async () => ({
+        status: 429,
+        headers: { 'content-type': 'application/json', [spelling]: '42' },
+        body: null,
+        text: async () => JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'slow' } }),
+      }),
+    };
+    await assert.rejects(
+      () => streamChat(runner as never, { model: 'm', prompt: 'x' }),
+      (err: unknown) => {
+        assert.equal((err as { retryAfter?: number | null }).retryAfter, 42, `spelling: ${spelling}`);
+        return true;
+      },
+    );
+  }
+});

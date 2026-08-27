@@ -641,8 +641,20 @@ function headerValue(headers: HeaderSource, name: string): string | null {
   if (typeof (headers as { get?: unknown }).get === 'function') {
     return (headers as { get(n: string): string | null | undefined }).get(name) ?? null;
   }
+  // CASE-INSENSITIVE over the record's own keys. HTTP header names are
+  // case-insensitive on the wire, and a hand-written StreamRunner returning a
+  // plain object very reasonably spells it `Retry-After` — which an exact
+  // lowercase lookup missed, so a streaming 429 came back with retryAfter null
+  // and the caller retried immediately against the limit that just refused
+  // them. The buffered and multimodal paths already normalize; this one did
+  // not.
   const record = headers as Record<string, string | string[] | undefined>;
-  const raw = record[name] ?? record[name.toLowerCase()];
-  const single = Array.isArray(raw) ? raw[0] : raw;
-  return single ?? null;
+  const wanted = name.toLowerCase();
+  for (const key of Object.keys(record)) {
+    if (key.toLowerCase() !== wanted) continue;
+    const raw = record[key];
+    const single = Array.isArray(raw) ? raw[0] : raw;
+    return single ?? null;
+  }
+  return null;
 }

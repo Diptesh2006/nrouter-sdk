@@ -223,7 +223,21 @@ jobs:
           # moves npm's DEFAULT `latest` pointer BACKWARDS, so every fresh
           # `npm install @nrouter_ai/sdk` silently downgrades. Nothing errors,
           # and the only symptom is consumers quietly losing features.
-          latest="$(npm view "@nrouter_ai/sdk" version 2>/dev/null || true)"
+          # FAIL CLOSED. `|| true` turned a transient registry, DNS or auth
+          # failure into an EMPTY latest, which read as "nothing is published
+          # yet" and waved an older version straight through — and by the time
+          # the publish step ran, a recovered registry accepted the downgrade.
+          # A 404 genuinely means "no such package"; anything else means we do
+          # not know, and not knowing is not permission.
+          if latest="$(npm view "@nrouter_ai/sdk" version 2>/tmp/npmview.err)"; then
+            :
+          elif grep -qiE '404|not found' /tmp/npmview.err; then
+            latest=""
+          else
+            echo "::error::could not read the published version from npm, so a downgrade cannot be ruled out:"
+            cat /tmp/npmview.err >&2
+            exit 1
+          fi
           if [ -n "$latest" ]; then
             newest="$(printf '%s\n%s\n' "$latest" "$v" | sort -V | tail -1)"
             if [ "$newest" != "$v" ] || [ "$latest" = "$v" ]; then

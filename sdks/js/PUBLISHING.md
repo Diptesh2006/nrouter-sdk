@@ -94,6 +94,22 @@ git -C ../.. status --short           # expect empty before going further
 #    does not say so clearly.
 npm view @nrouter_ai/sdk@1.1.0 version     # expect: nothing, exit non-zero
 
+# 2b. And prove it is NEWER than what is already latest. "Unused" is not
+#     "newer": publishing an unused 1.1.0 while 1.2.0 is live moves npm's
+#     DEFAULT `latest` pointer BACKWARDS, so every fresh `npm install`
+#     silently downgrades. Nothing errors; consumers just quietly lose
+#     features. This is the manual mirror of the workflow's own guard — and
+#     since Actions cannot run today, this is the copy that actually protects
+#     anyone.
+latest="$(npm view @nrouter_ai/sdk version)"          # must SUCCEED; do not swallow
+newest="$(printf '%s\n%s\n' "$latest" 1.1.0 | sort -V | tail -1)"
+[ "$newest" = 1.1.0 ] && [ "$latest" != 1.1.0 ] \
+  || { echo "REFUSE: 1.1.0 is not newer than the published latest ($latest)"; exit 1; }
+
+#     A deliberate backport is the ONE exception, and it must never take
+#     `latest`: publish it under its own dist-tag.
+#         npm publish --access public --tag backport
+
 # 3. Prove it green. A published version cannot be taken back.
 python3 ../../conformance/check_conformance.py --self-test   # gate bites
 python3 ../../conformance/check_conformance.py               # all SDKs agree

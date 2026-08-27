@@ -36,28 +36,64 @@ version, and they will drift.
 
 ## Release
 
+Paths are absolute on purpose: this runbook must work from whatever directory
+you happen to be in.
+
 ```bash
+SDK=~/nr/nrouter-brain/nrouter-ent-ai-hub/nrouter-sdk
+
 # 1. Prove it green. There is no staging step after this.
-cd ../..                       # the SDK root, where the shipping manifest lives
+cd "$SDK"                      # the SDK root, where the SHIPPING manifest lives
 swift build && swift test
 swift build -Xswiftc -strict-concurrency=complete    # Swift 6 readiness
 python3 conformance/check_conformance.py
+```
 
-# 2. Publish the split to the public repo (this is the normal SDK publish; it
-#    is not Swift-specific).
+### 2. Get the code onto the PUBLIC repo — two steps, not one
+
+`scripts/publish-sdk-subtree.sh` splits `nrouter-sdk/` onto a `sdk-only` branch
+and pushes it to **this repository's** origin (`nrouter-ent-ai-hub`). Read its
+last line: `git push -f origin "$BRANCH"`. It does **not** touch
+`nRouterAI/nrouter-sdk`. Tagging the public repo without doing that second step
+tags whatever was there before — for Swift that means a tag with no root
+`Package.swift`, so `from: "2.1.0"` resolves a package SwiftPM cannot see, and a
+tag is immutable in practice.
+
+```bash
 cd ~/nr/nrouter-brain/nrouter-ent-ai-hub
-bash scripts/publish-sdk-subtree.sh
+bash scripts/publish-sdk-subtree.sh          # -> sdk-only on ent-ai-hub's origin
 
-# 3. Tag THERE — the tag is the release, and it goes on the PUBLIC repo, whose
-#    commits the split just created. Tagging the authoring repo publishes
-#    nothing.
+# Then, separately, onto the public repo:
+git push git@github.com:nRouterAI/nrouter-sdk.git origin/sdk-only:main
+```
+
+> ⚠️ **That second push rewrites the public repo's `main` and needs a human
+> decision, every time.** The split branch has NO shared ancestry with the
+> public history (`git merge-base` between them is empty), so the push is a
+> force push in effect, and the public repo carries merged outside
+> contributions. Before running it: confirm every commit on public `main` is
+> represented in the split — the outside PRs merged there were brought into this
+> repo by hand, and anything newer would be destroyed. Check first:
+>
+> ```bash
+> git fetch git@github.com:nRouterAI/nrouter-sdk.git main:refs/tmp/pub
+> git log --oneline refs/tmp/pub | head -20     # anything not in our tree?
+> ```
+
+### 3. Tag the public repo — the tag IS the release
+
+```bash
 git ls-remote --tags git@github.com:nRouterAI/nrouter-sdk.git   # what exists
 SCRATCH=~/nr/nrouter-brain/.scratch/sdk-swift-release            # Rule #18
 mkdir -p "$SCRATCH" && git clone git@github.com:nRouterAI/nrouter-sdk.git "$SCRATCH/repo"
 cd "$SCRATCH/repo"
+test -f Package.swift || { echo "no root manifest on public main — step 2 did not land"; exit 1; }
 git tag 2.1.0                  # bare semver, no `v` — see the trap below
 git push origin 2.1.0
 ```
+
+The `test -f Package.swift` is the guard for exactly the mistake above: it fails
+loudly rather than minting an immutable tag nobody can use.
 
 Use SSH URLs throughout. HTTPS git fails from the nRouter workspace.
 
@@ -86,6 +122,9 @@ swift package resolve
 - **`from: "2.1.0"` matches the tag `2.1.0`, not `v2.1.0`.** SwiftPM accepts a
   `v` prefix, but mixing the two across releases makes version ranges resolve in
   ways nobody expects. Pick bare semver and keep it.
+- **The publish script does not publish to the public repo.** Its name says
+  publish and its final line pushes to `origin`, which is the AUTHORING repo.
+  The public repo is a second, deliberate push.
 - **A tag is immutable in practice.** SwiftPM caches aggressively and consumers
   pin by tag, so moving one ships different code under a version somebody
   already resolved. Bump instead; never re-tag.

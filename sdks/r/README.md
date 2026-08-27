@@ -8,7 +8,7 @@ SDK for R, so this package calls the gateway's HTTP API directly via `httr`.
 install.packages("nrouter", repos = "https://nrouterai.r-universe.dev")
 
 # Or from source
-remotes::install_github("nRouterAI/nrouter-sdk", subdir = "nrouter-sdk/sdks/r")
+remotes::install_github("nRouterAI/nrouter-sdk", subdir = "sdks/r")
 ```
 
 ## Use it

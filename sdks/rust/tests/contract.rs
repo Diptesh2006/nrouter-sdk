@@ -65,6 +65,7 @@ fn each_gateway_code_maps_to_its_variant() {
             NRouterError::GuardrailBlocked(_) => "GuardrailBlocked",
             NRouterError::Authentication(_) => "Authentication",
             NRouterError::Credit(_) => "Credit",
+            NRouterError::BudgetExceeded(_) => "BudgetExceeded",
             NRouterError::NotFound(_) => "NotFound",
             NRouterError::RateLimit(_) => "RateLimit",
             NRouterError::Service(_) => "Service",
@@ -208,6 +209,61 @@ fn a_codeless_status_the_sdk_does_not_know_stays_other() {
     };
     assert!(matches!(
         NRouterError::from_code(body),
+        NRouterError::Other(_)
+    ));
+}
+
+#[test]
+fn a_codeless_402_separates_a_budget_ceiling_from_a_shortfall() {
+    // Three conditions share 402 and two are budget ceilings, whose fix is the
+    // OPPOSITE of a shortfall's. Telling a customer whose budget is exhausted
+    // to top up is a wrong answer delivered confidently.
+    let budget = ErrorBody {
+        message: "budget exceeded: spend 5.00 of max_budget 5.00".into(),
+        code: None,
+        status: Some(402),
+        ..Default::default()
+    };
+    assert!(matches!(
+        NRouterError::from_code(budget),
+        NRouterError::BudgetExceeded(_)
+    ));
+
+    let shortfall = ErrorBody {
+        message: "insufficient credits: 0.01 available, 0.50 required".into(),
+        code: None,
+        status: Some(402),
+        ..Default::default()
+    };
+    assert!(matches!(
+        NRouterError::from_code(shortfall),
+        NRouterError::Credit(_)
+    ));
+}
+
+#[test]
+fn a_codeless_404_is_only_model_not_found_when_it_names_a_model() {
+    let model = ErrorBody {
+        message: "model 'gpt-9' not found".into(),
+        code: None,
+        status: Some(404),
+        ..Default::default()
+    };
+    assert!(matches!(
+        NRouterError::from_code(model),
+        NRouterError::NotFound(_)
+    ));
+
+    // A missing video job or MCP server is also a 404. Calling it
+    // `model_not_found` is a wrong answer with a confident code on it.
+    let other = ErrorBody {
+        message: "unknown video job 'vid_123'".into(),
+        code: None,
+        status: Some(404),
+        ..Default::default()
+    };
+    assert!(matches!(
+        NRouterError::from_code(other),
         NRouterError::Other(_)
     ));
 }

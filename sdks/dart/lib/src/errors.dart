@@ -54,9 +54,20 @@ sealed class NRouterError implements Exception {
           case 401:
             return NRouterAuthenticationError(body);
           case 402:
-            return NRouterCreditError(body);
+            // The gateway's own wording is the only discriminator, and it is
+            // stable: GatewayError::{BudgetExceeded, ScopedBudgetExceeded}
+            // both start their Display with "budget". Their fix is the
+            // OPPOSITE of a shortfall's — raise the budget, not top up.
+            return body.message.trimLeft().toLowerCase().startsWith('budget')
+                ? NRouterBudgetExceededError(body)
+                : NRouterCreditError(body);
           case 404:
-            return NRouterNotFoundError(body);
+            // Scoped to MODELS. A 404 is also a missing video job, an unknown
+            // MCP server or an unknown agent run; calling those
+            // `model_not_found` is a wrong answer with a confident code.
+            return body.message.toLowerCase().contains('model')
+                ? NRouterNotFoundError(body)
+                : NRouterOtherError(body);
           case 429:
             return NRouterRateLimitError(body);
           case 503:
@@ -107,6 +118,14 @@ final class NRouterAuthenticationError extends NRouterError {
 /// `insufficient_credits` (402) — the credit reserve failed.
 final class NRouterCreditError extends NRouterError {
   NRouterCreditError(NRouterErrorBody body) : super(_describe(body), body);
+}
+
+/// A BUDGET ceiling (402), not a shortfall.
+///
+/// Three conditions share 402 and two are budget ceilings, whose fix is the
+/// OPPOSITE of a shortfall's: raise the budget, not top up.
+final class NRouterBudgetExceededError extends NRouterError {
+  NRouterBudgetExceededError(NRouterErrorBody body) : super(_describe(body), body);
 }
 
 /// `model_not_found` (404) — alias absent or invisible to this tenant.

@@ -214,3 +214,30 @@ def test_the_header_name_list_matches_what_is_parsed():
     assert meta.cost is not None
     assert meta.limit_source is not None
     assert meta.response_cache is not None
+
+
+def test_auth_reason_reaches_the_metadata():
+    """HEADER_NAMES advertises it, so the parser has to produce it.
+
+    A name in that list the parser ignores is a promise the SDK does not keep,
+    and the cross-SDK gate cannot see the difference.
+    """
+    from nroutersdk import nRouterResponseMeta
+
+    meta = nRouterResponseMeta.from_headers(
+        {"x-nr-auth-reason": "key_route_not_allowed", "x-nr-request-id": "req_1"}
+    )
+    assert meta.auth_reason == "key_route_not_allowed"
+
+
+def test_a_service_error_keeps_the_code_the_gateway_named():
+    """`credit_check_failed` and `service_unavailable` share one class.
+
+    Without the code the exception reports the class default, so a caller
+    branching on the stable code is handed the wrong one.
+    """
+    with pytest.raises(nRouterServiceError) as caught:
+        _maybe_raise_nrouter_error(
+            status_error(503, "credit system unavailable", code="credit_check_failed")
+        )
+    assert caught.value.code == "credit_check_failed"

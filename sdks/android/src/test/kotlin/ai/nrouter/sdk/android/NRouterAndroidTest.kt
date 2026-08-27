@@ -9,6 +9,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -29,8 +30,16 @@ class NRouterAndroidTest {
     }
 
     @Test
+    fun `a local setup failure is Configuration, never retryable Transport`() {
+        // Nothing left the process, so it is permanent. Raised as Transport it
+        // reports isRetryable == true and a caller's retry loop spins forever.
+        val error = assertFailsWith<NRouterError.Configuration> { NRouterAndroid.create(context) }
+        assertFalse(error.isRetryable)
+    }
+
+    @Test
     fun `a missing key names the Android situation, not the env var`() {
-        val error = assertFailsWith<NRouterError.Transport> { NRouterAndroid.create(context) }
+        val error = assertFailsWith<NRouterError.Configuration> { NRouterAndroid.create(context) }
         val message = error.message.orEmpty()
         // The core's advice ("set NROUTER_API_KEY") is unactionable on a
         // handset. If this message ever degrades into that, a developer is sent
@@ -49,7 +58,7 @@ class NRouterAndroidTest {
 
     @Test
     fun `key validation still applies on Android`() {
-        assertFailsWith<NRouterError.Transport> {
+        assertFailsWith<NRouterError.Configuration> {
             NRouterAndroid.create(context, apiKey = "sk-openai-nope")
         }
     }

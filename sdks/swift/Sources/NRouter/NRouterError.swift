@@ -13,8 +13,15 @@ public enum NRouterError: Error, Equatable {
     case guardrailBlocked(NRouterErrorBody)
     /// `invalid_api_key` (401)
     case authentication(NRouterErrorBody)
-    /// `insufficient_credits` (402)
+    /// `insufficient_credits` (402) — the credit reserve failed. Top up.
     case credit(NRouterErrorBody)
+    /// A BUDGET ceiling (402), not a shortfall.
+    ///
+    /// Three conditions share 402 and two are budget ceilings, whose fix is the
+    /// OPPOSITE of a shortfall's: raise the budget, not top up. Telling a
+    /// customer whose budget is exhausted to add money is a wrong answer
+    /// delivered confidently.
+    case budgetExceeded(NRouterErrorBody)
     /// `model_not_found` (404)
     case notFound(NRouterErrorBody)
     /// `rate_limit_exceeded` / `tpm_limit_exceeded` (429)
@@ -65,8 +72,21 @@ public enum NRouterError: Error, Equatable {
                     ? .guardrailBlocked(body)
                     : .request(body)
             case 401: return .authentication(body)
-            case 402: return .credit(body)
-            case 404: return .notFound(body)
+            case 402:
+                // The gateway's own wording is the only discriminator, and it
+                // is stable: GatewayError::{BudgetExceeded,
+                // ScopedBudgetExceeded} both start their Display with "budget".
+                return body.message.trimmingCharacters(in: .whitespaces)
+                    .lowercased().hasPrefix("budget")
+                    ? .budgetExceeded(body)
+                    : .credit(body)
+            case 404:
+                // Scoped to MODELS. A 404 is also a missing video job, an
+                // unknown MCP server or an unknown agent run; calling those
+                // `model_not_found` is a wrong answer with a confident code.
+                return body.message.lowercased().contains("model")
+                    ? .notFound(body)
+                    : .other(body)
             case 429: return .rateLimit(body)
             case 503: return .service(body)
             default: return .other(body)
@@ -78,8 +98,8 @@ public enum NRouterError: Error, Equatable {
     public var body: NRouterErrorBody? {
         switch self {
         case let .request(b), let .guardrailBlocked(b), let .authentication(b),
-             let .credit(b), let .notFound(b), let .rateLimit(b),
-             let .service(b), let .other(b):
+             let .credit(b), let .budgetExceeded(b), let .notFound(b),
+             let .rateLimit(b), let .service(b), let .other(b):
             return b
         case .transport, .configuration:
             return nil

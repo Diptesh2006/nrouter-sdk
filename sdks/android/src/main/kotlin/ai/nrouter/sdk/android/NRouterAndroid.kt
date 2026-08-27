@@ -53,7 +53,9 @@ public object NRouterAndroid {
      *     manifest — convenient for internal builds, and readable by anyone
      *     holding the APK.
      *
-     * @throws NRouterError.Transport when neither supplies a usable key. The
+     * @throws NRouterError.Configuration when neither supplies a usable key.
+     *   Configuration, not Transport: nothing left the process, so it is
+     *   permanent — a caller retrying on `isRetryable` would loop forever. The
      *   message names the Android situation rather than repeating the core's
      *   environment-variable advice, which cannot apply here.
      */
@@ -66,7 +68,7 @@ public object NRouterAndroid {
     ): NRouter {
         val resolved = apiKey?.takeIf { it.isNotEmpty() } ?: manifestKey(context)
         if (resolved.isNullOrEmpty()) {
-            throw NRouterError.Transport(
+            throw NRouterError.Configuration(
                 "No nRouter API key on Android. System.getenv() is not available here, " +
                     "so pass the key to NRouterAndroid.create() — ideally one your backend " +
                     "minted — or declare <meta-data android:name=\"$MANIFEST_KEY\" " +

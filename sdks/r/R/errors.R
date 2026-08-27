@@ -73,6 +73,16 @@ nrouter_condition <- function(message, code = NULL, status = NULL,
     specific <- if (identical(as.character(status), "400") &&
                     grepl("guardrail", message, ignore.case = TRUE)) {
       "nrouter_guardrail_blocked_error"
+    } else if (identical(as.character(status), "402") &&
+               grepl("^\\s*budget", message, ignore.case = TRUE)) {
+      # Three conditions share 402 and two are budget ceilings, whose fix is the
+      # OPPOSITE of a shortfall's: raise the budget, not top up.
+      "nrouter_budget_exceeded_error"
+    } else if (identical(as.character(status), "404") &&
+               !grepl("model", message, ignore.case = TRUE)) {
+      # A 404 is also a missing video job, MCP server or agent run; calling
+      # those model_not_found is a wrong answer with a confident code on it.
+      "nrouter_other_error"
     } else {
       unname(NROUTER_STATUS_CLASSES[as.character(status)])
     }

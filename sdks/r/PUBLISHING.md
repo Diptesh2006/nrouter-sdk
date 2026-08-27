@@ -68,11 +68,17 @@ badge — which is the point.
 ## Meanwhile: install from GitHub
 
 ```r
-remotes::install_github("nRouterAI/nrouter-sdk", subdir = "nrouter-sdk/sdks/r")
+remotes::install_github("nRouterAI/nrouter-sdk", subdir = "sdks/r")
 ```
 
-`subdir` is required — this is a multi-language monorepo and the package is not
-at the repository root.
+`subdir` is required — the package is not at the repository root. It is
+`sdks/r`, NOT `nrouter-sdk/sdks/r`: the public repo is a `git subtree split` of
+this repo's `nrouter-sdk/` directory, so that prefix is already stripped and
+`sdks/` sits at the public root. Derive it rather than assuming:
+
+```bash
+git ls-tree --name-only <public-repo-ref>
+```
 
 ## CRAN
 

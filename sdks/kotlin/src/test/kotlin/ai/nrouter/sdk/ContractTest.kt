@@ -67,6 +67,32 @@ class ContractTest {
     }
 
     @Test
+    fun `a codeless 402 separates a budget ceiling from a shortfall`() {
+        // Two of the three 402s are budget ceilings, whose fix is the OPPOSITE
+        // of a shortfall's. Telling a customer whose budget is exhausted to top
+        // up is a wrong answer delivered confidently.
+        val budget = NRouterError.fromCode(
+            NRouterErrorBody("budget exceeded: spend 5.00 of max_budget 5.00", status = 402),
+        )
+        assertTrue(budget is NRouterError.BudgetExceeded, "got ${budget::class.simpleName}")
+
+        val shortfall = NRouterError.fromCode(
+            NRouterErrorBody("insufficient credits: 0.01 available", status = 402),
+        )
+        assertTrue(shortfall is NRouterError.Credit, "got ${shortfall::class.simpleName}")
+    }
+
+    @Test
+    fun `a codeless 404 is only model_not_found when it names a model`() {
+        val model = NRouterError.fromCode(NRouterErrorBody("model 'x' not found", status = 404))
+        assertTrue(model is NRouterError.NotFound)
+
+        // A missing video job or MCP server is also a 404.
+        val other = NRouterError.fromCode(NRouterErrorBody("unknown video job", status = 404))
+        assertTrue(other is NRouterError.Other, "got ${other::class.simpleName}")
+    }
+
+    @Test
     fun `an unknown code is never reclassified`() {
         val error = NRouterError.fromCode(NRouterErrorBody("boom", code = "some_future_code"))
         assertTrue(error is NRouterError.Other)

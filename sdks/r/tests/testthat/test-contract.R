@@ -150,3 +150,23 @@ test_that("the real gateway envelope classifies without a code", {
   expect_null(cond$code)
   expect_true("nrouter_guardrail_blocked_error" %in% class(cond))
 })
+
+test_that("a codeless 402 separates a budget ceiling from a shortfall", {
+  # Two of the three 402s are budget ceilings, whose fix is the OPPOSITE of a
+  # shortfall's: raise the budget, not top up.
+  budget <- nrouter_condition("budget exceeded: spend 5.00", status = 402)
+  expect_true("nrouter_budget_exceeded_error" %in% class(budget))
+
+  shortfall <- nrouter_condition("insufficient credits: 0.01 available", status = 402)
+  expect_true("nrouter_credit_error" %in% class(shortfall))
+})
+
+test_that("a codeless 404 is only model_not_found when it names a model", {
+  model <- nrouter_condition("model 'x' not found", status = 404)
+  expect_true("nrouter_not_found_error" %in% class(model))
+
+  # A missing video job or MCP server is also a 404.
+  other <- nrouter_condition("unknown video job", status = 404)
+  expect_true("nrouter_other_error" %in% class(other))
+  expect_false("nrouter_not_found_error" %in% class(other))
+})

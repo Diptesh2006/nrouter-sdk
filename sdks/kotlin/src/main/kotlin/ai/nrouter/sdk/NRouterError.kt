@@ -24,8 +24,19 @@ public sealed class NRouterError(
     /** `invalid_api_key` (401) — virtual-key authentication refused. */
     public class Authentication(body: NRouterErrorBody) : NRouterError(body.describe(), body)
 
-    /** `insufficient_credits` (402) — the credit reserve failed. */
+    /** `insufficient_credits` (402) — the credit reserve failed. Top up. */
     public class Credit(body: NRouterErrorBody) : NRouterError(body.describe(), body)
+
+    /**
+     * A BUDGET ceiling (402), not a shortfall.
+     *
+     * Three conditions share 402 and two are budget ceilings, whose fix is the
+     * OPPOSITE of a credit shortfall's: raise the budget, not top up. Telling a
+     * customer whose budget is exhausted to add money is a wrong answer
+     * delivered confidently.
+     */
+    public class BudgetExceeded(body: NRouterErrorBody) : NRouterError(body.describe(), body)
+
 
     /** `model_not_found` (404) — alias absent or invisible to this tenant. */
     public class NotFound(body: NRouterErrorBody) : NRouterError(body.describe(), body)
@@ -97,8 +108,22 @@ public sealed class NRouterError(
                     Request(body)
                 }
                 401 -> Authentication(body)
-                402 -> Credit(body)
-                404 -> NotFound(body)
+                // The gateway's own wording is the only discriminator, and it
+                // is stable: GatewayError::{BudgetExceeded,
+                // ScopedBudgetExceeded} both start their Display with "budget".
+                402 -> if (body.message.trimStart().startsWith("budget", ignoreCase = true)) {
+                    BudgetExceeded(body)
+                } else {
+                    Credit(body)
+                }
+                // Scoped to MODELS. A 404 is also a missing video job, an
+                // unknown MCP server or an unknown agent run; calling those
+                // `model_not_found` is a wrong answer with a confident code.
+                404 -> if (body.message.contains("model", ignoreCase = true)) {
+                    NotFound(body)
+                } else {
+                    Other(body)
+                }
                 429 -> RateLimit(body)
                 503 -> Service(body)
                 else -> Other(body)

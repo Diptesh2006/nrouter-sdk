@@ -33,6 +33,7 @@ final class ContractTests: XCTestCase {
         case .guardrailBlocked: return "guardrailBlocked"
         case .authentication: return "authentication"
         case .credit: return "credit"
+        case .budgetExceeded: return "budgetExceeded"
         case .notFound: return "notFound"
         case .rateLimit: return "rateLimit"
         case .service: return "service"
@@ -58,6 +59,33 @@ final class ContractTests: XCTestCase {
             let error = NRouterError.fromCode(NRouterErrorBody(message: "boom", code: code))
             XCTAssertEqual(caseName(error), want, "code \(code) mapped wrong")
         }
+    }
+
+    func testACodelessFourZeroTwoSeparatesBudgetFromShortfall() {
+        // Two of the three 402s are budget ceilings, whose fix is the OPPOSITE
+        // of a shortfall's.
+        let budget = NRouterError.fromCode(
+            NRouterErrorBody(message: "budget exceeded: spend 5.00", status: 402)
+        )
+        XCTAssertEqual(caseName(budget), "budgetExceeded")
+
+        let shortfall = NRouterError.fromCode(
+            NRouterErrorBody(message: "insufficient credits: 0.01 available", status: 402)
+        )
+        XCTAssertEqual(caseName(shortfall), "credit")
+    }
+
+    func testACodelessFourZeroFourIsOnlyModelNotFoundWhenItNamesAModel() {
+        let model = NRouterError.fromCode(
+            NRouterErrorBody(message: "model 'x' not found", status: 404)
+        )
+        XCTAssertEqual(caseName(model), "notFound")
+
+        // A missing video job or MCP server is also a 404.
+        let other = NRouterError.fromCode(
+            NRouterErrorBody(message: "unknown video job", status: 404)
+        )
+        XCTAssertEqual(caseName(other), "other")
     }
 
     func testAnUnknownCodeIsNeverReclassified() {

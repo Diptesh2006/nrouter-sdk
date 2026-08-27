@@ -121,6 +121,11 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
                 request_id=request_id,
                 auth_reason=headers.get("x-nr-auth-reason"),
             ) from err
+        if cls is nRouterServiceError:
+            # `credit_check_failed` and `service_unavailable` share this class.
+            # Without the code the exception reports the class default, so a
+            # caller branching on the stable code gets the wrong one.
+            raise cls(message, request_id=request_id, code=gateway_code) from err
         raise cls(message, request_id=request_id) from err
     if gateway_code in ("rate_limit_exceeded", "tpm_limit_exceeded"):
         retry_after_hdr = headers.get("retry-after")

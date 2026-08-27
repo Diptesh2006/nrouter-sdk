@@ -76,6 +76,39 @@ void main() {
       expect(NRouterError.fromCode(body), isA<NRouterGuardrailBlockedError>());
     });
 
+    test('a codeless 402 separates a budget ceiling from a shortfall', () {
+      // Two of the three 402s are budget ceilings, whose fix is the OPPOSITE
+      // of a shortfall's.
+      expect(
+        NRouterError.fromCode(
+          const NRouterErrorBody(message: 'budget exceeded: spend 5.00', status: 402),
+        ),
+        isA<NRouterBudgetExceededError>(),
+      );
+      expect(
+        NRouterError.fromCode(
+          const NRouterErrorBody(message: 'insufficient credits', status: 402),
+        ),
+        isA<NRouterCreditError>(),
+      );
+    });
+
+    test('a codeless 404 is only model_not_found when it names a model', () {
+      expect(
+        NRouterError.fromCode(
+          const NRouterErrorBody(message: "model 'x' not found", status: 404),
+        ),
+        isA<NRouterNotFoundError>(),
+      );
+      // A missing video job or MCP server is also a 404.
+      expect(
+        NRouterError.fromCode(
+          const NRouterErrorBody(message: 'unknown video job', status: 404),
+        ),
+        isA<NRouterOtherError>(),
+      );
+    });
+
     test('an unknown code is never reclassified', () {
       expect(build('some_future_code'), isA<NRouterOtherError>());
     });

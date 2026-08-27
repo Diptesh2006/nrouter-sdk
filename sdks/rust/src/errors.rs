@@ -21,8 +21,15 @@ pub enum NRouterError {
     GuardrailBlocked(Box<ErrorBody>),
     /// `invalid_api_key` (401) — virtual-key authentication refused.
     Authentication(Box<ErrorBody>),
-    /// `insufficient_credits` (402) — the credit reserve failed.
+    /// `insufficient_credits` (402) — the credit reserve failed. Top up.
     Credit(Box<ErrorBody>),
+    /// A BUDGET ceiling (402), not a shortfall.
+    ///
+    /// Three conditions share 402 and two are budget ceilings, whose fix is the
+    /// OPPOSITE of a credit shortfall's: raise the budget, not top up. Telling
+    /// a customer whose budget is exhausted to add money is a wrong answer
+    /// delivered confidently.
+    BudgetExceeded(Box<ErrorBody>),
     /// `model_not_found` (404) — alias absent or invisible to this tenant.
     NotFound(Box<ErrorBody>),
     /// `rate_limit_exceeded` / `tpm_limit_exceeded` (429).
@@ -98,8 +105,32 @@ impl NRouterError {
                     }
                 }
                 Some(401) => Self::Authentication(body),
-                Some(402) => Self::Credit(body),
-                Some(404) => Self::NotFound(body),
+                // The gateway's own wording is the only discriminator it gives
+                // us, and it is stable: GatewayError::{BudgetExceeded,
+                // ScopedBudgetExceeded} both start their Display with "budget".
+                Some(402) => {
+                    if body
+                        .message
+                        .trim_start()
+                        .to_lowercase()
+                        .starts_with("budget")
+                    {
+                        Self::BudgetExceeded(body)
+                    } else {
+                        Self::Credit(body)
+                    }
+                }
+                // Scoped to MODELS. A 404 is also a missing video job, an
+                // unknown MCP server or an unknown agent run; calling those
+                // `model_not_found` is a wrong answer with a confident stable
+                // code on it. Anything unidentifiable stays Other.
+                Some(404) => {
+                    if body.message.to_lowercase().contains("model") {
+                        Self::NotFound(body)
+                    } else {
+                        Self::Other(body)
+                    }
+                }
                 Some(429) => Self::RateLimit(body),
                 Some(503) => Self::Service(body),
                 _ => Self::Other(body),
@@ -114,6 +145,7 @@ impl NRouterError {
             | Self::GuardrailBlocked(b)
             | Self::Authentication(b)
             | Self::Credit(b)
+            | Self::BudgetExceeded(b)
             | Self::NotFound(b)
             | Self::RateLimit(b)
             | Self::Service(b)

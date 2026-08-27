@@ -298,6 +298,21 @@ const tools = await client.chat.completions.create({
 
 ## Go
 
+A branded SDK lives in [`sdks/go/`](sdks/go/). It hands back all thirteen
+`x-nr-*` headers and types the gateway's nine error codes, which the vendor
+client cannot do without `.WithRawResponse()` plumbing at every call site:
+
+```go
+client, _ := nrouter.NewFromEnv() // reads NROUTER_API_KEY
+res, err := client.ChatCompletions(ctx, map[string]any{
+    "model":    "claude-sonnet-4-5",
+    "messages": []any{map[string]any{"role": "user", "content": "Hello!"}},
+})
+// res.Meta.Cost is nil when unpriced. Nil is not zero.
+```
+
+The plain OpenAI client works too, and stays supported:
+
 ```bash
 go get github.com/openai/openai-go
 ```

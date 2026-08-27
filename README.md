@@ -28,7 +28,7 @@ print(f"Cost: ${client.last_response.cost}")
 
 ### Other Branded SDKs
 
-Eight more branded packages, each pre-configured for nRouter. Every one validates the
+Nine more branded packages, each pre-configured for nRouter. Every one validates the
 `sk-nrouter-` prefix before any request and points at `https://api.nrouter.ai/v1`; all
 but Dart also resolve `NROUTER_API_KEY` (Dart requires an explicit key — `dart:io` does
 not exist in a Flutter web build, so an environment fallback would silently resolve to
@@ -50,6 +50,7 @@ nothing):
 | **Rust** | `cargo add nrouter` | ⛔ not published | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
 | **Dart / Flutter** | `dart pub add nrouter` | ⛔ not published | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
 | **R** | `install.packages("nrouter", repos = "https://nrouterai.r-universe.dev")` | ⛔ not published | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
+| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go` | ⛔ not published (needs a `sdks/go/vX.Y.Z` tag) | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
 
 Verify any row rather than trusting it:
 
@@ -61,6 +62,9 @@ curl -s -o /dev/null -w "%{http_code}\n" https://registry.npmjs.org/@nrouter%2Fs
 curl -s -A "nrouter-registry-check" -o /dev/null -w "%{http_code}\n" https://crates.io/api/v1/crates/nrouter
 curl -s -o /dev/null -w "%{http_code}\n" https://pub.dev/api/packages/nrouter
 curl -s https://repo1.maven.org/maven2/ai/nrouter/ | grep -oE 'href="[^"]+"'
+# Go has no registry: proxy.golang.org serves whatever a git tag points at, and
+# it case-encodes the path (each uppercase letter becomes '!' + lowercase).
+curl -s https://proxy.golang.org/github.com/n!router!a!i/nrouter-sdk/sdks/go/@v/list
 ```
 
 The JS and Java SDKs extend a vendor OpenAI client, which owns the transport and its own
@@ -147,7 +151,7 @@ example for any of these without first adding the route to the gateway and the s
 | **Rust (branded)** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) · [`examples/hello-world/rust.rs`](examples/hello-world/rust.rs) |
 | **R (branded)** | `remotes::install_github(..., subdir = "nrouter-sdk/sdks/r")` | [`sdks/r/`](sdks/r/) · [`examples/hello-world/r.R`](examples/hello-world/r.R) |
 | **Node.js / TypeScript (plain openai)** | `npm install openai` | [`examples/node.ts`](examples/node.ts) |
-| **Go** | `go get github.com/openai/openai-go` | [`examples/go.go`](examples/go.go) |
+| **Go** | `go get github.com/openai/openai-go`, or the branded [`sdks/go/`](sdks/go/) | [`examples/go.go`](examples/go.go) |
 | **Java (plain openai-java)** | `com.openai:openai-java` | [`examples/java.java`](examples/java.java) |
 | **Ruby** | `gem install ruby-openai` | [`examples/ruby.rb`](examples/ruby.rb) |
 | **PHP** | `composer require openai-php/client` | [`examples/php.php`](examples/php.php) |
@@ -210,11 +214,12 @@ nrouter-sdk/
 │   ├── js/                          ← Branded SDK → npm install @nrouter/sdk
 │   ├── java/                        ← Branded SDK → Maven ai.nrouter:nrouter-sdk
 │   ├── rust/                        ← Branded SDK → cargo add nrouter
+│   ├── go/                          ← Branded SDK → go get .../sdks/go
 │   └── r/                           ← Branded SDK → remotes::install_github(...)
 └── examples/
     ├── curl.sh                      ← cURL
     ├── node.ts                      ← Node.js / TypeScript (plain openai)
-    ├── go.go                        ← Go
+    ├── go.go                        ← Go (plain openai-go; sdks/go/ is branded)
     ├── java.java                    ← Java (plain openai-java)
     ├── ruby.rb                      ← Ruby
     ├── php.php                      ← PHP

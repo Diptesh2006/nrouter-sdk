@@ -1,0 +1,115 @@
+package nrouter
+
+import "strconv"
+
+// ResponseMeta is the per-request metadata the gateway reports on `x-nr-*`
+// response headers.
+//
+// Every numeric field is a POINTER on purpose. The gateway omits a header
+// rather than sending a placeholder, and the two that matter most are
+// omissions: x-nr-request-cost is ABSENT when the model is unpriced — never
+// "0" — and x-nr-response-cache-age is absent on a miss. A float64 zero value
+// would render an unpriced request as free, which no enabled model is.
+type ResponseMeta struct {
+	// RequestID is present on every response; the join key for a spend row or
+	// a support ticket.
+	RequestID string
+
+	// Cost is the exact settled cost in USD. Nil when unpriced. Never treat
+	// nil as 0.
+	Cost *float64
+
+	// CostStatus is "exact" or "unpriced".
+	CostStatus string
+
+	// Model is the model that actually served the request, which is not
+	// always the alias that was asked for.
+	Model string
+
+	InputTokens      *uint64
+	OutputTokens     *uint64
+	TotalTokens      *uint64
+	CacheReadTokens  *uint64
+	CacheWriteTokens *uint64
+
+	// LimitSource says which limit measured a 429: key, plan, team, user or
+	// budget. Empty means the gateway did not say — never guess, or the
+	// customer raises the wrong limit.
+	LimitSource string
+
+	// AuthReason is the gateway's stable reason for refusing a virtual key on
+	// a 401, e.g. "key_route_not_allowed".
+	AuthReason string
+
+	// ResponseCache is "hit" or "miss"; empty when the response cache did not
+	// participate at all (streaming and the non-text modalities bypass it).
+	ResponseCache string
+
+	// ResponseCacheAge is whole seconds since a cached response was produced.
+	// Set on hits only.
+	ResponseCacheAge *uint64
+}
+
+// HeaderNames lists every response header this SDK reads, exactly as the
+// gateway spells them. Kept as data so callers can forward the same set
+// through their own logging or tracing layer without retyping it.
+var HeaderNames = []string{
+	"x-nr-request-id",
+	"x-nr-request-cost",
+	"x-nr-cost-status",
+	"x-nr-model",
+	"x-nr-input-tokens",
+	"x-nr-output-tokens",
+	"x-nr-total-tokens",
+	"x-nr-cache-read-tokens",
+	"x-nr-cache-write-tokens",
+	"x-nr-limit-source",
+	"x-nr-auth-reason",
+	"x-nr-response-cache",
+	"x-nr-response-cache-age",
+}
+
+// MetaFromLookup builds ResponseMeta from any lowercase-name header lookup.
+//
+// An unparseable numeric header yields nil rather than a zero: a zero here
+// would be indistinguishable from a real measured zero.
+func MetaFromLookup(get func(string) string) ResponseMeta {
+	num := func(name string) *uint64 {
+		raw := get(name)
+		if raw == "" {
+			return nil
+		}
+		v, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			return nil
+		}
+		return &v
+	}
+	meta := ResponseMeta{
+		RequestID:        get("x-nr-request-id"),
+		CostStatus:       get("x-nr-cost-status"),
+		Model:            get("x-nr-model"),
+		InputTokens:      num("x-nr-input-tokens"),
+		OutputTokens:     num("x-nr-output-tokens"),
+		TotalTokens:      num("x-nr-total-tokens"),
+		CacheReadTokens:  num("x-nr-cache-read-tokens"),
+		CacheWriteTokens: num("x-nr-cache-write-tokens"),
+		LimitSource:      get("x-nr-limit-source"),
+		AuthReason:       get("x-nr-auth-reason"),
+		ResponseCache:    get("x-nr-response-cache"),
+		ResponseCacheAge: num("x-nr-response-cache-age"),
+	}
+	if raw := get("x-nr-request-cost"); raw != "" {
+		if v, err := strconv.ParseFloat(raw, 64); err == nil {
+			meta.Cost = &v
+		}
+	}
+	return meta
+}
+
+// IsPriced reports whether the gateway priced this request exactly. It is
+// deliberately not "Cost != nil": a cost with a status of "unpriced" is a
+// contradiction the caller should not bill against.
+func (m ResponseMeta) IsPriced() bool {
+	return m.CostStatus == "exact" && m.Cost != nil
+}

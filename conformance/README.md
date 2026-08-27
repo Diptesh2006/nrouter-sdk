@@ -1,8 +1,8 @@
 # Cross-SDK conformance
 
-Nine SDKs, one gateway. Each SDK has its own test suite proving it is
+Ten SDKs, one gateway. Each SDK has its own test suite proving it is
 self-consistent. **None of those prove the SDKs agree with each other**, and a
-gateway serving nine clients is only as correct as the one that drifted.
+gateway serving ten clients is only as correct as the one that drifted.
 
 This gate closes that gap. It reads `spec/nrouter-sdk-spec.json` — the source of
 truth under Rule #14 — and asserts every SDK's source encodes the same base URL,

@@ -65,6 +65,7 @@ SDK_SOURCES: dict[str, list[str]] = {
         "sdks/dart/lib/src/meta.dart",
     ],
     "r": ["sdks/r/R/client.R", "sdks/r/R/errors.R", "sdks/r/R/meta.R"],
+    "go": ["sdks/go/client.go", "sdks/go/errors.go", "sdks/go/meta.go"],
 }
 
 # An SDK that only wraps a vendor client does not restate every constant: the

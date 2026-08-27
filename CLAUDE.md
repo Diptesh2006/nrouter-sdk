@@ -1,6 +1,6 @@
 # CLAUDE.md — nrouter-sdk
 
-Nine SDKs for the nRouter gateway, and the gate that keeps them speaking one
+Ten SDKs for the nRouter gateway, and the gate that keeps them speaking one
 contract. **The only PUBLIC repo in the workspace** — everything committed here
 is world-readable. Treat every file as published.
 
@@ -30,7 +30,7 @@ Package.swift        # the SHIPPING Swift manifest — SwiftPM reads the REPO RO
 spec/                # nrouter-sdk-spec.json — the SoT under Rule #14
 conformance/         # the cross-SDK gate; run it before every release
 open-issues.csv      # the backlog, each row recording how it was verified
-sdks/{python,js,java,kotlin,android,swift,rust,dart,r}/
+sdks/{python,js,java,kotlin,android,swift,rust,dart,r,go}/
 examples/            # canonical snippets nrouter-app imports (Rule #14)
 ```
 
@@ -42,7 +42,7 @@ gateway** — never the other way round. Base URL, `NROUTER_API_KEY`, the
 SDK and the spec disagree, the SDK is wrong.
 
 ```bash
-python3 conformance/check_conformance.py             # all nine agree?
+python3 conformance/check_conformance.py             # all ten agree?
 python3 conformance/check_conformance.py --self-test # prove the gate bites
 ```
 

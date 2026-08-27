@@ -42,9 +42,12 @@ jobs:
       run:
         working-directory: sdks/js
     steps:
-      - uses: actions/checkout@v5
+      # SHA-PINNED, not @vN. A mutable major tag can be retargeted, and these
+      # jobs later hold a registry credential and npm's OIDC permission — so a
+      # retargeted action would run unreviewed code with publish rights.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # >= 22.18: the test launcher hands `node --test` the .ts files and
           # relies on native type stripping. On Node 20 the run dies on the
@@ -70,14 +73,55 @@ jobs:
         id: check
         run: |
           set -euo pipefail
+          PKG=@nrouter_ai/sdk
+
+          # The NAME must be the one we expect. `npm publish` uses whatever
+          # package.json says, while the availability check below asks about a
+          # fixed name — so a mistyped or changed name would have this step
+          # inspect one package and then permanently upload a different one,
+          # which a namespace-wide token is happy to do.
+          name="$(node -p "require('./package.json').name")"
+          if [ "$name" != "$PKG" ]; then
+            echo "::error::package.json declares '$name'; this workflow only publishes $PKG"; exit 1
+          fi
+
           v="$(node -p "require('./package.json').version")"
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          if npm view "@nrouter_ai/sdk@$v" version >/dev/null 2>&1; then
+
+          # STABLE SemVer only. An untagged publish moves npm's default
+          # `latest` pointer, so a prerelease would make `npm install` hand
+          # everyone an rc. Backports go out by hand with --tag.
+          case "$v" in
+            *[!0-9.]*|*..*|.*|*.) echo "::error::'$v' is not a stable MAJOR.MINOR.PATCH version"; exit 1 ;;
+          esac
+
+          if npm view "$PKG@$v" version >/dev/null 2>&1; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::@nrouter_ai/sdk@$v is already on npm — nothing to do. Bump the version to release."
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$PKG@$v is already on npm — nothing to do. Bump the version to release."
+            exit 0
           fi
+
+          # AND NEWER THAN LATEST. "Unused" is not "newer": publishing an
+          # unused 1.1.0 while 1.2.0 is live moves `latest` BACKWARDS and
+          # silently downgrades every fresh install. Nothing errors; consumers
+          # just lose features.
+          #
+          # `|| true` is deliberately NOT used on this lookup — a transient
+          # registry failure reading as "nothing published yet" is exactly how
+          # a downgrade would slip through.
+          if latest="$(npm view "$PKG" version 2>/tmp/e)"; then
+            newest="$(printf '%s\n%s\n' "$latest" "$v" | sort -V | tail -1)"
+            if [ "$newest" != "$v" ]; then
+              echo "::error::$v is older than the published latest ($latest); publishing it would downgrade every fresh install"
+              exit 1
+            fi
+          elif grep -qiE '404|E404|not found' /tmp/e; then
+            echo "::notice::$PKG has no published version yet; $v will be the first"
+          else
+            echo "::error::could not read the published version from npm, so a downgrade cannot be ruled out:"
+            cat /tmp/e >&2; exit 1
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish
         if: steps.check.outputs.publish == 'true'

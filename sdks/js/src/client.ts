@@ -48,6 +48,10 @@ function resolveApiKey(apiKey?: string): string {
 
 type NRouterOptions = ConstructorParameters<typeof OpenAI>[0];
 
+/** Where the untouched parsed error body is kept. Symbol-keyed and
+ * non-enumerable so it can never surface in a log or a JSON.stringify. */
+const ORIGINAL_BODY = Symbol('nrouter.originalErrorBody');
+
 /**
  * The vendor client raises its own typed error on a non-2xx BEFORE the raw
  * response reaches us, which would make every nRouter error code unreachable.
@@ -61,9 +65,11 @@ type NRouterOptions = ConstructorParameters<typeof OpenAI>[0];
 function responseFromApiError(err: unknown): { status: number; headers: HeaderSource; text: string } {
   if (err instanceof OpenAI.APIError && typeof err.status === 'number') {
     const headers = (err.headers ?? new Headers()) as Headers;
-    // `error` is the PARSED body. Re-serializing it is lossless for our
-    // purposes: the classifier reads `error.code`/`error.message` back out.
-    const text = err.error === undefined ? '' : JSON.stringify(err.error);
+    // Prefer the body stashed in makeStatusError: `err.error` is EMPTY for a
+    // bare envelope, and that is exactly the shape whose loss misclassifies a
+    // guardrail block and a budget ceiling.
+    const body = (err as unknown as Record<symbol, unknown>)[ORIGINAL_BODY] ?? err.error;
+    const text = body === undefined ? '' : JSON.stringify(body);
     return { status: err.status, headers, text };
   }
   // NOT a raw rethrow. DNS, TLS, a timeout, an abort or exhausted retries all
@@ -146,7 +152,16 @@ export class nRouter extends OpenAI {
     // restated: the vendor's `headers` is its OWN Headers type, not the DOM
     // one, and spelling it out here breaks on an upstream release for no gain.
     const [status, error, message, headers] = args;
-    return super.makeStatusError(status, redactDeep(error), redactKeys(message ?? ''), headers);
+    const redacted = redactDeep(error);
+    const err = super.makeStatusError(status, redacted, redactKeys(message ?? ''), headers);
+    // KEEP THE PARSED BODY. `APIError.generate` populates `err.error` from a
+    // NESTED `{"error":{…}}` envelope and DISCARDS a bare `{code,message}` one
+    // — which a proxy in front of the gateway does produce. Without this a bare
+    // guardrail_blocked lost both fields and reclassified as a plain request
+    // error, and a bare budget 402 came back as insufficient credit: opposite
+    // remedies, confidently wrong.
+    Object.defineProperty(err, ORIGINAL_BODY, { value: redacted, enumerable: false });
+    return err;
   }
 
   constructor(options: NRouterOptions = {}) {
@@ -303,6 +318,16 @@ export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
       body: req.body,
       headers,
       signal: req.signal as AbortSignal | undefined,
+      // NO CLIENT-SIDE RETRY ON A BILLED POST. The vendor client retries twice
+      // by default and these calls are NOT idempotent: a timeout or a 5xx
+      // after the gateway already accepted `POST /videos` creates and bills a
+      // SECOND job, with no idempotency key for anything to dedupe on. Gateway
+      // gate 8 is explicit that a retry is a second call and a second BILL,
+      // and the gateway owns retry and fallback on its own side, where the
+      // credit is reserved once per customer request.
+      //
+      // GET keeps the caller's setting: re-reading /models costs nothing.
+      ...(req.method === 'GET' ? {} : { maxRetries: 0 }),
       // The vendor client would otherwise JSON-encode `body` a second time.
       __binaryRequest: true,
     } as unknown as Record<string, unknown>;

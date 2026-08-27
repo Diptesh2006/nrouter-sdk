@@ -30,6 +30,7 @@ name: CI
 # and every PR, which is exactly what that policy forbids.
 on:
   workflow_dispatch:
+  workflow_call:
   push:
     tags: ['sdk-*-v*']
 

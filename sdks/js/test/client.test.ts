@@ -213,3 +213,55 @@ test('an error thrown out of a failed request never carries the key', async () =
     );
   }
 });
+
+// A proxy in front of the gateway can return a BARE envelope. OpenAI's
+// APIError.generate keeps a nested `{"error":{…}}` body and DISCARDS a bare
+// `{code,message}` one, so serializing only `err.error` lost both fields —
+// and a guardrail block reclassified as a plain request error while a budget
+// ceiling came back as insufficient credit. Opposite remedies, confidently
+// wrong.
+test('a BARE error envelope survives the vendor client and still classifies', async () => {
+  const cases: [number, Record<string, string>, string][] = [
+    [400, { code: 'guardrail_blocked', message: 'withheld' }, 'nRouterGuardrailBlockedError'],
+    [402, { code: 'insufficient_credits', message: 'top up' }, 'nRouterCreditError'],
+    [402, { message: 'budget exceeded for this team' }, 'nRouterBudgetExceededError'],
+  ];
+  for (const [status, body, expected] of cases) {
+    const client = new nRouter({
+      apiKey: TEST_KEY,
+      maxRetries: 0,
+      fetch: async () =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    await assert.rejects(
+      () => client.nr.chat({ model: 'm', prompt: 'x' }),
+      (err: unknown) => {
+        assert.equal((err as Error).constructor.name, expected, `status ${status}`);
+        return true;
+      },
+    );
+  }
+});
+
+// Gateway gate 8: a retry is a second call and a second BILL. POST /videos is
+// not idempotent and carries no idempotency key, so the vendor client's
+// default of two retries can create and bill a second job.
+test('a billed POST is sent exactly once, even on a retryable failure', async () => {
+  let attempts = 0;
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    // maxRetries deliberately NOT set: this pins the DEFAULT behaviour.
+    fetch: async () => {
+      attempts += 1;
+      return new Response(JSON.stringify({ error: { message: 'upstream blip' } }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  await assert.rejects(() => client.nr.chat({ model: 'm', prompt: 'x' }));
+  assert.equal(attempts, 1, `a billed POST was sent ${attempts} times`);
+});

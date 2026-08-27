@@ -65,6 +65,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # THE FULL TAG VALIDATION, AS A DEPENDENCY — not a parallel workflow.
+  #
+  # ci.yml and this file both fire on the same tag, so they used to start
+  # INDEPENDENTLY: the publish step could upload irreversibly while the Python,
+  # Go, contract and shell-guard jobs were still running, or had already
+  # failed. The publish job only repeated conformance and the JS tests, so
+  # nothing else gated the upload at all.
+  #
+  # Calling ci.yml makes its success a precondition. npm has no undo worth the
+  # name, so the ordering is the safety property.
+  validate:
+    uses: ./.github/workflows/ci.yml
+
   publish:
     name: publish @nrouter_ai/sdk
     runs-on: ubuntu-latest
@@ -72,6 +85,7 @@ jobs:
     # get a human approval between `git push --tags` and the irreversible
     # upload. A repo-level secret also works; the environment is what makes the
     # approval possible.
+    needs: validate
     environment: npm-publish
     steps:
       - name: Checkout the tagged commit
@@ -123,14 +137,23 @@ jobs:
         # and it has to be configured by an operator.
         env:
           TAG_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ "$(git cat-file -t "refs/tags/$TAG_NAME")" != "tag" ]; then
             echo "::error::$TAG_NAME is a LIGHTWEIGHT tag. Release tags must be annotated and signed: git tag -s $TAG_NAME -m '...'"
             exit 1
           fi
-          if ! git verify-tag "$TAG_NAME" 2>/dev/null; then
-            echo "::error::$TAG_NAME carries no valid signature. Sign it: git tag -s $TAG_NAME -m '...'"
+          # NOT `git verify-tag`. A fresh ubuntu-latest runner imports no GPG
+          # public key and configures no gpg.ssh.allowedSignersFile, so a
+          # perfectly valid signature fails with "No public key" and blocks
+          # every automated release. Ask GITHUB, which already holds the
+          # signer's registered keys and has verified the tag on ingest.
+          VERIFIED="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$(git rev-parse "refs/tags/$TAG_NAME")" \
+                        --jq '.verification.verified' 2>/dev/null || echo 'false')"
+          if [ "$VERIFIED" != "true" ]; then
+            echo "::error::GitHub does not report $TAG_NAME as having a verified signature."
+            echo "::error::Sign it with a key registered on the account: git tag -s $TAG_NAME -m '...'"
             exit 1
           fi
           git fetch --no-tags --depth=200 origin main

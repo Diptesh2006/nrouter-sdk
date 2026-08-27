@@ -1,0 +1,47 @@
+# Build output for nine SDKs across six toolchains.
+#
+# These rules lived in nrouter-ent-ai-hub/.gitignore, prefixed with `nrouter-sdk/`,
+# until this repo was extracted on 2026-08-26. Without them a build in any SDK
+# leaves artifacts staged-able, and the Rust `target/` alone is hundreds of MB.
+#
+# Prove a real file is never caught by them:
+#   git ls-files | git check-ignore --stdin --no-index
+
+# --- python ---
+**/__pycache__/
+**/*.pyc
+sdks/python/dist/
+sdks/python/*.egg-info/
+.pytest_cache/
+
+# --- js ---
+sdks/js/node_modules/
+sdks/js/dist/
+
+# --- jvm: kotlin + android ---
+sdks/kotlin/build/
+sdks/kotlin/.gradle/
+sdks/android/build/
+sdks/android/.gradle/
+# Machine-specific SDK location; never committed.
+sdks/android/local.properties
+# --- java ---
+sdks/java/target/
+
+# --- swift ---
+# Two manifests, so two build directories: the SHIPPING one is at the repo root.
+.build/
+sdks/swift/.build/
+
+# --- rust ---
+sdks/rust/target/
+
+# --- dart ---
+sdks/dart/.dart_tool/
+sdks/dart/pubspec.lock
+
+# --- r ---
+# `R CMD check` drops a full second copy of the sources beside the package.
+sdks/nrouter.Rcheck/
+sdks/nrouter_*.tar.gz
+sdks/r/..Rcheck/

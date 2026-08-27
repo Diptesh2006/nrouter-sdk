@@ -359,3 +359,44 @@ test('an unencodable request body is permanent, not retryable', async () => {
     );
   }
 });
+
+// MEASURED: `new OpenAI.APIUserAbortError().name` is the string "Error", so a
+// name-based abort check misses the vendor's own cancellation entirely. It was
+// wrapped as an ordinary transport failure and reported RETRYABLE — a generic
+// retry loop could resend a cancelled POST that had already been billed.
+test('a cancellation before headers is never reported as retryable', async () => {
+  const controller = new AbortController();
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: (_url: unknown, init: any) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const e = new Error('aborted');
+          e.name = 'AbortError';
+          reject(e);
+        });
+      }),
+  });
+  setTimeout(() => controller.abort(), 5);
+  await assert.rejects(
+    () => client.nr.media.speech(
+      { model: 'tts-1', input: 'hi', voice: 'alloy' },
+      { signal: controller.signal } as never,
+    ),
+    (err: unknown) => {
+      assert.equal(isRetryable(err), false, 'a cancelled, billed request must never be resent');
+      return true;
+    },
+  );
+});
+
+// The vendor's abort class carries its identity on the CONSTRUCTOR, not the
+// name — so the shared check must look at both.
+test('isAbortLike recognises the vendor abort class despite its name', () => {
+  const { isAbortLike } = require('../dist/errors');
+  const OpenAI = require('openai').default;
+  const vendor = new OpenAI.APIUserAbortError();
+  assert.equal(vendor.name, 'Error', 'precondition: the vendor does not set name');
+  assert.equal(isAbortLike(vendor), true, 'must be recognised by constructor');
+});

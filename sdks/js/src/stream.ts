@@ -18,7 +18,7 @@ import {
   isSpecErrorCode,
   transportError,
   parseRetryAfter,
-  ABORT_NAMES,
+  isAbortLike,
 } from './errors';
 import { buildChatBody } from './options';
 import { buildSamplingParams } from './sampling';
@@ -255,12 +255,7 @@ export function isAbortError(err: unknown): boolean {
   // two different things about the same cancellation, and a caller using this
   // one to decide whether to retry a cancelled stream took the wrong branch.
   // One implementation per cross-cutting concern.
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'name' in err &&
-    ABORT_NAMES.has(String((err as { name?: unknown }).name))
-  );
+  return isAbortLike(err);
 }
 
 // ---------------------------------------------------------------------------

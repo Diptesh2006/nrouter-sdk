@@ -10,7 +10,7 @@
 import OpenAI from 'openai';
 
 import { chat as runChat, chatText, compare as runCompare, type ChatRunner } from './chat';
-import { configurationError, redactKeys, transportError } from './errors';
+import { configurationError, isAbortLike, redactKeys, transportError } from './errors';
 import { metaFromHeaders, type HeaderSource } from './meta';
 import { NRouterModels, type RawRequester } from './models';
 import { Multimodal, type Transport, type TransportRequest, type TransportResponse } from './multimodal';
@@ -91,6 +91,21 @@ function responseFromApiError(err: unknown): { status: number; headers: HeaderSo
   //
   // The cause is preserved, so an abort is still recognisable through the
   // chain and `isRetryable` still answers false for it.
+  // AN ABORT IS NOT A TRANSPORT FAILURE. When the signal fires while the
+  // vendor client is awaiting response headers it throws `APIUserAbortError`
+  // — whose `.name` is the string "Error", MEASURED, so a name-based check
+  // misses it entirely. Wrapping it as an ordinary transport failure made
+  // isRetryable() answer TRUE, and a generic retry loop could resend a
+  // cancelled POST that had already been billed (gate 8).
+  //
+  // Normalized to a cause named AbortError so every downstream check —
+  // isAbortError, isRetryable, the stream reader — agrees it was a
+  // cancellation, whatever the runtime called it.
+  if (err instanceof OpenAI.APIUserAbortError || isAbortLike(err)) {
+    const abort = new Error('the request was cancelled before a response arrived');
+    abort.name = 'AbortError';
+    throw transportError('the request was cancelled before a response arrived', { cause: abort });
+  }
   throw transportError(err instanceof Error ? err.message : String(err), { cause: err });
 }
 

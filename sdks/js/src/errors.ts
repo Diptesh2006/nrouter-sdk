@@ -432,11 +432,28 @@ export function transportError(message: string, options: nRouterErrorOptions = {
  */
 export const ABORT_NAMES = new Set(['AbortError', 'TimeoutError', 'APIUserAbortError']);
 
+/**
+ * True when a value is a cancellation, by NAME or by CLASS.
+ *
+ * MEASURED: `new OpenAI.APIUserAbortError().name` is the string `"Error"` —
+ * the vendor never sets `name`, so the `APIUserAbortError` entry above matches
+ * NOTHING on its own and a real user abort read as an ordinary failure. The
+ * constructor name is what carries the identity there.
+ */
+export function isAbortLike(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  if (typeof name === 'string' && ABORT_NAMES.has(name)) return true;
+  const ctor = (err as { constructor?: { name?: unknown } }).constructor;
+  return typeof ctor?.name === 'string' && ABORT_NAMES.has(ctor.name);
+}
+
 /** Walk a cause chain looking for an abort, bounded so a cycle cannot hang the caller. */
 function wasAborted(err: unknown): boolean {
   let current: unknown = err;
   for (let depth = 0; depth < 8 && current !== null && current !== undefined; depth += 1) {
     if (typeof current === 'object') {
+      if (isAbortLike(current)) return true;
       const name = (current as { name?: unknown }).name;
       if (typeof name === 'string' && ABORT_NAMES.has(name)) return true;
       current = (current as { cause?: unknown }).cause;

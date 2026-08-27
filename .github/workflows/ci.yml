@@ -1,0 +1,169 @@
+name: CI
+
+# ⚠️ AUTHORED BUT UNEXERCISED — read this before trusting a badge.
+#
+# Measured 2026-08-27 against this repo and its org:
+#   gh api /repos/nRouterAI/nrouter-sdk/actions/runners --jq .total_count  -> 0
+#   gh api /orgs/nRouterAI/actions/runners              --jq .total_count  -> 0
+#   a user-authored workflow run in a sibling org repo reports steps=0 on
+#   every job — the run dies before step 1, which is the signature of the
+#   org-wide Actions billing hold, not of a bug in the YAML.
+#
+# So this file has never executed a single step and cannot today. An
+# unrunnable gate is an ABSENT gate: nothing here is evidence of anything.
+# Until runners and billing exist, the real gate is running the same commands
+# locally — they are written to be copy-pasteable for exactly that reason.
+#
+# The only workflows that DO run here are GitHub-managed ones (CodeQL default
+# setup, Dependency Graph). They execute on GitHub's own infrastructure and are
+# not billed as Actions minutes, so their green does not generalise to this file.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: spec conformance + python contract + shell guards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # The floor pyproject.toml declares. Testing on the floor is what
+          # proves requires-python is a promise rather than a guess.
+          python-version: '3.10'
+
+      # The SDK under test plus its dev extras. Editable so the root contract
+      # suite's sys.path insert and this install agree on one copy — two copies
+      # is how a suite passes against a package the release will not ship.
+      - name: Install the Python SDK and dev extras
+        run: python -m pip install --upgrade pip && python -m pip install -e "sdks/python[dev]"
+
+      # --self-test FIRST. It breaks the gate on purpose and asserts it goes
+      # red, so a conformance pass below means the checker still bites rather
+      # than having degraded into a no-op.
+      - name: Conformance gate self-test (prove it bites)
+        run: python3 conformance/check_conformance.py --self-test
+
+      - name: Conformance gate — all SDKs agree with spec/nrouter-sdk-spec.json
+        run: python3 conformance/check_conformance.py
+
+      - name: Repo contract tests
+        run: python -m pytest tests/test_sdk_contract.py -q
+
+      - name: Python SDK suite
+        working-directory: sdks/python
+        run: python -m pytest tests -q
+
+      # Glob rather than a hand-maintained list, so a guard written tomorrow
+      # cannot be born orphaned. An empty glob FAILS: a run that checked
+      # nothing must never be mistaken for a green one.
+      - name: Run every tests/*.test.sh guard
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          suites=(tests/*.test.sh)
+          if [ ${#suites[@]} -eq 0 ]; then
+            echo "::error::no tests/*.test.sh found — the glob matched nothing, refusing to report success"
+            exit 1
+          fi
+          echo "discovered ${#suites[@]} guard(s): ${suites[*]}"
+          rc=0
+          for s in "${suites[@]}"; do
+            echo "::group::$s"
+            bash "$s" || { rc=1; echo "::error file=$s::guard FAILED"; }
+            echo "::endgroup::"
+          done
+          exit $rc
+
+  js:
+    name: JS SDK — build + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: sdks/js/package-lock.json
+
+      # `npm ci`, never `npm install`: ci installs exactly the lockfile and
+      # fails if package.json and the lock have drifted. `npm install` would
+      # silently rewrite the lock, so CI would test a dependency set no
+      # consumer ever resolves.
+      - name: Install (locked)
+        run: npm ci
+
+      - name: Build (tsc, strict)
+        run: npm run build
+
+      # The package's own `test` script, not a hardcoded command — the script
+      # is owned by the package and may grow; CI must follow it, not shadow it.
+      - name: Test
+        run: npm test
+
+      # Prints the exact file list npm would upload. `files: ["dist"]` should
+      # keep this to the build output plus the auto-included README/LICENSE —
+      # if a source file or a stray .env ever appears here, it appears in the
+      # published tarball too.
+      - name: Show the publishable file list
+        run: npm pack --dry-run
+
+  go:
+    name: Go SDK — vet + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/go
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The floor go.mod declares, so CI proves that floor rather than
+          # assuming a modern toolchain hides a newer-than-declared feature.
+          go-version: '1.21'
+          # The module is stdlib-only, so there is no go.sum. setup-go's cache
+          # is on by default and FAILS when its dependency file is missing —
+          # which would read as a broken workflow rather than as "no deps".
+          cache: false
+
+      # gofmt exits 0 and prints filenames; the emptiness of the output is the
+      # assertion, so it has to be tested explicitly.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would rewrite: $unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./... -race -count=1

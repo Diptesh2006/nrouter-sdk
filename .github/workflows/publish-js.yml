@@ -1,0 +1,211 @@
+name: Publish JS SDK to npm
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY A TAG, NOT A MERGE
+#
+# The ask was "push to the public registries on merge". This workflow
+# deliberately does not do that, and the reason is that npm versions are
+# IMMUTABLE. Once `@nrouter_ai/sdk@1.1.0` exists it can never be replaced —
+# only superseded by 1.1.1. (There is a 72-hour unpublish window; it is a
+# fire-escape, not a release process, and using it breaks anyone who already
+# installed.)
+#
+# Publish-on-merge means every merge to main is a permanent, world-visible
+# release. A half-finished refactor, a docs typo in an exported symbol, a
+# dependency bump nobody meant to ship — each becomes a version number that
+# exists forever and that some consumer's lockfile will pin.
+#
+# So the split is:
+#   merge to main  ->  ci.yml runs every gate.          Reversible. Cheap.
+#   push a tag     ->  this workflow publishes.         Irreversible. Deliberate.
+#
+# The tag is the maintainer saying "this exact tree is a release", which is a
+# decision a merge button cannot express.
+#
+# TO RELEASE (the whole thing a maintainer types):
+#
+#   # 1. bump the version in sdks/js/package.json, commit, push to main
+#   # 2. tag that commit and push the tag
+#   git tag -s sdk-js-v1.1.0 -m "js sdk 1.1.0"
+#   git push origin sdk-js-v1.1.0        # SSH remote; HTTPS git fails here
+#
+# The tag version and package.json MUST agree — step "Assert the tag matches
+# package.json" below refuses otherwise, because a tag that says 1.1.0 over a
+# tree that says 1.0.0 republishes 1.0.0 and npm rejects it with an E403 that
+# names neither cause.
+#
+# Full runbook, including the manual fallback: sdks/js/PUBLISHING.md
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ⚠️ AUTHORED BUT UNEXERCISED — measured 2026-08-27:
+#   gh api /repos/nRouterAI/nrouter-sdk/actions/runners --jq .total_count -> 0
+#   gh api /orgs/nRouterAI/actions/runners              --jq .total_count -> 0
+#   a user-authored workflow run in a sibling org repo reports steps=0 on every
+#   job — it dies before step 1, the signature of the org-wide Actions billing
+#   hold rather than a YAML bug.
+# This workflow has therefore never run. Until runners and billing exist, the
+# release path is the manual one in sdks/js/PUBLISHING.md, which runs the same
+# commands in the same order. Do not treat this file as proof of anything.
+
+on:
+  push:
+    tags:
+      - 'sdk-js-v*'
+
+permissions:
+  contents: read
+  # Required for `npm publish --provenance`, which signs a public attestation
+  # linking the tarball to this repo, this workflow and this commit. Consumers
+  # can then verify the package was built here and not uploaded from a laptop.
+  id-token: write
+
+# Two tags pushed close together must not race to the registry.
+concurrency:
+  group: publish-js
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish @nrouter_ai/sdk
+    runs-on: ubuntu-latest
+    # Scope NPM_TOKEN to this environment and add required reviewers there to
+    # get a human approval between `git push --tags` and the irreversible
+    # upload. A repo-level secret also works; the environment is what makes the
+    # approval possible.
+    environment: npm-publish
+    steps:
+      - name: Checkout the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node with the npm registry
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          # registry-url is what makes setup-node write an .npmrc pointing at
+          # NODE_AUTH_TOKEN. Without it the token env var is read by nothing
+          # and `npm publish` fails as unauthenticated.
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+          cache-dependency-path: sdks/js/package-lock.json
+
+      - name: Set up Python (for the conformance gate)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.10'
+
+      # The tag is the only input; everything else is derived from the tree.
+      - name: Assert the tag matches package.json
+        id: version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          tag_version="${tag#sdk-js-v}"
+
+          # Strict SemVer. A tag like sdk-js-v1.1 would publish "1.1", which is
+          # a different, valid, and wrong version on npm.
+          if ! [[ "$tag_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::tag '$tag' does not carry a strict MAJOR.MINOR.PATCH version"
+            exit 1
+          fi
+
+          pkg_version="$(node -p "require('./sdks/js/package.json').version")"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::tag says $tag_version but sdks/js/package.json says $pkg_version — publishing would ship $pkg_version under the wrong name, or be rejected as already-published. Fix package.json, retag."
+            exit 1
+          fi
+
+          # The published NAME comes from package.json too. Pinning it here is
+          # what stops a typo'd scope from claiming a second package instead of
+          # failing — a squatted second name is worse than a fixed first one.
+          pkg_name="$(node -p "require('./sdks/js/package.json').name")"
+          if [ "$pkg_name" != "@nrouter_ai/sdk" ]; then
+            echo "::error::package name is '$pkg_name', expected '@nrouter_ai/sdk'"
+            exit 1
+          fi
+
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+          echo "publishing $pkg_name@$tag_version"
+
+      # npm's own rejection for this is an E403 whose message talks about
+      # permissions, which sends you to the token instead of to the version.
+      # Fail here with the real reason.
+      - name: Assert the version is not already on npm
+        env:
+          # Through the environment, never `${{ }}` interpolated into the
+          # script body: the value originates in a pushed tag name, and an
+          # expression expanded inline is a shell-injection seam even after
+          # the regex check above.
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          set -uo pipefail
+          v="$V"
+          existing="$(npm view "@nrouter_ai/sdk@$v" version 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            echo "::error::@nrouter_ai/sdk@$v is already published. npm versions are immutable — bump to the next version and retag. Do not attempt to unpublish."
+            exit 1
+          fi
+          echo "@nrouter_ai/sdk@$v is free"
+
+      # A tag must not publish an unproven tree. CI ran on main, but the tag is
+      # a different question: it points at one exact commit, and that is the
+      # commit consumers get.
+      - name: Conformance gate self-test (prove it bites)
+        run: python3 conformance/check_conformance.py --self-test
+
+      - name: Conformance gate
+        run: python3 conformance/check_conformance.py
+
+      - name: Install (locked)
+        working-directory: sdks/js
+        run: npm ci
+
+      - name: Build
+        working-directory: sdks/js
+        run: npm run build
+
+      - name: Test
+        working-directory: sdks/js
+        run: npm test
+
+      # Read this in the log before believing the upload. `files: ["dist"]`
+      # should keep it to build output plus README/LICENSE; anything else here
+      # is in the tarball, and the tarball is permanent.
+      - name: Show exactly what will be uploaded
+        working-directory: sdks/js
+        run: npm pack --dry-run
+
+      # --access public is REQUIRED for a scoped package. Without it npm
+      # defaults a new scoped package to restricted, the package publishes
+      # "successfully", and `npm install @nrouter_ai/sdk` then 404s for
+      # everyone. package.json also carries publishConfig.access=public; both
+      # are kept because either one alone is a single point of failure.
+      #
+      # NODE_AUTH_TOKEN is set on THIS step only and is never echoed. Do not
+      # add `set -x` here, and do not print npm's config.
+      - name: Publish
+        working-directory: sdks/js
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
+
+      # Verify AT THE REGISTRY, not from local state. A zero exit from
+      # `npm publish` is npm accepting the upload; this is the registry
+      # serving it. They are not the same event, and the registry is
+      # eventually consistent for a few seconds.
+      - name: Verify the registry serves the new version
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          set -uo pipefail
+          v="$V"
+          for attempt in 1 2 3 4 5 6; do
+            served="$(npm view @nrouter_ai/sdk version 2>/dev/null || true)"
+            echo "attempt $attempt: registry says '${served:-<nothing>}', want '$v'"
+            if [ "$served" = "$v" ]; then
+              echo "published and served: @nrouter_ai/sdk@$v"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::registry did not serve $v within ~60s. The publish step exited 0, so check https://www.npmjs.com/package/@nrouter_ai/sdk before republishing — do NOT bump and retry blindly."
+          exit 1

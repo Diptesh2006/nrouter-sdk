@@ -90,7 +90,7 @@ export interface nRouterErrorOptions {
  * a body might echo, and refuses to touch the branded prefix. `*` is outside
  * the tail character class, so neither pass can match its own output.
  */
-function redactKeys(message: string): string {
+export function redactKeys(message: string): string {
   return message
     .replace(/(sk-nrouter-)[A-Za-z0-9._-]{6,}/g, '$1***')
     .replace(/(sk-)(?!nrouter-)[A-Za-z0-9._-]{6,}/g, '$1***');
@@ -517,6 +517,18 @@ export function parseRetryAfter(
     return Number.isFinite(seconds) ? seconds : null;
   }
 
+  // Date.parse is FAR more lenient than an HTTP-date parser, and the
+  // difference is dangerous rather than cosmetic. `Date.parse('12.5')` yields
+  // 5 December 2001 — a date in the past, which the clamp below turns into 0,
+  // i.e. "retry immediately" against a limit that just refused us. A malformed
+  // Retry-After became a hot loop on a tripped rate limit.
+  //
+  // RFC 9110 allows three date forms; all of them carry a comma and a
+  // timezone. Requiring that shape first is what keeps a bare float, a bare
+  // year, or `1e3` from being read as a date at all.
+  if (!/^[A-Za-z]{3,9},?\s+\d/.test(trimmed) || !/(GMT|UTC|[+-]\d{4})$/i.test(trimmed)) {
+    return null;
+  }
   const at = Date.parse(trimmed);
   if (Number.isNaN(at)) return null;
   return Math.max(0, Math.ceil((at - now) / 1000));

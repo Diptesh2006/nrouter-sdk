@@ -10,7 +10,7 @@
 import OpenAI from 'openai';
 
 import { chat as runChat, chatText, compare as runCompare, type ChatRunner } from './chat';
-import { configurationError, transportError } from './errors';
+import { configurationError, redactKeys, transportError } from './errors';
 import { metaFromHeaders, type HeaderSource } from './meta';
 import { NRouterModels, type RawRequester } from './models';
 import { Multimodal, type Transport, type TransportRequest, type TransportResponse } from './multimodal';
@@ -91,6 +91,55 @@ export class nRouter extends OpenAI {
   readonly nrouter_models: NRouterModels;
   /** Everything the playground can do. */
   readonly nr: NRouterSurface;
+
+  /**
+   * Node renders a plain object's fields on `console.log`, and the VENDOR base
+   * class stores `apiKey` as a public field — so `console.log(client)` printed
+   * the key verbatim into whatever log aggregator was listening (Rule #5). The
+   * Go SDK guards the same thing with String/GoString; this is the JS
+   * equivalent, and it covers `console.log`, `util.inspect` and `%o`.
+   *
+   * Addressed by `Symbol.for` rather than by importing `node:util`, so the
+   * bundle stays runtime-agnostic and needs no node typings.
+   */
+  [Symbol.for('nodejs.util.inspect.custom')](): string {
+    return this.toString();
+  }
+
+  toString(): string {
+    const key = this.apiKey ?? '';
+    const tail = key.length > 4 ? key.slice(-4) : '';
+    return `nRouter { apiKey: '${KEY_PREFIX}...${tail}', baseURL: '${this.baseURL}' }`;
+  }
+
+  /** JSON.stringify must not be the way around the guard above. */
+  toJSON(): Record<string, unknown> {
+    return { baseURL: this.baseURL };
+  }
+
+  /**
+   * EVERY vendor-raised error passes through here, including one from a
+   * resource this SDK never wraps (`client.chat.completions.create()`).
+   *
+   * The gateway should never echo a key, but `message` and `error` are built
+   * from a response body we do not control, and the test suite caught a real
+   * case: a 401 whose body quoted the rejected key produced
+   * `Error: 401 key sk-nrouter-…abcd refused`. `redactKeys` runs inside
+   * `nRouterError` and this path never reaches it, so the redaction has to
+   * happen at the source instead.
+   *
+   * The vendor ERROR TYPE is preserved — callers catching `OpenAI.APIError`
+   * around an inherited resource keep working. Only the text changes.
+   */
+  protected override makeStatusError(
+    ...args: Parameters<OpenAI['makeStatusError']>
+  ): ReturnType<OpenAI['makeStatusError']> {
+    // Positional and type-derived from the base signature rather than
+    // restated: the vendor's `headers` is its OWN Headers type, not the DOM
+    // one, and spelling it out here breaks on an upstream release for no gain.
+    const [status, error, message, headers] = args;
+    return super.makeStatusError(status, redactDeep(error), redactKeys(message ?? ''), headers);
+  }
 
   constructor(options: NRouterOptions = {}) {
     const apiKey = resolveApiKey(options?.apiKey);
@@ -284,4 +333,21 @@ interface FetchResponse {
 
 function encodeJson(body: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(body ?? {}));
+}
+
+/**
+ * Redact any key inside a parsed error body.
+ *
+ * Round-tripping through JSON is deliberate: the body is arbitrary provider
+ * JSON, and walking it by hand would miss a key nested in an array, in a
+ * `metadata` blob, or under a field this SDK has never seen. Anything that
+ * cannot be serialized is dropped rather than passed through unexamined.
+ */
+function redactDeep(body: Object | undefined): Object | undefined {
+  if (body === undefined) return undefined;
+  try {
+    return JSON.parse(redactKeys(JSON.stringify(body))) as Object;
+  } catch {
+    return undefined;
+  }
 }

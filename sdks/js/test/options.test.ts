@@ -257,3 +257,23 @@ test('the API key is never a body field', () => {
   assert.equal(keys.includes('apikey'), false);
   assert.equal(keys.includes('authorization'), false);
 });
+
+// The SDK's image contract was enforced on nr.media.* and quietly ignored on
+// the far more common nr.chat({ images }). A bare path or an http:// URL fails
+// at the provider AFTER the request is billed; refusing locally is free.
+test('nr.chat({ images }) enforces the same image contract as the media surface', () => {
+  const bad = ['/local/path.png', 'http://example.com/a.png', 'data:image/png;base64,A', 'https://example.com bad'];
+  for (const url of bad) {
+    assert.throws(
+      () => buildMessages({ model: 'm', prompt: 'hi', images: [url] }),
+      (err: unknown) => {
+        assert.equal((err as { kind?: string }).kind, 'configuration', `should refuse: ${url}`);
+        return true;
+      },
+      `accepted an unusable image reference: ${url}`,
+    );
+  }
+  // ...and a good one still builds a part, so the guard is not merely strict.
+  const msgs = buildMessages({ model: 'm', prompt: 'hi', images: ['https://example.com/a.png'] });
+  assert.ok(JSON.stringify(msgs).includes('image_url'));
+});

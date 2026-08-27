@@ -12,6 +12,7 @@
 // and forwards the rest to the provider, so a field this SDK invents is not an
 // error a caller ever sees: it is a dead option that looks live.
 
+import { dataUrlToPart } from './multimodal';
 import type {
   ChatContentPart,
   ChatMessage,
@@ -87,10 +88,17 @@ export function buildExtraBody(opts: NRouterCallOptions): NRouterExtraBody {
 
 /** Build the image content-parts for one turn, in the playground's order. */
 function imageParts(images: readonly string[]): ChatContentPart[] {
-  // A data URL and an https URL are both valid here; the gateway forwards the
-  // part as-is and the provider fetches or decodes it. No validation is done
-  // for that reason — a client-side URL check would only be able to be wrong.
-  return images.map((url) => ({ type: 'image_url', image_url: { url } }));
+  // VALIDATED, through the same function the media surface uses.
+  //
+  // The comment here used to say a client-side check "would only be able to be
+  // wrong", and that was true of a URL REACHABILITY check — it is not true of
+  // the shape. `dataUrlToPart` already refuses a bare path, an http:// URL,
+  // an impossible base64 length and a URL that does not parse, and every one
+  // of those fails at the provider AFTER the request is billed. Leaving this
+  // path unvalidated meant the SDK's own documented image contract was
+  // enforced on `nr.media.*` and quietly ignored on the far more common
+  // `nr.chat({ images })`.
+  return images.map((url) => dataUrlToPart(url));
 }
 
 /**

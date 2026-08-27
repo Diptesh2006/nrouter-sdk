@@ -122,12 +122,20 @@ npm test
 #    is a source file or a stray .env in the permanent tarball.
 npm pack --dry-run
 
-# 5. Publish. --access public is not optional; see below.
-npm publish --access public
-
-# 6. Tag the released commit so the tree is recoverable.
+# 5. TAG FIRST, AND PUSH IT, BEFORE anything is uploaded.
+#    The tag is the recoverable source for an artifact that can never be
+#    withdrawn. Publishing first inverts the risk: if signing or pushing then
+#    fails — a wrong key, a protected-ref refusal, a dead network — the
+#    registry holds an immutable release with NO source tag, and the same
+#    version can never be republished to fix it. Cutting the tag first costs
+#    nothing if the publish later fails; the tag is deletable, the release is
+#    not.
 git tag -s sdk-js-v1.1.0 -m "js sdk 1.1.0"
+git verify-tag sdk-js-v1.1.0          # must say "Good signature"
 git push origin sdk-js-v1.1.0
+
+# 6. Publish. --access public is not optional; see below.
+npm publish --access public
 
 # 7. VERIFY AT THE REGISTRY, not from local state.
 npm view @nrouter_ai/sdk version      # 1.1.0

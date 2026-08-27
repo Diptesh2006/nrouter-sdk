@@ -285,7 +285,15 @@ export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
     return {
       status: res.status,
       headers: res.headers,
-      text: new TextDecoder().decode(buffer),
+      // LAZY. `text` used to be decoded eagerly, so every binary response —
+      // a video from videoContent(), an mp3 from speech() — was materialised
+      // as a second, unused JavaScript string the size of the payload. On a
+      // large MP4 that is an unbounded extra allocation and a plausible way to
+      // exhaust the Node heap on a response the caller only ever reads as
+      // bytes. A getter costs nothing until something asks.
+      get text() {
+        return new TextDecoder().decode(buffer);
+      },
       contentType: contentTypeOf(res.headers),
       bytes: async () => buffer,
     };

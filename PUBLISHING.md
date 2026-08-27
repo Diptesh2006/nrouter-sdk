@@ -24,20 +24,20 @@ makes merge-triggered safe: npm and PyPI versions are immutable, so re-running
 on every merge would otherwise fail constantly. The `already published?` step
 turns the no-change case into a quiet green no-op instead.
 
-## Secrets the maintainer must add
+## Secrets
 
-Neither exists yet, and **neither is in the local credential store**:
-
-| secret | how |
+| secret | status |
 |---|---|
-| `NPM_TOKEN` | npmjs.com → Access Tokens → Granular, write on `@nrouter_ai/sdk`. `gh secret set NPM_TOKEN --repo nRouterAI/nrouter-sdk` |
-| `PYPI_API_TOKEN` | pypi.org → API tokens, scoped to project `nrouter-sdk`. `gh secret set PYPI_API_TOKEN --repo nRouterAI/nrouter-sdk` |
+| `PYPI_API_TOKEN` | ✅ **set** (2026-08-27), from `~/.nrouter_admin_keys/pypi/pypi.txt` |
+| `NPM_TOKEN` | ❌ not set — `gh secret set NPM_TOKEN --repo nRouterAI/nrouter-sdk` |
 
-⚠️ `~/.nrouter_admin_keys/pypi/pypi.txt` is **not** the right token — its own
-README says it is scoped to the retired brand's project name and cannot publish
-`nrouter-sdk`. `~/.nrouter_admin_keys/npm/npm.txt` was never created, and that
-README still names the `@nrouter` scope rather than the published
-`@nrouter_ai`.
+npm token: npmjs.com → Access Tokens → Granular, write on `@nrouter_ai/sdk`.
+
+**To re-verify a PyPI token without publishing anything:** build a version that
+is ALREADY on PyPI and attempt the upload. `400 File already exists` means the
+token authenticated AND was authorized; `403` means it was not. That probe is
+what proved this repo's own credential doc wrong — it claimed the token was
+scoped to the retired brand's project and could not publish here.
 
 ## Things that bite
 

@@ -48,7 +48,16 @@ jobs:
         with:
           python-version: '3.10'   # the floor declared in pyproject.toml
 
-      - run: python -m pip install --upgrade pip build twine pytest tomli
+      # INSTALL THE PACKAGE, not just the build tools. The first run failed
+      # here: the suite imports httpx (a real runtime dependency) and needs
+      # pytest-asyncio for `asyncio_mode = auto`, and a bare `pip install
+      # pytest` gives you neither. It passed locally only because this machine
+      # had them globally — the runner is clean, which is the point of running
+      # there. Installing the package also exercises real dependency
+      # resolution, which is closer to what a consumer gets.
+      - run: |
+          python -m pip install --upgrade pip build twine tomli
+          python -m pip install -e ".[dev]"
 
       # The tests and the cross-SDK contract gate. Nothing publishes if either
       # is red.

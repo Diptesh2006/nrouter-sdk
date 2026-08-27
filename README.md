@@ -77,7 +77,7 @@ the base URL, the environment variable, the key prefix, a response header or an 
 It needs no toolchains, and its `--self-test` proves it goes red rather than merely
 printing green. See [`conformance/`](conformance/).
 
-Publishing each package is documented in its own `PUBLISHING.md`, per registry.
+Publishing is [`PUBLISHING.md`](PUBLISHING.md): bump the version, merge to `main`, and one workflow per language tests it and ships it. A merge that changes no version publishes nothing.
 
 Swift is the one that does not use a registry: SwiftPM resolves a git repo by
 tag, and it reads `Package.swift` from the repository ROOT. That is what

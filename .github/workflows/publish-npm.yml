@@ -1,0 +1,99 @@
+# Publish @nrouter_ai/sdk to npm, on merge to main.
+#
+# ONE workflow for this language: it tests and it publishes. There is no
+# separate CI file to keep in step.
+#
+# WHY MERGE-TRIGGERED IS SAFE HERE. npm versions are immutable, so "publish on
+# every merge" only works if a merge that changes no version is a NO-OP rather
+# than a failure. That is the `already published?` step: it compares
+# package.json against the registry and skips the publish when they match. The
+# release procedure is therefore just:
+#
+#     bump "version" in sdks/js/package.json  ->  merge  ->  it ships
+#
+# and a merge without a bump does nothing, quietly and green.
+#
+# Requires the NPM_TOKEN repo secret. Without it the tests still run and the
+# publish step fails as unauthenticated.
+name: npm
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdks/js/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - '.github/workflows/publish-npm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # npm provenance
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false   # never cancel a run that may be mid-upload
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          # >= 22.18: the test launcher hands `node --test` the .ts files and
+          # relies on native type stripping. On Node 20 the run dies on the
+          # first `as`, before a single test executes.
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+          cache-dependency-path: sdks/js/package-lock.json
+
+      - run: npm ci
+
+      # The tests and the cross-SDK contract gate. Nothing publishes if either
+      # is red — which is the whole reason they live in this file.
+      - run: npm test
+
+      - name: Cross-SDK conformance
+        working-directory: .
+        run: |
+          python3 conformance/check_conformance.py --self-test
+          python3 conformance/check_conformance.py
+
+      - name: Already published?
+        id: check
+        run: |
+          set -euo pipefail
+          v="$(node -p "require('./package.json').version")"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if npm view "@nrouter_ai/sdk@$v" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::@nrouter_ai/sdk@$v is already on npm — nothing to do. Bump the version to release."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.check.outputs.publish == 'true'
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify the registry serves it
+        if: steps.check.outputs.publish == 'true'
+        env:
+          V: ${{ steps.check.outputs.version }}
+        run: |
+          # `npm publish` exiting 0 is npm ACCEPTING the upload; this is the
+          # registry SERVING it. Different events, seconds apart.
+          for _ in $(seq 1 12); do
+            [ "$(npm view '@nrouter_ai/sdk' version)" = "$V" ] && exit 0
+            sleep 5
+          done
+          echo "::error::the registry is not serving $V"; exit 1

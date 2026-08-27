@@ -2,7 +2,7 @@
 % Please edit documentation in R/errors.R
 \name{nrouter_transport_condition}
 \alias{nrouter_transport_condition}
-\title{A transport failure: the request never reached the gateway}
+\title{A transport failure: the request left this process and got no answer}
 \usage{
 nrouter_transport_condition(message)
 }
@@ -13,5 +13,5 @@ nrouter_transport_condition(message)
 A condition object.
 }
 \description{
-A transport failure: the request never reached the gateway
+A transport failure: the request left this process and got no answer
 }

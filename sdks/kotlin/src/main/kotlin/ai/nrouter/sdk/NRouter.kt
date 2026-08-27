@@ -75,6 +75,55 @@ public class NRouter @JvmOverloads constructor(
     public suspend fun get(path: String): Response =
         send(Request.Builder().url(url(path)).get().build())
 
+    /** Raw bytes plus metadata, for the endpoints that do not return JSON. */
+    public data class RawResponse(
+        val bytes: ByteArray,
+        val meta: NRouterResponseMeta,
+        val statusCode: Int,
+    ) {
+        // ByteArray uses identity equals; data-class equality would be a lie.
+        override fun equals(other: Any?): Boolean = this === other
+        override fun hashCode(): Int = System.identityHashCode(this)
+    }
+
+    /**
+     * Raw bytes plus metadata, for the endpoints that do not return JSON.
+     *
+     * `/v1/audio/speech` returns audio, `/v1/videos/{id}/content` returns a
+     * video, and `stream: true` returns SSE. The JSON helpers refuse those
+     * rather than handing back an empty body for a request you were billed
+     * for; this is the method that returns them.
+     */
+    public suspend fun bytes(
+        path: String,
+        body: JSONObject? = null,
+    ): RawResponse = withContext(Dispatchers.IO) {
+        val builder = Request.Builder().url(url(path)).header("Authorization", "Bearer $apiKey")
+        val request = if (body == null) {
+            builder.get().build()
+        } else {
+            builder.post(body.toString().toRequestBody(JSON)).build()
+        }
+
+        val response = try {
+            http.newCall(request).execute()
+        } catch (e: Exception) {
+            throw NRouterError.Transport(e.message ?: "the request never reached nRouter")
+        }
+
+        response.use {
+            val status = it.code
+            val meta = NRouterResponseMeta.fromLookup { name -> it.header(name) }
+            val raw = it.body?.bytes() ?: ByteArray(0)
+            if (status in 200..299) {
+                RawResponse(raw, meta, status)
+            } else {
+                val parsed = runCatching { JSONObject(String(raw)) }.getOrElse { JSONObject() }
+                throw NRouterError.fromCode(errorBody(status, parsed, meta))
+            }
+        }
+    }
+
     private fun url(path: String): String = "$baseURL/${path.trimStart('/')}"
 
     private suspend fun send(request: Request): Response = withContext(Dispatchers.IO) {
@@ -91,10 +140,24 @@ public class NRouter @JvmOverloads constructor(
         response.use {
             val status = it.code
             val meta = NRouterResponseMeta.fromLookup { name -> it.header(name) }
+            val contentType = it.header("content-type").orEmpty().lowercase()
             val text = it.body?.string().orEmpty()
             val parsed = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
 
             if (status in 200..299) {
+                // A 2xx that is not JSON is a REAL RESPONSE you were billed for
+                // — /v1/audio/speech returns audio, video content returns
+                // bytes, stream:true returns SSE. Parsing those as JSON yields
+                // an empty object, so the caller pays and receives nothing
+                // while the call reports success. Refuse loudly instead.
+                if (!contentType.contains("json")) {
+                    throw NRouterError.Transport(
+                        "nRouter returned $status with content-type '$contentType', which " +
+                            "is not JSON. Use bytes() for binary or streaming endpoints " +
+                            "(/v1/audio/speech, /v1/videos/{id}/content, or stream: true); " +
+                            "the JSON helpers would report success with an empty body."
+                    )
+                }
                 Response(parsed, meta, status)
             } else {
                 throw NRouterError.fromCode(errorBody(status, parsed, meta))
@@ -125,12 +188,12 @@ public class NRouter @JvmOverloads constructor(
         public fun resolveApiKey(explicit: String? = null): String {
             val key = explicit?.takeIf { it.isNotEmpty() } ?: System.getenv(ENV_KEY).orEmpty()
             if (key.isEmpty()) {
-                throw NRouterError.Transport(
+                throw NRouterError.Configuration(
                     "No nRouter API key: pass one explicitly or set $ENV_KEY."
                 )
             }
             if (!key.startsWith(KEY_PREFIX)) {
-                throw NRouterError.Transport(
+                throw NRouterError.Configuration(
                     "nRouter API keys start with '$KEY_PREFIX'; got one that does not."
                 )
             }

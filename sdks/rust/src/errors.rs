@@ -13,25 +13,34 @@ use std::fmt;
 /// forced into a neighbouring variant — guessing here would tell a caller to
 /// retry something permanent.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)] // every payload variant is boxed below
 pub enum NRouterError {
     /// `invalid_request` (400) — invalid JSON or request shape.
-    Request(ErrorBody),
+    Request(Box<ErrorBody>),
     /// `guardrail_blocked` (400) — a guardrail rule denied the request.
-    GuardrailBlocked(ErrorBody),
+    GuardrailBlocked(Box<ErrorBody>),
     /// `invalid_api_key` (401) — virtual-key authentication refused.
-    Authentication(ErrorBody),
+    Authentication(Box<ErrorBody>),
     /// `insufficient_credits` (402) — the credit reserve failed.
-    Credit(ErrorBody),
+    Credit(Box<ErrorBody>),
     /// `model_not_found` (404) — alias absent or invisible to this tenant.
-    NotFound(ErrorBody),
+    NotFound(Box<ErrorBody>),
     /// `rate_limit_exceeded` / `tpm_limit_exceeded` (429).
-    RateLimit(ErrorBody),
+    RateLimit(Box<ErrorBody>),
     /// `credit_check_failed` / `service_unavailable` (503).
-    Service(ErrorBody),
+    Service(Box<ErrorBody>),
     /// A code this SDK version does not know. Never re-classified.
-    Other(ErrorBody),
-    /// The request never reached the gateway.
+    Other(Box<ErrorBody>),
+    /// The request left this process and did not get an answer — DNS, TLS, a
+    /// dropped connection, a timeout. Retryable.
     Transport(String),
+    /// The SDK refused before sending anything: no key, or a key that is not
+    /// shaped like an nRouter key.
+    ///
+    /// Separate from [`NRouterError::Transport`] on purpose. Both are raised
+    /// locally, but this one is PERMANENT — a caller retrying on
+    /// `is_retryable()` would spin forever without ever making a request.
+    Configuration(String),
 }
 
 /// The parsed gateway error payload plus the metadata worth acting on.
@@ -52,12 +61,25 @@ pub struct ErrorBody {
 }
 
 impl NRouterError {
-    /// Build the variant the gateway's `code` names.
+    /// Classify a gateway refusal.
     ///
-    /// The status is used only when no code was supplied; a code always wins,
-    /// because the status alone cannot separate `invalid_request` from
-    /// `guardrail_blocked`, nor `rate_limit_exceeded` from `tpm_limit_exceeded`.
+    /// Three signals, in order, because no single one is sufficient:
+    ///
+    /// 1. **`code`**, when present — the only thing that separates
+    ///    `rate_limit_exceeded` from `tpm_limit_exceeded`. The gateway's WAF
+    ///    and its upstream passthrough send one.
+    /// 2. **status**, otherwise. The gateway's main error path
+    ///    (`GatewayError::into_response`) emits `{"error":{"type","message"}}`
+    ///    with **no code at all**, so this is the ordinary case, not the
+    ///    fallback it looks like.
+    /// 3. **the message**, to split the two 400s. `invalid_request` and
+    ///    `guardrail_blocked` share a status, and with no code the message is
+    ///    the only signal present — classifying every 400 as a request error
+    ///    would make [`NRouterError::GuardrailBlocked`] unreachable, telling a
+    ///    caller to fix a body that was never the problem.
     pub fn from_code(body: ErrorBody) -> Self {
+        let boxed = Box::new(body);
+        let body = boxed;
         match body.code.as_deref() {
             Some("invalid_request") => Self::Request(body),
             Some("guardrail_blocked") => Self::GuardrailBlocked(body),
@@ -68,7 +90,13 @@ impl NRouterError {
             Some("credit_check_failed") | Some("service_unavailable") => Self::Service(body),
             Some(_) => Self::Other(body),
             None => match body.status {
-                Some(400) => Self::Request(body),
+                Some(400) => {
+                    if body.message.to_lowercase().contains("guardrail") {
+                        Self::GuardrailBlocked(body)
+                    } else {
+                        Self::Request(body)
+                    }
+                }
                 Some(401) => Self::Authentication(body),
                 Some(402) => Self::Credit(body),
                 Some(404) => Self::NotFound(body),
@@ -90,7 +118,7 @@ impl NRouterError {
             | Self::RateLimit(b)
             | Self::Service(b)
             | Self::Other(b) => Some(b),
-            Self::Transport(_) => None,
+            Self::Transport(_) | Self::Configuration(_) => None,
         }
     }
 
@@ -99,7 +127,10 @@ impl NRouterError {
     /// Deliberately false for every 4xx that names a permanent condition: a
     /// retry there burns quota and cannot change the answer.
     pub fn is_retryable(&self) -> bool {
-        matches!(self, Self::RateLimit(_) | Self::Service(_) | Self::Transport(_))
+        matches!(
+            self,
+            Self::RateLimit(_) | Self::Service(_) | Self::Transport(_)
+        )
     }
 }
 
@@ -107,6 +138,7 @@ impl fmt::Display for NRouterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Transport(m) => write!(f, "nRouter transport error: {m}"),
+            Self::Configuration(m) => write!(f, "nRouter configuration error: {m}"),
             other => {
                 let b = other.body().expect("non-transport variants carry a body");
                 match &b.code {

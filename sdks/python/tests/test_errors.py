@@ -186,3 +186,31 @@ def test_a_429_without_a_code_falls_back_to_the_class_default():
     with pytest.raises(nRouterRateLimitError) as caught:
         _maybe_raise_nrouter_error(status_error(429, "too many requests"))
     assert caught.value.code == "rate_limit_exceeded"
+
+
+def test_a_code_when_present_beats_the_status():
+    """The gateway's WAF and upstream passthrough DO send a code.
+
+    Status alone cannot separate the two 429s or the two 400s, so a code the
+    gateway did send must win.
+    """
+    with pytest.raises(nRouterGuardrailBlockedError):
+        _maybe_raise_nrouter_error(
+            # A message that does NOT say "guardrail" — only the code does.
+            status_error(400, "request rejected", code="guardrail_blocked")
+        )
+
+
+def test_the_header_name_list_matches_what_is_parsed():
+    from nroutersdk import nRouterResponseMeta
+
+    assert len(nRouterResponseMeta.HEADER_NAMES) == 13
+    meta = nRouterResponseMeta.from_headers(
+        {name: "1" for name in nRouterResponseMeta.HEADER_NAMES}
+    )
+    # Every advertised header must reach a field; a name in the list that the
+    # parser ignores is a promise the SDK does not keep.
+    assert meta.request_id is not None
+    assert meta.cost is not None
+    assert meta.limit_source is not None
+    assert meta.response_cache is not None

@@ -36,7 +36,7 @@ points at `https://api.nrouter.ai/v1`:
 |----------|---------|---------|---|---|
 | **TypeScript / JS** | `npm install @nrouter/sdk` | [`sdks/js/`](sdks/js/) | vendor SDK's | via `.asResponse()` |
 | **Java** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) | vendor SDK's | via an OkHttp interceptor |
-| **Kotlin** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
+| **Kotlin** | Maven `ai.nrouter:nrouter-sdk-kotlin` | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
 | **Android** | Maven `ai.nrouter:nrouter-sdk-android` | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
 | **Swift** | SwiftPM `nrouter-sdk-swift` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
 | **Rust** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |

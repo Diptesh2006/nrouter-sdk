@@ -31,12 +31,12 @@ nrouter_resolve_api_key <- function(api_key = NULL) {
     api_key
   }
   if (!nzchar(key)) {
-    stop(nrouter_transport_condition(
+    stop(nrouter_configuration_condition(
       paste0("No nRouter API key: pass api_key or set ", nrouter_env_key(), ".")
     ))
   }
   if (!startsWith(key, nrouter_key_prefix())) {
-    stop(nrouter_transport_condition(
+    stop(nrouter_configuration_condition(
       paste0("nRouter API keys start with '", nrouter_key_prefix(),
              "'; got one that does not.")
     ))
@@ -141,8 +141,61 @@ nrouter_request <- function(client, path, body = NULL,
   )
 
   if (status >= 200 && status < 300) {
+    # A 2xx that is not JSON is a REAL RESPONSE you were billed for —
+    # /v1/audio/speech returns audio, video content returns bytes,
+    # stream=TRUE returns SSE. Parsing those as JSON yields an empty list, so
+    # the caller pays and receives nothing while the call reports success.
+    # Refuse loudly instead.
+    content_type <- tolower(paste(httr::http_type(response), collapse = ""))
+    if (!grepl("json", content_type, fixed = TRUE)) {
+      stop(nrouter_transport_condition(paste0(
+        "nRouter returned ", status, " with content-type '", content_type,
+        "', which is not JSON. Use nrouter_bytes() for binary or streaming ",
+        "endpoints (/v1/audio/speech, /v1/videos/{id}/content, or stream = TRUE); ",
+        "the JSON helpers would report success with an empty body."
+      )))
+    }
     return(list(body = parsed, meta = meta, status_code = status))
   }
+  stop(nrouter_error_from_payload(status, parsed, meta))
+}
+
+#' Raw bytes plus metadata, for the endpoints that do not return JSON
+#'
+#' \code{/v1/audio/speech} returns audio, \code{/v1/videos/{id}/content}
+#' returns a video, and \code{stream = TRUE} returns SSE. The JSON helpers
+#' refuse those rather than handing back an empty body for a request you were
+#' billed for; this is the function that returns them.
+#'
+#' @param client An \code{nrouter_client}.
+#' @param path Path under the gateway's \code{/v1} root.
+#' @param body Named list to send as JSON, or \code{NULL} for a GET.
+#' @return A list with \code{bytes}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_bytes <- function(client, path, body = NULL) {
+  url <- paste0(client$base_url, "/", sub("^/+", "", path))
+  auth <- httr::add_headers(Authorization = paste("Bearer", client$api_key))
+
+  response <- tryCatch(
+    if (is.null(body)) {
+      httr::GET(url, auth)
+    } else {
+      httr::POST(url, auth, httr::content_type_json(),
+                 body = jsonlite::toJSON(body, auto_unbox = TRUE, null = "null"))
+    },
+    error = function(e) stop(nrouter_transport_condition(conditionMessage(e)))
+  )
+
+  meta <- nrouter_meta(as.list(httr::headers(response)))
+  status <- httr::status_code(response)
+  if (status >= 200 && status < 300) {
+    return(list(bytes = httr::content(response, as = "raw"),
+                meta = meta, status_code = status))
+  }
+  parsed <- tryCatch(
+    httr::content(response, as = "parsed", type = "application/json"),
+    error = function(e) list()
+  )
   stop(nrouter_error_from_payload(status, parsed, meta))
 }
 

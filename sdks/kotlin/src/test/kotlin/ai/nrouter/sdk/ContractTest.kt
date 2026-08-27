@@ -87,6 +87,9 @@ class ContractTest {
             )
         }
         assertTrue(NRouterError.Transport("dns").isRetryable)
+        // A local configuration failure is PERMANENT. Marking it retryable
+        // makes a caller's retry loop spin forever without ever sending.
+        assertFalse(NRouterError.Configuration("no key").isRetryable)
     }
 
     @Test
@@ -105,9 +108,9 @@ class ContractTest {
 
     @Test
     fun `a key without the prefix is refused before any request`() {
-        assertFailsWith<NRouterError.Transport> { NRouter.resolveApiKey("sk-openai-nope") }
+        assertFailsWith<NRouterError.Configuration> { NRouter.resolveApiKey("sk-openai-nope") }
         assertEquals("sk-nrouter-abc", NRouter.resolveApiKey("sk-nrouter-abc"))
-        assertFailsWith<NRouterError.Transport> { NRouter(apiKey = "bad-key") }
+        assertFailsWith<NRouterError.Configuration> { NRouter(apiKey = "bad-key") }
     }
 
     @Test
@@ -156,6 +159,70 @@ class ContractTest {
         assertEquals("tpm", error.body?.limitSource)
         assertEquals("req_9", error.body?.requestId)
         assertTrue(error.isRetryable)
+    }
+
+    @Test
+    fun `a codeless 400 is split on the message`() {
+        // The gateway's MAIN error path emits {"error":{"type","message"}} with
+        // no code, so this is the ordinary shape. Calling every codeless 400 a
+        // request error makes GuardrailBlocked unreachable.
+        val guardrail = NRouterError.fromCode(
+            NRouterErrorBody("blocked by guardrail 'pii'", status = 400),
+        )
+        assertTrue(guardrail is NRouterError.GuardrailBlocked, "got ${guardrail::class.simpleName}")
+
+        val malformed = NRouterError.fromCode(
+            NRouterErrorBody("invalid request: messages must be an array", status = 400),
+        )
+        assertTrue(malformed is NRouterError.Request, "got ${malformed::class.simpleName}")
+    }
+
+    @Test
+    fun `a real codeless guardrail 400 from the gateway raises GuardrailBlocked`() = runBlocking {
+        // Byte-for-byte the gateway's envelope: type + message, no code.
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(400)
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """{"error":{"type":"gateway_error","message":"blocked by guardrail 'pii'"}}""",
+                ),
+        )
+        assertFailsWith<NRouterError.GuardrailBlocked> {
+            clientFor(server).chatCompletions(JSONObject())
+        }
+        Unit
+    }
+
+    @Test
+    fun `a non-JSON 2xx refuses instead of reporting an empty success`() = runBlocking {
+        // /v1/audio/speech returns audio. Parsed as JSON it becomes {} — the
+        // caller is billed and receives nothing, while the call reports 200.
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "audio/mpeg")
+                .setHeader("x-nr-request-cost", "0.004")
+                .setBody("ID3\u0000\u0000binary-audio"),
+        )
+        val error = assertFailsWith<NRouterError.Transport> {
+            clientFor(server).post("/audio/speech", JSONObject())
+        }
+        assertTrue(error.message.orEmpty().contains("bytes()"), error.message.orEmpty())
+    }
+
+    @Test
+    fun `bytes returns the raw body a non-JSON endpoint sent`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "audio/mpeg")
+                .setHeader("x-nr-request-cost", "0.004")
+                .setBody("binary-audio"),
+        )
+        val raw = clientFor(server).bytes("/audio/speech", JSONObject())
+        assertEquals("binary-audio", String(raw.bytes))
+        assertEquals(0.004, raw.meta.cost)
     }
 
     @Test

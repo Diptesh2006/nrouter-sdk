@@ -23,10 +23,31 @@ public enum NRouterError: Error, Equatable {
     case service(NRouterErrorBody)
     /// A code this SDK version does not know. Deliberately not re-classified.
     case other(NRouterErrorBody)
-    /// The request never reached the gateway, or the key was refused locally.
+    /// The request left this process and got no answer — DNS, TLS, a dropped
+    /// connection, a timeout. Retryable.
     case transport(String)
+    /// The SDK refused before sending anything: no key, or a key that is not
+    /// shaped like an nRouter key.
+    ///
+    /// Separate from `.transport` on purpose. Both are raised locally, but this
+    /// one is PERMANENT — a caller retrying on `isRetryable` would spin forever
+    /// without ever making a request.
+    case configuration(String)
 
-    /// Build the case the gateway's `code` names.
+    /// Classify a gateway refusal.
+    ///
+    /// Three signals, in order, because no single one is sufficient:
+    ///
+    /// 1. `code`, when present — the only thing separating
+    ///    `rate_limit_exceeded` from `tpm_limit_exceeded`. The gateway's WAF
+    ///    and its upstream passthrough send one.
+    /// 2. status, otherwise. The gateway's main error path emits
+    ///    `{"error":{"type","message"}}` with **no code at all**, so this is the
+    ///    ordinary case, not the fallback it looks like.
+    /// 3. the message, to split the two 400s. With no code the message is the
+    ///    only signal present; calling every 400 a request error makes
+    ///    `.guardrailBlocked` unreachable and tells a caller to fix a body that
+    ///    was never the problem.
     public static func fromCode(_ body: NRouterErrorBody) -> NRouterError {
         switch body.code {
         case "invalid_request": return .request(body)
@@ -39,7 +60,10 @@ public enum NRouterError: Error, Equatable {
         case .some: return .other(body)
         case nil:
             switch body.status {
-            case 400: return .request(body)
+            case 400:
+                return body.message.lowercased().contains("guardrail")
+                    ? .guardrailBlocked(body)
+                    : .request(body)
             case 401: return .authentication(body)
             case 402: return .credit(body)
             case 404: return .notFound(body)
@@ -57,7 +81,7 @@ public enum NRouterError: Error, Equatable {
              let .credit(b), let .notFound(b), let .rateLimit(b),
              let .service(b), let .other(b):
             return b
-        case .transport:
+        case .transport, .configuration:
             return nil
         }
     }
@@ -109,6 +133,8 @@ extension NRouterError: LocalizedError {
         switch self {
         case let .transport(message):
             return "nRouter transport error: \(message)"
+        case let .configuration(message):
+            return "nRouter configuration error: \(message)"
         default:
             guard let body else { return "nRouter request failed" }
             guard let code = body.code else { return body.message }

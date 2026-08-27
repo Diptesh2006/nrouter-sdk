@@ -100,6 +100,58 @@ impl Client {
         self.send(req).await
     }
 
+    /// Raw bytes plus metadata, for the endpoints that do not return JSON.
+    ///
+    /// `/v1/audio/speech` returns audio, `/v1/videos/{id}/content` returns a
+    /// video, and `stream: true` returns SSE. The JSON helpers refuse those
+    /// rather than handing back an empty body for a request you were billed
+    /// for; this is the method that returns them.
+    pub async fn bytes(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<Response<Vec<u8>>, NRouterError> {
+        let mut req = match method.to_ascii_uppercase().as_str() {
+            "GET" => self.http.get(self.url(path)),
+            _ => self.http.post(self.url(path)),
+        }
+        .bearer_auth(&self.api_key);
+        if let Some(json) = body {
+            req = req.json(json);
+        }
+
+        let response = req
+            .send()
+            .await
+            .map_err(|e| NRouterError::Transport(e.to_string()))?;
+        let status = response.status().as_u16();
+        let meta = ResponseMeta::from_headers(response.headers());
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        let raw = response
+            .bytes()
+            .await
+            .map_err(|e| NRouterError::Transport(e.to_string()))?;
+
+        if (200..300).contains(&status) {
+            return Ok(Response {
+                body: raw.to_vec(),
+                meta,
+            });
+        }
+        let parsed: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
+        Err(NRouterError::from_code(error_body(
+            status,
+            &parsed,
+            &meta,
+            retry_after,
+        )))
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}/{}", self.base_url, path.trim_start_matches('/'))
     }
@@ -112,12 +164,50 @@ impl Client {
 
         let status = response.status().as_u16();
         let meta = ResponseMeta::from_headers(response.headers());
-        let body: Value = response.json().await.unwrap_or(Value::Null);
+        // Read Retry-After BEFORE consuming the body — `response.json()` takes
+        // ownership, and the header is unreachable afterwards. That is why this
+        // field used to be hard-coded to None.
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| NRouterError::Transport(e.to_string()))?;
 
         if (200..300).contains(&status) {
+            // A 2xx that is not JSON is a REAL RESPONSE the caller was billed
+            // for — `/v1/audio/speech` returns audio, video content returns
+            // bytes, and `stream: true` returns SSE. Parsing those as JSON
+            // yields an empty object, so the caller pays and receives nothing
+            // while the call reports success. Refuse loudly and point at the
+            // method that can actually return it.
+            if !content_type.contains("json") {
+                return Err(NRouterError::Transport(format!(
+                    "nRouter returned {status} with content-type '{content_type}', which is \
+                     not JSON. Use `bytes()` for binary or streaming endpoints \
+                     (/v1/audio/speech, /v1/videos/{{id}}/content, or stream: true); \
+                     the JSON helpers would report success with an empty body."
+                )));
+            }
+            let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
             return Ok(Response { body, meta });
         }
-        Err(NRouterError::from_code(error_body(status, &body, &meta)))
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        Err(NRouterError::from_code(error_body(
+            status,
+            &body,
+            &meta,
+            retry_after,
+        )))
     }
 }
 
@@ -126,7 +216,12 @@ impl Client {
 /// The gateway nests them under `error`; a bare object is accepted too so a
 /// proxy that reshapes the envelope does not turn a typed error into a generic
 /// one.
-fn error_body(status: u16, body: &Value, meta: &ResponseMeta) -> ErrorBody {
+fn error_body(
+    status: u16,
+    body: &Value,
+    meta: &ResponseMeta,
+    retry_after: Option<u64>,
+) -> ErrorBody {
     let node = body.get("error").unwrap_or(body);
     ErrorBody {
         message: node
@@ -134,14 +229,11 @@ fn error_body(status: u16, body: &Value, meta: &ResponseMeta) -> ErrorBody {
             .and_then(Value::as_str)
             .unwrap_or("nRouter request failed")
             .to_string(),
-        code: node
-            .get("code")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        code: node.get("code").and_then(Value::as_str).map(str::to_owned),
         status: Some(status),
         request_id: meta.request_id.clone(),
         limit_source: meta.limit_source.clone(),
         auth_reason: meta.auth_reason.clone(),
-        retry_after: None,
+        retry_after,
     }
 }

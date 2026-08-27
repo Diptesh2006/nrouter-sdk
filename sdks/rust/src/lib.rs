@@ -77,12 +77,12 @@ pub fn resolve_api_key(explicit: Option<&str>) -> Result<String, NRouterError> {
         _ => std::env::var(ENV_KEY).unwrap_or_default(),
     };
     if key.is_empty() {
-        return Err(NRouterError::Transport(format!(
+        return Err(NRouterError::Configuration(format!(
             "No nRouter API key: pass one explicitly or set {ENV_KEY}."
         )));
     }
     if !key.starts_with(KEY_PREFIX) {
-        return Err(NRouterError::Transport(format!(
+        return Err(NRouterError::Configuration(format!(
             "nRouter API keys start with '{KEY_PREFIX}'; got one that does not."
         )));
     }

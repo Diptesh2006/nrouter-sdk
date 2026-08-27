@@ -99,6 +99,43 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
     request_id = headers.get("x-nr-request-id") or body.get("request_id")
     status = err.status_code
 
+    # A code, when the gateway sends one, is the strongest signal and the only
+    # thing separating `rate_limit_exceeded` from `tpm_limit_exceeded`. The main
+    # error path sends none — see the note above — so this is a preference, not
+    # the primary route, and it stays forward-compatible with a gateway that
+    # starts sending codes on every path.
+    _BY_CODE = {
+        "invalid_request": nRouterRequestError,
+        "guardrail_blocked": nRouterGuardrailBlockedError,
+        "invalid_api_key": nRouterAuthenticationError,
+        "insufficient_credits": nRouterCreditError,
+        "model_not_found": nRouterNotFoundError,
+        "credit_check_failed": nRouterServiceError,
+        "service_unavailable": nRouterServiceError,
+    }
+    if gateway_code in _BY_CODE:
+        cls = _BY_CODE[gateway_code]
+        if cls is nRouterAuthenticationError:
+            raise cls(
+                message,
+                request_id=request_id,
+                auth_reason=headers.get("x-nr-auth-reason"),
+            ) from err
+        raise cls(message, request_id=request_id) from err
+    if gateway_code in ("rate_limit_exceeded", "tpm_limit_exceeded"):
+        retry_after_hdr = headers.get("retry-after")
+        raise nRouterRateLimitError(
+            message,
+            request_id=request_id,
+            limit_source=headers.get("x-nr-limit-source"),
+            retry_after=(
+                int(retry_after_hdr)
+                if retry_after_hdr and retry_after_hdr.isdigit()
+                else None
+            ),
+            code=gateway_code,
+        ) from err
+
     if status == 400:
         if "guardrail" in message.lower():
             raise nRouterGuardrailBlockedError(message, request_id=request_id) from err

@@ -65,7 +65,17 @@ nrouter_condition <- function(message, code = NULL, status = NULL,
     # is how a caller gets told to retry something permanent.
     if (is.na(specific)) specific <- "nrouter_other_error"
   } else if (!is.null(status)) {
-    specific <- unname(NROUTER_STATUS_CLASSES[as.character(status)])
+    # The gateway's main error path emits {"error":{"type","message"}} with NO
+    # code, so this branch is the ORDINARY case, not a fallback. The two 400s
+    # share a status, and with no code the message is the only signal present:
+    # calling every 400 a request error makes nrouter_guardrail_blocked_error
+    # unreachable and tells a caller to fix a body that was never the problem.
+    specific <- if (identical(as.character(status), "400") &&
+                    grepl("guardrail", message, ignore.case = TRUE)) {
+      "nrouter_guardrail_blocked_error"
+    } else {
+      unname(NROUTER_STATUS_CLASSES[as.character(status)])
+    }
     if (is.na(specific)) specific <- "nrouter_other_error"
   } else {
     specific <- "nrouter_other_error"
@@ -89,7 +99,24 @@ nrouter_condition <- function(message, code = NULL, status = NULL,
   )
 }
 
-#' A transport failure: the request never reached the gateway
+#' A configuration failure: the SDK refused before sending anything
+#'
+#' Separate from \code{nrouter_transport_condition} on purpose. Both are raised
+#' locally, but this one is PERMANENT — a caller retrying on
+#' \code{nrouter_is_retryable} would spin forever without making a request.
+#'
+#' @param message Human-readable message.
+#' @return A condition object.
+#' @export
+nrouter_configuration_condition <- function(message) {
+  structure(
+    class = c("nrouter_configuration_error", "nrouter_error", "error", "condition"),
+    list(message = message, call = NULL, code = NULL, status = NULL,
+         request_id = NULL, limit_source = NULL, auth_reason = NULL)
+  )
+}
+
+#' A transport failure: the request left this process and got no answer
 #'
 #' @param message Human-readable message.
 #' @return A condition object.

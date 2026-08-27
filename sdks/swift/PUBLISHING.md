@@ -32,8 +32,10 @@ git subtree split --prefix=nrouter-sdk/sdks/swift -b swift-only
 git push git@github.com:nRouterAI/nrouter-sdk-swift.git swift-only:main
 
 # 3. Tag THERE — the tag is the release, and SwiftPM reads semver tags only.
-git clone git@github.com:nRouterAI/nrouter-sdk-swift.git /tmp/nrouter-sdk-swift
-cd /tmp/nrouter-sdk-swift
+# Rule #18: scratch lives under the workspace, never /tmp.
+SCRATCH=~/nr/nrouter-brain/.scratch/sdk-swift-release
+mkdir -p "$SCRATCH" && git clone git@github.com:nRouterAI/nrouter-sdk-swift.git "$SCRATCH/repo"
+cd "$SCRATCH/repo"
 git tag 2.1.0            # bare semver, no `v` — see the trap below
 git push origin 2.1.0
 ```
@@ -46,7 +48,8 @@ Publishing "worked" is not the same as resolvable. Prove it from a clean
 directory:
 
 ```bash
-mkdir /tmp/probe && cd /tmp/probe && swift package init
+PROBE=~/nr/nrouter-brain/.scratch/sdk-swift-release/probe   # Rule #18, not /tmp
+mkdir -p "$PROBE" && cd "$PROBE" && swift package init
 # add the dependency to Package.swift, then:
 swift package resolve
 ```

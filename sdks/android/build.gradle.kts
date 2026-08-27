@@ -34,7 +34,7 @@ android {
 dependencies {
     // The wire behaviour is the shared JVM artifact — deliberately not a second
     // copy. A duplicated client is how two SDKs drift apart on the same gateway.
-    api("ai.nrouter:nrouter-sdk:2.1.0") {
+    api("ai.nrouter:nrouter-sdk-kotlin:2.1.0") {
         // Android ships org.json inside the platform. The JVM artifact has to
         // declare a real dependency on it, but letting that reach an APK is a
         // DuplicatePlatformClasses lint ERROR and, unlinted, a a runtime class
@@ -51,6 +51,18 @@ dependencies {
 kotlin { jvmToolchain(11) }
 
 publishing {
+    repositories {
+        maven {
+            name = "central"
+            // Without a repositories block Gradle generates no remote publish
+            // task, so `./gradlew publish` succeeds having uploaded nothing.
+            url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
+            credentials {
+                username = System.getenv("SONATYPE_USERNAME")
+                password = System.getenv("SONATYPE_PASSWORD")
+            }
+        }
+    }
     publications {
         register<MavenPublication>("release") {
             afterEvaluate { from(components["release"]) }

@@ -38,6 +38,7 @@ final class ContractTests: XCTestCase {
         case .service: return "service"
         case .other: return "other"
         case .transport: return "transport"
+        case .configuration: return "configuration"
         }
     }
 
@@ -83,6 +84,9 @@ final class ContractTests: XCTestCase {
             )
         }
         XCTAssertTrue(NRouterError.transport("dns").isRetryable)
+        // A local configuration failure is PERMANENT. Marking it retryable
+        // makes a caller's retry loop spin forever without ever sending.
+        XCTAssertFalse(NRouterError.configuration("no key").isRetryable)
     }
 
     func testAnUnpricedResponseReportsNoCostRatherThanZero() {
@@ -141,6 +145,41 @@ final class ContractTests: XCTestCase {
             meta: meta
         )
         XCTAssertEqual(bare.code, "tpm_limit_exceeded")
+    }
+
+    func testACodelessFourHundredIsSplitOnTheMessage() {
+        // The gateway's MAIN error path emits {"error":{"type","message"}} with
+        // no code, so this is the ordinary shape. Calling every codeless 400 a
+        // request error makes .guardrailBlocked unreachable.
+        let guardrail = NRouterError.fromCode(
+            NRouterErrorBody(message: "blocked by guardrail 'pii'", status: 400)
+        )
+        XCTAssertEqual(caseName(guardrail), "guardrailBlocked")
+
+        let malformed = NRouterError.fromCode(
+            NRouterErrorBody(message: "invalid request: messages must be an array", status: 400)
+        )
+        XCTAssertEqual(caseName(malformed), "request")
+    }
+
+    func testACodeStillWinsOverTheStatus() {
+        // The WAF and upstream passthrough DO send a code; it must beat status,
+        // which cannot separate the two 429s.
+        let error = NRouterError.fromCode(
+            NRouterErrorBody(message: "slow down", code: "tpm_limit_exceeded", status: 429)
+        )
+        XCTAssertEqual(caseName(error), "rateLimit")
+        XCTAssertEqual(error.body?.code, "tpm_limit_exceeded")
+    }
+
+    func testTheRealGatewayEnvelopeClassifies() {
+        // Byte-for-byte what GatewayError::into_response emits.
+        let payload: [String: Any] = [
+            "error": ["type": "gateway_error", "message": "blocked by guardrail 'pii'"]
+        ]
+        let body = NRouter.errorBody(status: 400, payload: payload, meta: NRouterResponseMeta())
+        XCTAssertNil(body.code, "the gateway sends no code on this path")
+        XCTAssertEqual(caseName(NRouterError.fromCode(body)), "guardrailBlocked")
     }
 
     func testBaseURLTrailingSlashIsNormalised() throws {

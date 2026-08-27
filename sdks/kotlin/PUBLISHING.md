@@ -1,4 +1,4 @@
-# Publishing `ai.nrouter:nrouter-sdk` to Maven Central
+# Publishing `ai.nrouter:nrouter-sdk-kotlin` to Maven Central
 
 Same registry and account as the Java SDK. If you have published that one, the
 credentials here are already in place.
@@ -46,7 +46,7 @@ python3 ../../conformance/check_conformance.py
 
 # 3. Stage locally and LOOK at what you are about to publish.
 ./gradlew publishToMavenLocal
-ls ~/.m2/repository/ai/nrouter/nrouter-sdk/<version>/
+ls ~/.m2/repository/ai/nrouter/nrouter-sdk-kotlin/<version>/
 #    Expect: .jar, -sources.jar, -javadoc.jar, .pom, .module
 #    Central rejects a bundle missing sources or javadoc.
 

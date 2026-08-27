@@ -40,7 +40,10 @@ fn every_spec_header_is_read() {
         "x-nr-response-cache",
         "x-nr-response-cache-age",
     ] {
-        assert!(HEADER_NAMES.contains(&name), "{name} is not read by this SDK");
+        assert!(
+            HEADER_NAMES.contains(&name),
+            "{name} is not read by this SDK"
+        );
     }
 }
 
@@ -67,6 +70,7 @@ fn each_gateway_code_maps_to_its_variant() {
             NRouterError::Service(_) => "Service",
             NRouterError::Other(_) => "Other",
             NRouterError::Transport(_) => "Transport",
+            NRouterError::Configuration(_) => "Configuration",
         };
         assert_eq!(got, want, "code {code} mapped to {got}, expected {want}");
     }
@@ -87,6 +91,9 @@ fn only_transient_failures_are_retryable() {
     assert!(NRouterError::from_code(body("rate_limit_exceeded")).is_retryable());
     assert!(NRouterError::from_code(body("service_unavailable")).is_retryable());
     assert!(NRouterError::Transport("dns".into()).is_retryable());
+    // A local configuration failure is PERMANENT. Marking it retryable makes a
+    // caller's retry loop spin forever without ever making a request.
+    assert!(!NRouterError::Configuration("no key".into()).is_retryable());
 
     for permanent in [
         "invalid_request",
@@ -135,10 +142,72 @@ fn a_priced_response_parses_its_numbers() {
 
 #[test]
 fn a_key_without_the_prefix_is_refused_before_any_request() {
-    assert!(resolve_api_key(Some("sk-openai-nope")).is_err());
+    assert!(matches!(
+        resolve_api_key(Some("sk-openai-nope")),
+        Err(NRouterError::Configuration(_))
+    ));
     assert!(resolve_api_key(Some("")).is_err() || std::env::var(ENV_KEY).is_ok());
     assert_eq!(
         resolve_api_key(Some("sk-nrouter-abc")).unwrap(),
         "sk-nrouter-abc"
     );
+}
+
+#[test]
+fn a_codeless_400_is_split_on_the_message() {
+    // The gateway's main error path emits {"error":{"type","message"}} with NO
+    // code, so this is the ordinary shape — not an edge case. Classifying every
+    // codeless 400 as a request error makes GuardrailBlocked unreachable and
+    // tells a caller to fix a body that was never the problem.
+    let guardrail = ErrorBody {
+        message: "blocked by guardrail 'pii'".into(),
+        code: None,
+        status: Some(400),
+        ..Default::default()
+    };
+    assert!(matches!(
+        NRouterError::from_code(guardrail),
+        NRouterError::GuardrailBlocked(_)
+    ));
+
+    let malformed = ErrorBody {
+        message: "invalid request: messages must be an array".into(),
+        code: None,
+        status: Some(400),
+        ..Default::default()
+    };
+    assert!(matches!(
+        NRouterError::from_code(malformed),
+        NRouterError::Request(_)
+    ));
+}
+
+#[test]
+fn a_code_still_wins_over_the_status_when_the_gateway_sends_one() {
+    // The WAF and the upstream passthrough do send a code; it must beat the
+    // status, since status alone cannot separate the two 429s.
+    let body = ErrorBody {
+        message: "slow down".into(),
+        code: Some("tpm_limit_exceeded".into()),
+        status: Some(429),
+        ..Default::default()
+    };
+    match NRouterError::from_code(body) {
+        NRouterError::RateLimit(b) => assert_eq!(b.code.as_deref(), Some("tpm_limit_exceeded")),
+        other => panic!("expected RateLimit, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_codeless_status_the_sdk_does_not_know_stays_other() {
+    let body = ErrorBody {
+        message: "teapot".into(),
+        code: None,
+        status: Some(418),
+        ..Default::default()
+    };
+    assert!(matches!(
+        NRouterError::from_code(body),
+        NRouterError::Other(_)
+    ));
 }

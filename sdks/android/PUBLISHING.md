@@ -6,7 +6,7 @@ here are already in place.
 
 ## The ordering rule
 
-**This artifact depends on `ai.nrouter:nrouter-sdk` at the same version.**
+**This artifact depends on `ai.nrouter:nrouter-sdk-kotlin` at the same version.**
 Publish the Kotlin SDK first and wait for it to appear on Central. Publishing
 Android against a core version that is not public yet produces an AAR whose POM
 names a dependency nobody can resolve — it installs fine for you (it is in your
@@ -17,13 +17,13 @@ names a dependency nobody can resolve — it installs fine for you (it is in you
 cd ../kotlin && ./gradlew publish        # then release it in the Central UI
 
 # 2. Confirm it actually resolves from Central, not just from your machine.
-curl -sI https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk/2.1.1/nrouter-sdk-2.1.1.pom \
+curl -sI https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk-kotlin/2.1.1/nrouter-sdk-kotlin-2.1.1.pom \
   | head -1        # expect: HTTP/2 200
 
 # 3. Then Android.
 cd ../android
 $EDITOR gradle.properties                # version=2.1.1
-$EDITOR build.gradle.kts                 # api("ai.nrouter:nrouter-sdk:2.1.1")
+$EDITOR build.gradle.kts                 # api("ai.nrouter:nrouter-sdk-kotlin:2.1.1")
 ./gradlew build
 ./gradlew publish
 ```

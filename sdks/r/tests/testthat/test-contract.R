@@ -57,6 +57,9 @@ test_that("only transient failures are retryable", {
     expect_false(nrouter_is_retryable(nrouter_condition("x", code = code)), info = code)
   }
   expect_true(nrouter_is_retryable(nrouter_transport_condition("dns")))
+  # A local configuration failure is PERMANENT. Marking it retryable makes a
+  # caller's retry loop spin forever without ever sending.
+  expect_false(nrouter_is_retryable(nrouter_configuration_condition("no key")))
 })
 
 test_that("an unpriced response reports no cost rather than zero", {
@@ -91,7 +94,8 @@ test_that("header lookup is case-insensitive", {
 })
 
 test_that("a key without the prefix is refused before any request", {
-  expect_error(nrouter_resolve_api_key("sk-openai-nope"), class = "nrouter_transport_error")
+  expect_error(nrouter_resolve_api_key("sk-openai-nope"),
+               class = "nrouter_configuration_error")
   expect_equal(nrouter_resolve_api_key("sk-nrouter-abc"), "sk-nrouter-abc")
 })
 
@@ -124,4 +128,25 @@ test_that("a caught nRouter error can be handled by family or by kind", {
   caught_kind <- tryCatch(stop(cond), nrouter_credit_error = function(e) "kind")
   expect_equal(caught_family, "family")
   expect_equal(caught_kind, "kind")
+})
+
+test_that("a codeless 400 is split on the message", {
+  # The gateway's MAIN error path emits {"error":{"type","message"}} with no
+  # code, so this is the ordinary shape. Calling every codeless 400 a request
+  # error makes nrouter_guardrail_blocked_error unreachable.
+  guardrail <- nrouter_condition("blocked by guardrail 'pii'", status = 400)
+  expect_true("nrouter_guardrail_blocked_error" %in% class(guardrail))
+
+  malformed <- nrouter_condition("invalid request: bad shape", status = 400)
+  expect_true("nrouter_request_error" %in% class(malformed))
+  expect_false("nrouter_guardrail_blocked_error" %in% class(malformed))
+})
+
+test_that("the real gateway envelope classifies without a code", {
+  # Byte-for-byte what GatewayError::into_response emits.
+  payload <- list(error = list(type = "gateway_error",
+                               message = "blocked by guardrail 'pii'"))
+  cond <- nrouter_error_from_payload(400, payload, nrouter_meta(list()))
+  expect_null(cond$code)
+  expect_true("nrouter_guardrail_blocked_error" %in% class(cond))
 })

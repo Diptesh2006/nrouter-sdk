@@ -41,6 +41,25 @@ class nRouterResponseMeta:
     response_cache: Optional[str] = None
     response_cache_age: Optional[int] = None
 
+    #: Every response header this SDK reads, exactly as
+    #: ``spec/nrouter-sdk-spec.json`` names them. Published so a caller (and the
+    #: cross-SDK conformance gate) can see the set without parsing this module.
+    HEADER_NAMES: "tuple[str, ...]" = (
+        "x-nr-request-id",
+        "x-nr-request-cost",
+        "x-nr-cost-status",
+        "x-nr-model",
+        "x-nr-input-tokens",
+        "x-nr-output-tokens",
+        "x-nr-total-tokens",
+        "x-nr-cache-read-tokens",
+        "x-nr-cache-write-tokens",
+        "x-nr-limit-source",
+        "x-nr-auth-reason",
+        "x-nr-response-cache",
+        "x-nr-response-cache-age",
+    )
+
     @classmethod
     def from_headers(cls, headers: dict) -> "nRouterResponseMeta":
         """Parse nRouter response headers into metadata."""

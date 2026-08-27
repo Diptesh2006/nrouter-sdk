@@ -32,10 +32,27 @@ java {
 tasks.test { useJUnitPlatform() }
 
 publishing {
+    repositories {
+        maven {
+            name = "central"
+            // Sonatype's Central Portal OSSRH-compatible endpoint. Without a
+            // repositories block Gradle generates no remote publish task at
+            // all, so `./gradlew publish` succeeds having uploaded nothing.
+            url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
+            credentials {
+                username = System.getenv("SONATYPE_USERNAME")
+                password = System.getenv("SONATYPE_PASSWORD")
+            }
+        }
+    }
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
-            artifactId = "nrouter-sdk"
+            // NOT "nrouter-sdk": the Java SDK already publishes
+            // ai.nrouter:nrouter-sdk. Sharing the GAV would make one version
+            // number mean two incompatible APIs, and the two SDKs could never
+            // release independently.
+            artifactId = "nrouter-sdk-kotlin"
             pom {
                 name.set("nRouter SDK")
                 description.set("nRouter SDK — one API key for models across six provider clouds")

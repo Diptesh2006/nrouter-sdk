@@ -78,10 +78,10 @@ class NRouter {
   /// Validate a key's shape, returning it unchanged.
   static String validateApiKey(String apiKey) {
     if (apiKey.isEmpty) {
-      throw const NRouterTransportError('No nRouter API key was supplied.');
+      throw const NRouterConfigurationError('No nRouter API key was supplied.');
     }
     if (!apiKey.startsWith(keyPrefix)) {
-      throw const NRouterTransportError(
+      throw const NRouterConfigurationError(
         "nRouter API keys start with '$keyPrefix'; got one that does not.",
       );
     }
@@ -113,6 +113,53 @@ class NRouter {
 
   /// Any `GET` path under the gateway's `/v1` root.
   Future<NRouterResponse> get(String path) => _send('GET', path, null);
+
+  /// Raw bytes plus metadata, for the endpoints that do not return JSON.
+  ///
+  /// `/v1/audio/speech` returns audio, `/v1/videos/{id}/content` returns a
+  /// video, and `stream: true` returns SSE. The JSON helpers refuse those
+  /// rather than handing back an empty body for a request you were billed for;
+  /// this is the method that returns them.
+  Future<({List<int> bytes, NRouterResponseMeta meta, int statusCode})> bytes(
+    String path, [
+    Map<String, dynamic>? body,
+  ]) async {
+    final uri = Uri.parse(
+      '$baseUrl/${path.startsWith('/') ? path.substring(1) : path}',
+    );
+    final headers = <String, String>{
+      'Authorization': 'Bearer $_apiKey',
+      if (body != null) 'Content-Type': 'application/json',
+    };
+
+    http.Response response;
+    try {
+      response = body == null
+          ? await _http.get(uri, headers: headers)
+          : await _http.post(uri, headers: headers, body: jsonEncode(body));
+    } on Exception catch (e) {
+      throw NRouterTransportError(e.toString());
+    }
+
+    final meta = NRouterResponseMeta.fromHeaders(response.headers);
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return (
+        bytes: response.bodyBytes,
+        meta: meta,
+        statusCode: response.statusCode
+      );
+    }
+    Map<String, dynamic> parsed;
+    try {
+      final decoded = jsonDecode(response.body);
+      parsed = decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+    } on FormatException {
+      parsed = <String, dynamic>{};
+    }
+    throw NRouterError.fromCode(
+      errorBodyFrom(response.statusCode, parsed, meta),
+    );
+  }
 
   /// Release the underlying HTTP client, when this instance created it.
   void close() {
@@ -151,6 +198,22 @@ class NRouter {
     }
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
+      // A 2xx that is not JSON is a REAL RESPONSE you were billed for —
+      // /v1/audio/speech returns audio, video content returns bytes,
+      // stream:true returns SSE. Parsing those as JSON yields an empty map, so
+      // the caller pays and receives nothing while the call reports success.
+      // Refuse loudly instead.
+      final contentType =
+          (response.headers['content-type'] ?? '').toLowerCase();
+      if (!contentType.contains('json')) {
+        throw NRouterTransportError(
+          'nRouter returned ${response.statusCode} with content-type '
+          "'$contentType', which is not JSON. Use bytes() for binary or "
+          'streaming endpoints (/v1/audio/speech, /v1/videos/{id}/content, or '
+          'stream: true); the JSON helpers would report success with an empty '
+          'body.',
+        );
+      }
       return NRouterResponse(
         body: parsed,
         meta: meta,

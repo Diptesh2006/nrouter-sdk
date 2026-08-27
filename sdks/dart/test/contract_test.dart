@@ -47,6 +47,35 @@ void main() {
       expect(build('service_unavailable'), isA<NRouterServiceError>());
     });
 
+    test('a codeless 400 is split on the message', () {
+      // The gateway's MAIN error path emits {"error":{"type","message"}} with
+      // no code, so this is the ordinary shape. Calling every codeless 400 a
+      // request error makes NRouterGuardrailBlockedError unreachable.
+      expect(
+        NRouterError.fromCode(
+          const NRouterErrorBody(message: "blocked by guardrail 'pii'", status: 400),
+        ),
+        isA<NRouterGuardrailBlockedError>(),
+      );
+      expect(
+        NRouterError.fromCode(
+          const NRouterErrorBody(message: 'invalid request: bad shape', status: 400),
+        ),
+        isA<NRouterRequestError>(),
+      );
+    });
+
+    test('the real gateway envelope classifies without a code', () {
+      // Byte-for-byte what GatewayError::into_response emits.
+      final body = NRouter.errorBodyFrom(
+        400,
+        {'error': {'type': 'gateway_error', 'message': "blocked by guardrail 'pii'"}},
+        const NRouterResponseMeta(),
+      );
+      expect(body.code, isNull, reason: 'the gateway sends no code on this path');
+      expect(NRouterError.fromCode(body), isA<NRouterGuardrailBlockedError>());
+    });
+
     test('an unknown code is never reclassified', () {
       expect(build('some_future_code'), isA<NRouterOtherError>());
     });
@@ -70,6 +99,9 @@ void main() {
             reason: '$code must not be advertised as retryable');
       }
       expect(const NRouterTransportError('dns').isRetryable, isTrue);
+      // A local configuration failure is PERMANENT. Marking it retryable makes
+      // a caller's retry loop spin forever without ever sending.
+      expect(const NRouterConfigurationError('no key').isRetryable, isFalse);
     });
   });
 
@@ -103,8 +135,9 @@ void main() {
   group('key handling', () {
     test('a key without the prefix is refused before any request', () {
       expect(() => NRouter(apiKey: 'sk-openai-nope'),
-          throwsA(isA<NRouterTransportError>()));
-      expect(() => NRouter(apiKey: ''), throwsA(isA<NRouterTransportError>()));
+          throwsA(isA<NRouterConfigurationError>()));
+      expect(() => NRouter(apiKey: ''),
+          throwsA(isA<NRouterConfigurationError>()));
       expect(NRouter.validateApiKey('sk-nrouter-abc'), 'sk-nrouter-abc');
     });
 
@@ -143,6 +176,34 @@ void main() {
       expect(result.meta.requestId, 'req_42');
       expect(result.meta.cost, 0.00042);
       expect(result.meta.inputTokens, 11);
+    });
+
+    test('a non-JSON 2xx refuses instead of reporting an empty success',
+        () async {
+      // /v1/audio/speech returns audio. Decoded as JSON it becomes {} — the
+      // caller is billed and receives nothing, while the call reports 200.
+      final mock = MockClient((request) async => http.Response(
+            'binary-audio',
+            200,
+            headers: {'content-type': 'audio/mpeg', 'x-nr-request-cost': '0.004'},
+          ));
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+      await expectLater(
+        client.post('/audio/speech', {}),
+        throwsA(isA<NRouterTransportError>()),
+      );
+    });
+
+    test('bytes returns the raw body a non-JSON endpoint sent', () async {
+      final mock = MockClient((request) async => http.Response(
+            'binary-audio',
+            200,
+            headers: {'content-type': 'audio/mpeg', 'x-nr-request-cost': '0.004'},
+          ));
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+      final raw = await client.bytes('/audio/speech', {});
+      expect(String.fromCharCodes(raw.bytes), 'binary-audio');
+      expect(raw.meta.cost, 0.004);
     });
 
     test('a gateway error becomes its typed exception with metadata', () async {

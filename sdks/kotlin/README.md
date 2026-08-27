@@ -5,7 +5,7 @@ wire format, so the bodies are the shapes you already know.
 
 ```kotlin
 dependencies {
-    implementation("ai.nrouter:nrouter-sdk:2.1.0")
+    implementation("ai.nrouter:nrouter-sdk-kotlin:2.1.0")
 }
 ```
 

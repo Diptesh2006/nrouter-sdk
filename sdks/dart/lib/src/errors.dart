@@ -13,7 +13,20 @@ sealed class NRouterError implements Exception {
   /// The gateway payload, or `null` when the request never reached it.
   final NRouterErrorBody? body;
 
-  /// Build the subclass the gateway's `code` names.
+  /// Classify a gateway refusal.
+  ///
+  /// Three signals, in order, because no single one is sufficient:
+  ///
+  /// 1. `code`, when present — the only thing separating `rate_limit_exceeded`
+  ///    from `tpm_limit_exceeded`. The gateway's WAF and its upstream
+  ///    passthrough send one.
+  /// 2. status, otherwise. The gateway's main error path emits
+  ///    `{"error":{"type","message"}}` with **no code at all**, so this is the
+  ///    ordinary case, not the fallback it looks like.
+  /// 3. the message, to split the two 400s. With no code the message is the
+  ///    only signal present; calling every 400 a request error makes
+  ///    [NRouterGuardrailBlockedError] unreachable and tells a caller to fix a
+  ///    body that was never the problem.
   factory NRouterError.fromCode(NRouterErrorBody body) {
     switch (body.code) {
       case 'invalid_request':
@@ -35,7 +48,9 @@ sealed class NRouterError implements Exception {
       case null:
         switch (body.status) {
           case 400:
-            return NRouterRequestError(body);
+            return body.message.toLowerCase().contains('guardrail')
+                ? NRouterGuardrailBlockedError(body)
+                : NRouterRequestError(body);
           case 401:
             return NRouterAuthenticationError(body);
           case 402:
@@ -114,9 +129,20 @@ final class NRouterOtherError extends NRouterError {
   NRouterOtherError(NRouterErrorBody body) : super(_describe(body), body);
 }
 
-/// The request never reached the gateway, or the key was refused locally.
+/// The request left this process and got no answer — DNS, TLS, a dropped
+/// connection, a timeout. Retryable.
 final class NRouterTransportError extends NRouterError {
   const NRouterTransportError(super.message);
+}
+
+/// The SDK refused before sending anything: no key, or a key that is not shaped
+/// like an nRouter key.
+///
+/// Separate from [NRouterTransportError] on purpose. Both are raised locally,
+/// but this one is PERMANENT — a caller retrying on [NRouterError.isRetryable]
+/// would spin forever without ever making a request.
+final class NRouterConfigurationError extends NRouterError {
+  const NRouterConfigurationError(super.message);
 }
 
 /// The parsed gateway error payload plus the metadata worth acting on.

@@ -76,12 +76,12 @@ public struct NRouter: Sendable {
             ? explicit!
             : ProcessInfo.processInfo.environment[envKey] ?? ""
         guard !key.isEmpty else {
-            throw NRouterError.transport(
+            throw NRouterError.configuration(
                 "No nRouter API key: pass one explicitly or set \(envKey)."
             )
         }
         guard key.hasPrefix(keyPrefix) else {
-            throw NRouterError.transport(
+            throw NRouterError.configuration(
                 "nRouter API keys start with '\(keyPrefix)'; got one that does not."
             )
         }
@@ -131,6 +131,44 @@ public struct NRouter: Sendable {
         return try await send(request)
     }
 
+    /// Raw bytes plus metadata, for the endpoints that do not return JSON.
+    ///
+    /// `/v1/audio/speech` returns audio, `/v1/videos/{id}/content` returns a
+    /// video, and `stream: true` returns SSE. The JSON helpers refuse those
+    /// rather than handing back an empty body for a request you were billed
+    /// for; this is the method that returns them.
+    public func bytes(_ path: String, _ body: [String: Any]? = nil) async throws -> (
+        data: Data, meta: NRouterResponseMeta, statusCode: Int
+    ) {
+        var request = URLRequest(url: try url(path))
+        request.httpMethod = body == nil ? "GET" : "POST"
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw NRouterError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw NRouterError.transport("Response was not HTTP.")
+        }
+
+        let meta = NRouterResponseMeta(response: http)
+        if (200..<300).contains(http.statusCode) {
+            return (data, meta, http.statusCode)
+        }
+        let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        throw NRouterError.fromCode(
+            NRouter.errorBody(status: http.statusCode, payload: parsed, meta: meta)
+        )
+    }
+
     // MARK: - Internals
 
     private func url(_ path: String) throws -> URL {
@@ -161,6 +199,21 @@ public struct NRouter: Sendable {
         let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
 
         if (200..<300).contains(http.statusCode) {
+            // A 2xx that is not JSON is a REAL RESPONSE you were billed for —
+            // /v1/audio/speech returns audio, video content returns bytes,
+            // stream:true returns SSE. Parsing those as JSON yields an empty
+            // object, so the caller pays and receives nothing while the call
+            // reports success. Refuse loudly instead.
+            let contentType = (http.value(forHTTPHeaderField: "content-type") ?? "").lowercased()
+            guard contentType.contains("json") else {
+                throw NRouterError.transport(
+                    "nRouter returned \(http.statusCode) with content-type "
+                        + "'\(contentType)', which is not JSON. Use bytes(_:_:) for binary "
+                        + "or streaming endpoints (/v1/audio/speech, "
+                        + "/v1/videos/{id}/content, or stream: true); the JSON helpers "
+                        + "would report success with an empty body."
+                )
+            }
             return Response(body: parsed, meta: meta, statusCode: http.statusCode)
         }
         throw NRouterError.fromCode(

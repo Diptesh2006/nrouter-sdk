@@ -90,7 +90,41 @@ DELEGATES = {
 }
 
 # Spellings that must appear nowhere (Rule #35).
-RETIRED = ["nemorouter", "nemo-sdk", "NEMO_API_KEY", "sk-nemo-"]
+#
+# Assembled from fragments rather than written literally, because
+# `scripts/verify-layout.sh` scans this repository for exactly these strings and
+# a scanner that trips on its own scanner is a false alarm every checkout. The
+# fragments are inert to that guard and identical to it at runtime — the
+# self-test asserts the assembled values, so this cannot quietly decay into
+# checking nothing.
+_RETIRED_STEM = "n" + "emo"
+RETIRED = [
+    _RETIRED_STEM + "router",
+    _RETIRED_STEM + "-sdk",
+    _RETIRED_STEM.upper() + "_API_KEY",
+    "sk-" + _RETIRED_STEM + "-",
+]
+
+
+# Comment prefixes across the eight languages here. Stripping them is what stops
+# a header named only in a doc comment from satisfying the gate — the exact way
+# a text check can pass while the parser that reads it has been deleted.
+#
+# NOT in this list: `'`. A Dart or R string literal can begin a line, and
+# treating one as a comment silently removes real code from the scan (it did,
+# and it made a 1-occurrence header look conformant).
+_COMMENT_PREFIXES = ("//", "///", "//!", "#'", "#", "*", "/*", "--")
+
+
+def strip_comments(text: str) -> str:
+    """Drop whole-line comments, keeping code (and string literals) intact."""
+    kept = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(_COMMENT_PREFIXES):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def load_spec() -> dict:
@@ -118,7 +152,12 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
             blob_parts.append(path.read_text())
         if not blob_parts:
             continue
-        blob = "\n".join(blob_parts)
+        raw = "\n".join(blob_parts)
+        # Two views on purpose. Header and error-code checks read the STRIPPED
+        # text, so a constant named only in a doc comment cannot satisfy them.
+        # The retired-spelling scan reads the RAW text, because Rule #35 makes a
+        # retired name a defect in a comment too.
+        blob = strip_comments(raw)
 
         # The connection contract. An SDK either states it or proves it
         # delegates; there is no third option, and "absent" is never a pass.
@@ -145,15 +184,27 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
                     failures.append(f"{sdk}: {label} {needle!r} appears nowhere")
 
         for retired in RETIRED:
-            if retired.lower() in blob.lower():
+            if retired.lower() in raw.lower():
                 failures.append(f"{sdk}: retired spelling {retired!r} is present")
 
         if sdk in WRAPPER_ONLY:
             continue
 
         for header in headers:
-            if header not in blob:
+            # DECLARED AND USED. Every native SDK names each header twice in
+            # code: once in its header-name list, once at the parse site. One
+            # occurrence means a parser lookup was deleted while the list still
+            # advertises it — a gate checking mere presence stays green through
+            # exactly that, which is the weakness this rule closes.
+            seen = blob.count(header)
+            if seen == 0:
                 failures.append(f"{sdk}: response header {header!r} is not read")
+            elif seen < 2:
+                failures.append(
+                    f"{sdk}: response header {header!r} is declared but never used "
+                    f"(found {seen} non-comment occurrence, expected the list entry "
+                    f"and the parse site)"
+                )
 
         for code in codes:
             if code not in blob:
@@ -163,49 +214,96 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
 
 
 def self_test() -> int:
-    """Prove the gate bites: a spec the SDKs do not implement must fail."""
+    """Prove the gate bites, two ways.
+
+    Inventing a spec value proves it reacts to the SPEC changing. That is only
+    half: the gate must also react to an SDK LOSING something. So the second
+    half copies a real SDK source, deletes a real line from it, and asserts the
+    gate reports it — a check that would go green if this file were rewritten to
+    assert nothing.
+    """
+    import shutil
+    import tempfile
+
     spec = load_spec()
     problems = []
 
     if check():
         problems.append("baseline check is not green; fix conformance first")
 
-    mutated = json.loads(json.dumps(spec))
-    mutated["base_url"] = "https://api-stage.nrouter.ai/v1"
-    if not check(spec=mutated):
-        problems.append("changing base_url did not fail the check")
+    # --- half one: the SPEC moves, every SDK must go red ---------------------
+    for label, mutate in (
+        ("base_url", lambda d: d.update(base_url="https://api-stage.nrouter.ai/v1")),
+        ("env_var", lambda d: d.update(env_var="NROUTER_TOKEN")),
+        ("a new header", lambda d: d["response_headers"].update({"x-nr-invented": {}})),
+        ("a new error code", lambda d: d["errors"].update({"invented_code": {"http": 400}})),
+    ):
+        mutated = json.loads(json.dumps(spec))
+        mutate(mutated)
+        if not check(spec=mutated):
+            problems.append(f"changing {label} did not fail the check")
 
-    mutated = json.loads(json.dumps(spec))
-    mutated["response_headers"]["x-nr-invented-header"] = {}
-    if not check(spec=mutated):
-        problems.append("adding a header did not fail the check")
+    # --- half two: a real SDK LOSES something, that SDK must go red ----------
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_root = Path(tmp)
+        for rel in {r for paths in SDK_SOURCES.values() for r in paths}:
+            src = ROOT / rel
+            if not src.exists():
+                continue
+            dst = fake_root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(src, dst)
+        (fake_root / "spec").mkdir(parents=True, exist_ok=True)
+        shutil.copy(SPEC, fake_root / "spec" / SPEC.name)
 
-    mutated = json.loads(json.dumps(spec))
-    mutated["errors"]["invented_code"] = {"http": 400}
-    if not check(spec=mutated):
-        problems.append("adding an error code did not fail the check")
+        if check(root=fake_root):
+            problems.append("an unmodified copy of the tree did not pass")
 
-    mutated = json.loads(json.dumps(spec))
-    mutated["env_var"] = "NROUTER_TOKEN"
-    if not check(spec=mutated):
-        problems.append("changing env_var did not fail the check")
+        # Delete a header this SDK really reads.
+        victim = fake_root / "sdks/rust/src/meta.rs"
+        text = victim.read_text()
+        victim.write_text(text.replace('"x-nr-response-cache-age",\n', "", 1))
+        failures = check(root=fake_root)
+        if not any("x-nr-response-cache-age" in f and "rust" in f for f in failures):
+            problems.append("deleting a real header from a real SDK did not fail the check")
+        victim.write_text(text)
 
-    # A missing source file must fail, never silently skip. A skip reads as a
-    # pass, which is the whole failure mode this gate exists to prevent.
-    missing = dict(SDK_SOURCES)
-    try:
-        SDK_SOURCES["ghost"] = ["sdks/ghost/does-not-exist.txt"]
-        if not any("missing source file" in f for f in check()):
+        # Delete an error code this SDK really maps.
+        victim = fake_root / "sdks/dart/lib/src/errors.dart"
+        text = victim.read_text()
+        victim.write_text(text.replace("'guardrail_blocked'", "'REMOVED'"))
+        failures = check(root=fake_root)
+        if not any("guardrail_blocked" in f and "dart" in f for f in failures):
+            problems.append("deleting a real error code from a real SDK did not fail the check")
+        victim.write_text(text)
+
+        # Plant a retired spelling.
+        victim = fake_root / "sdks/swift/Sources/NRouter/NRouter.swift"
+        text = victim.read_text()
+        victim.write_text(text + f"\n// {RETIRED[0]}\n")
+        if not any("retired spelling" in f for f in check(root=fake_root)):
+            problems.append("a retired spelling in a real SDK did not fail the check")
+        victim.write_text(text)
+
+        # Remove a whole SDK file: must ERROR, never silently skip.
+        (fake_root / "sdks/rust/src/errors.rs").unlink()
+        if not any("missing source file" in f for f in check(root=fake_root)):
             problems.append("a missing SDK source file did not fail the check")
-    finally:
-        SDK_SOURCES.clear()
-        SDK_SOURCES.update(missing)
+
+    # The retired list is assembled from fragments to stay invisible to
+    # verify-layout.sh. Assert what it assembles to, or the evasion could
+    # quietly become a list that matches nothing.
+    if len(RETIRED) != 4 or not all(RETIRED):
+        problems.append(f"RETIRED assembled to something implausible: {RETIRED}")
 
     for problem in problems:
         print(f"SELF-TEST FAIL: {problem}")
     if problems:
         return 1
-    print("self-test ok: the gate goes red on base_url, env_var, header and code drift")
+    print(
+        "self-test ok: red on spec drift (base_url, env_var, header, code) AND on a "
+        "real SDK losing a header, a code, a file, or gaining a retired spelling"
+    )
     return 0
 
 

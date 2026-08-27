@@ -254,3 +254,28 @@ test('an `extra` value survives a named option that was never set', async () => 
   });
   assert.equal((sent as Record<string, unknown>).response_format, 'wav');
 });
+
+// dataUrlToPart promises LOCAL validation. Anything it waves through fails at
+// the provider instead — after the request is billed.
+test('dataUrlToPart refuses references that cannot possibly work', () => {
+  const { dataUrlToPart } = require('../dist/multimodal');
+  const bad: [string, RegExp][] = [
+    // base64 encodes in groups of 4; a remainder of 1 can never decode.
+    ['data:image/png;base64,A', /base64 length/],
+    // A prefix match called this an https URL. No fetcher accepts a space.
+    ['https://example.com bad', /well-formed https URL/],
+    ['https://', /well-formed https URL/],
+    ['http://example.com/a.png', /http:\/\/ image URLs are refused/],
+    ['/local/path.png', /must be an https:\/\/ URL/],
+  ];
+  for (const [input, expected] of bad) {
+    assert.throws(() => dataUrlToPart(input), expected, `accepted: ${input}`);
+  }
+
+  // ...and the good forms still work, so the guards are not merely strict.
+  assert.deepEqual(dataUrlToPart('https://example.com/a.png'), {
+    type: 'image_url',
+    image_url: { url: 'https://example.com/a.png' },
+  });
+  assert.equal(dataUrlToPart('data:image/png;base64,iVBORw0KGgo=').type, 'image_url');
+});

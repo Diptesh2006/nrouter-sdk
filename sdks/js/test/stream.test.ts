@@ -432,3 +432,32 @@ test('a raw failure out of the body iterator is normalized, not leaked', async (
     },
   );
 });
+
+// AbortController.abort() with no argument yields an AbortError; abort(reason)
+// propagates the reason VERBATIM — a generic Error the name check missed. It
+// was then wrapped as a retryable transport failure, so a retry loop could
+// resend a billed request the caller had explicitly cancelled.
+test('a CUSTOM abort reason is still a cancellation, not a retryable failure', async () => {
+  const controller = new AbortController();
+  const runner = {
+    open: async () => ({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: (async function* () {
+        yield new TextEncoder().encode('data: {"choices":[{"delta":{"content":"a"}}]}\n\n');
+        controller.abort(new Error('the user navigated away'));
+        yield new TextEncoder().encode('data: {"choices":[{"delta":{"content":"b"}}]}\n\n');
+      })(),
+    }),
+  };
+  const res = await streamChat(runner as never, { model: 'm', prompt: 'x' }, controller.signal);
+  await assert.rejects(
+    async () => {
+      for await (const _ of res.chunks) { /* drain */ }
+    },
+    (err: unknown) => {
+      assert.equal(isRetryable(err), false, 'a cancelled request must never be resent — it was billed');
+      return true;
+    },
+  );
+});

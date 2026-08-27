@@ -639,10 +639,37 @@ export function dataUrlToPart(url: string): ChatContentPart {
         'data: image payload is not standard base64 (base64url with "-" and "_" is not accepted here)',
       );
     }
+    // LENGTH, not just the alphabet. Base64 encodes in 4-character groups, so
+    // a payload whose length mod 4 is 1 cannot decode no matter what it
+    // contains — `data:image/png;base64,A` passed the character check and then
+    // failed at the provider, AFTER the request was billed. Refusing locally
+    // is free; refusing at the provider is not.
+    if (payload.length % 4 === 1) {
+      throw configurationError(
+        `data: image payload is not a valid base64 length (${payload.length} characters; ` +
+          'base64 encodes in groups of 4 and can never leave a remainder of 1)',
+      );
+    }
     return { type: 'image_url', image_url: { url: trimmed } };
   }
 
-  if (/^https:\/\/[^\s/?#]+/i.test(trimmed)) {
+  if (/^https:\/\//i.test(trimmed)) {
+    // PARSE it, do not prefix-match it. The old regex only checked the start,
+    // so `https://example.com bad` — a whitespace-bearing string no fetcher
+    // will accept — passed and failed at the provider after a billed request.
+    // `new URL` is the only honest way to know a URL is a URL.
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol !== 'https:' || !parsed.hostname) {
+        throw new Error('not an https URL with a host');
+      }
+    } catch {
+      throw configurationError(
+        `image URL is not a well-formed https URL: ${quote(trimmed)}. ` +
+          'A stray space or a missing host is not fetchable by the model, and the request would ' +
+          'be billed before the provider said so.',
+      );
+    }
     return { type: 'image_url', image_url: { url: trimmed } };
   }
 

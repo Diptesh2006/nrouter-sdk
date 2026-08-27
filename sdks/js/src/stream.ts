@@ -353,7 +353,14 @@ async function* readFrames(
     // nRouterError hierarchy entirely: `isRetryable` answered false and the
     // status and request id were lost, for a request that DID reach the
     // gateway.
-    if (err instanceof nRouterError || isAbortError(err)) {
+    // `signal.aborted`, not just the error's NAME. `AbortController.abort()`
+    // with no argument produces an AbortError, but `abort(new Error('user
+    // cancelled'))` propagates that reason verbatim — a generic Error, which
+    // the name check missed. It was then wrapped as a transport failure and
+    // reported RETRYABLE, so a generic retry loop could resend a billed
+    // request the caller had explicitly cancelled (gate 8). The signal is the
+    // authority on whether a cancellation happened; the name is only a hint.
+    if (err instanceof nRouterError || isAbortError(err) || signal?.aborted) {
       state.failure = err instanceof Error ? err : new Error(String(err));
       throw err;
     }

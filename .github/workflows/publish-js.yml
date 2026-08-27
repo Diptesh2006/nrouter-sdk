@@ -215,6 +215,28 @@ jobs:
           fi
           echo "@nrouter_ai/sdk@$v is free"
 
+          # AND IT MUST NOT BE OLDER THAN WHAT IS ALREADY LATEST.
+          #
+          # "unused" is not the same as "newer". Push an untagged sdk-js-v1.1.0
+          # after 1.2.0 is live and it passes ancestry, signature and
+          # availability — then `npm publish` without an explicit dist-tag
+          # moves npm's DEFAULT `latest` pointer BACKWARDS, so every fresh
+          # `npm install @nrouter_ai/sdk` silently downgrades. Nothing errors,
+          # and the only symptom is consumers quietly losing features.
+          latest="$(npm view "@nrouter_ai/sdk" version 2>/dev/null || true)"
+          if [ -n "$latest" ]; then
+            newest="$(printf '%s\n%s\n' "$latest" "$v" | sort -V | tail -1)"
+            if [ "$newest" != "$v" ] || [ "$latest" = "$v" ]; then
+              echo "::error::$v is not newer than the published latest ($latest)."
+              echo "::error::Publishing it would move npm's 'latest' pointer backwards and downgrade every fresh install."
+              echo "::error::Bump past $latest, or publish a backport under an explicit dist-tag by hand."
+              exit 1
+            fi
+            echo "$v is newer than the published latest ($latest)"
+          else
+            echo "no published version yet; $v will be the first"
+          fi
+
       # A tag must not publish an unproven tree. CI ran on main, but the tag is
       # a different question: it points at one exact commit, and that is the
       # commit consumers get.

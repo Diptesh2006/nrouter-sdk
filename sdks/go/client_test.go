@@ -743,3 +743,60 @@ func TestMultipartRefusesHeaderInjection(t *testing.T) {
 		})
 	}
 }
+
+// The gateway never bills NaN, an infinity, or a negative amount. Go's
+// ParseFloat accepts all three as valid floats, so each one produced a
+// non-nil Cost the caller would bill against — a NaN then poisons every sum
+// it reaches. Found by the TypeScript SDK's metadata lane, which had to gate
+// the same values, and confirmed against strconv here.
+func TestNonsenseCostHeadersAreNilNotBilled(t *testing.T) {
+	for _, raw := range []string{"NaN", "Inf", "+Inf", "-Inf", "Infinity", "-0.5", "-3", "  "} {
+		t.Run(raw, func(t *testing.T) {
+			c := newTestClient(t, jsonHandler(200, map[string]string{
+				"x-nr-request-cost": raw,
+				"x-nr-cost-status":  "exact",
+			}, map[string]any{"ok": true}))
+			res, err := c.Models(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Meta.Cost != nil {
+				t.Fatalf("cost header %q parsed to %v; a cost that is not a real amount must be nil", raw, *res.Meta.Cost)
+			}
+			if res.Meta.IsPriced() {
+				t.Fatalf("cost header %q reported as priced", raw)
+			}
+		})
+	}
+}
+
+// ...and a genuinely measured zero still parses. The guard must reject
+// nonsense, not every small number.
+func TestARealZeroCostStillParses(t *testing.T) {
+	c := newTestClient(t, jsonHandler(200, map[string]string{
+		"x-nr-request-cost": "0",
+		"x-nr-cost-status":  "exact",
+	}, map[string]any{"ok": true}))
+	res, err := c.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Meta.Cost == nil || *res.Meta.Cost != 0 {
+		t.Fatalf("a measured 0 must survive, got %v", res.Meta.Cost)
+	}
+}
+
+// A token count that cannot be represented exactly is not a count.
+func TestOutOfRangeTokenCountIsNil(t *testing.T) {
+	c := newTestClient(t, jsonHandler(200, map[string]string{
+		"x-nr-input-tokens": "18446744073709551616",
+		"x-nr-total-tokens": "-3",
+	}, map[string]any{"ok": true}))
+	res, err := c.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Meta.InputTokens != nil || res.Meta.TotalTokens != nil {
+		t.Fatalf("out-of-range counts must be nil: in=%v total=%v", res.Meta.InputTokens, res.Meta.TotalTokens)
+	}
+}

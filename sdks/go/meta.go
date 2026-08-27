@@ -1,6 +1,9 @@
 package nrouter
 
-import "strconv"
+import (
+	"math"
+	"strconv"
+)
 
 // ResponseMeta is the per-request metadata the gateway reports on `x-nr-*`
 // response headers.
@@ -79,6 +82,10 @@ func MetaFromLookup(get func(string) string) ResponseMeta {
 		if raw == "" {
 			return nil
 		}
+		// No TrimSpace: MEASURED as dead. net/http strips optional whitespace
+		// around a header value before Get returns it, and ParseUint rejects a
+		// whitespace-only string, a negative and an out-of-range value on its
+		// own. A mutation test proved it — deleting the trim changed no result.
 		v, err := strconv.ParseUint(raw, 10, 64)
 		if err != nil {
 			return nil
@@ -100,7 +107,7 @@ func MetaFromLookup(get func(string) string) ResponseMeta {
 		ResponseCacheAge: num("x-nr-response-cache-age"),
 	}
 	if raw := get("x-nr-request-cost"); raw != "" {
-		if v, err := strconv.ParseFloat(raw, 64); err == nil {
+		if v, err := strconv.ParseFloat(raw, 64); err == nil && isBillableAmount(v) {
 			meta.Cost = &v
 		}
 	}
@@ -112,4 +119,22 @@ func MetaFromLookup(get func(string) string) ResponseMeta {
 // contradiction the caller should not bill against.
 func (m ResponseMeta) IsPriced() bool {
 	return m.CostStatus == "exact" && m.Cost != nil
+}
+
+// isBillableAmount rejects the values that are syntactically valid floats but
+// are not amounts of money.
+//
+// strconv.ParseFloat accepts "NaN", "Inf", "+Inf" and "Infinity" with a nil
+// error, so each one produced a non-nil Cost that a caller would bill against
+// — and a NaN then poisons every sum it reaches, silently, forever. A negative
+// is rejected for the same reason: the gateway never bills a negative amount,
+// so a minus sign means corruption, and a negative quietly netted against a
+// bill is worse than a missing one.
+//
+// A genuine 0 survives. The guard rejects nonsense, not small numbers.
+//
+// Found by porting this file to TypeScript: Number(”) === 0 forced the same
+// question there, and asking it exposed that Go had the wider hole.
+func isBillableAmount(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0
 }

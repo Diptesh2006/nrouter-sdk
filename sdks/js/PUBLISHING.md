@@ -80,8 +80,15 @@ cd sdks/js
 npm login                             # https://www.npmjs.com/settings/.../tokens
 npm whoami                            # nrouter_ai
 
-# 1. The version lives in package.json and nowhere else.
+# 1. The version lives in package.json and nowhere else — and it is COMMITTED
+#    AND PUSHED BEFORE publishing, not after. npm keeps the version forever;
+#    if the bump is still uncommitted when `npm publish` runs, the tag you cut
+#    afterwards points at the PREVIOUS manifest and the published artifact can
+#    never be reproduced from its own tag.
 $EDITOR package.json                  # "version": "1.1.0"
+git -C ../.. commit sdks/js/package.json -m "js sdk 1.1.0"
+git -C ../.. push origin main
+git -C ../.. status --short           # expect empty before going further
 
 # 2. Prove the version is free. npm will not overwrite it, and the rejection
 #    does not say so clearly.

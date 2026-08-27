@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const util = require('node:util');
 
-const { nRouter } = require('../dist/index');
+const { nRouter, isRetryable } = require('../dist/index');
 
 const KEY_PREFIX = 'sk-nrouter-';
 const ENV_KEY = 'NROUTER_API_KEY';
@@ -264,4 +264,28 @@ test('a billed POST is sent exactly once, even on a retryable failure', async ()
   });
   await assert.rejects(() => client.nr.chat({ model: 'm', prompt: 'x' }));
   assert.equal(attempts, 1, `a billed POST was sent ${attempts} times`);
+});
+
+// A non-JSON error has no parsed body — OpenAI keeps the response text in
+// `message`. Reconstructing an empty body there discards the only signal
+// present, and "the upstream response was too large to process" is the
+// gateway's one PERMANENT 502. Losing it invites a retry of a billed request.
+test('a text/plain error keeps its wording, so a permanent 502 stays permanent', async () => {
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async () =>
+      new Response('the upstream response was too large to process', {
+        status: 502,
+        headers: { 'content-type': 'text/plain' },
+      }),
+  });
+  await assert.rejects(
+    () => client.nr.chat({ model: 'm', prompt: 'x' }),
+    (err: unknown) => {
+      assert.match((err as Error).message, /too large/, 'the wording must survive');
+      assert.equal(isRetryable(err), false, 'an oversized upstream response is permanent');
+      return true;
+    },
+  );
 });

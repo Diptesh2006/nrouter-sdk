@@ -217,3 +217,40 @@ test('a NON-reserved `extra` field still travels', async () => {
   assert.match(String(wire), /some_future_flag/);
   assert.match(String(wire), /on/);
 });
+
+// An object literal treats `{ a: undefined }` as PRESENT, so spreading the
+// named options over `extra` erased anything set through the documented escape
+// hatch. `extra: { response_format: 'pcm' }` with the typed option left unset
+// silently fell back to the provider default — no error, just the wrong audio.
+test('an `extra` value survives a named option that was never set', async () => {
+  let sent: unknown = null;
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async (_url: unknown, init: any) => {
+      sent = JSON.parse(await readBody(init?.body));
+      return new Response(new Uint8Array([0xff, 0xfb]), {
+        status: 200,
+        headers: { 'content-type': 'audio/mpeg' },
+      });
+    },
+  });
+
+  await client.nr.media.speech({
+    model: 'tts-1',
+    input: 'hello',
+    voice: 'alloy',
+    extra: { response_format: 'pcm' },
+  });
+  assert.equal((sent as Record<string, unknown>).response_format, 'pcm');
+
+  // ...and a named option that IS set still wins over the escape hatch.
+  await client.nr.media.speech({
+    model: 'tts-1',
+    input: 'hello',
+    voice: 'alloy',
+    response_format: 'wav',
+    extra: { response_format: 'pcm' },
+  });
+  assert.equal((sent as Record<string, unknown>).response_format, 'wav');
+});

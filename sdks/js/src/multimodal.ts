@@ -338,14 +338,23 @@ export class Multimodal {
     requireNonEmpty(params.input, 'input');
     requireNonEmpty(params.voice, 'voice');
 
+    // `defined()` around the named fields, not a bare spread. A property whose
+    // value is `undefined` still OVERWRITES an earlier one in an object
+    // literal, so a caller using the documented escape hatch —
+    // `extra: { response_format: 'pcm' }` — and leaving the typed
+    // `response_format` unset had their value replaced by `undefined` and
+    // dropped by jsonBody. The request then silently used the provider default
+    // instead of PCM: no error, just the wrong audio format.
     const body = jsonBody({
       ...(params.extra ?? {}),
-      model: params.model,
-      input: params.input,
-      voice: params.voice,
-      response_format: params.response_format,
-      speed: params.speed,
-      instructions: params.instructions,
+      ...defined({
+        model: params.model,
+        input: params.input,
+        voice: params.voice,
+        response_format: params.response_format,
+        speed: params.speed,
+        instructions: params.instructions,
+      }),
     });
 
     const raw = await this.send('POST', '/audio/speech', body, options);
@@ -1212,3 +1221,16 @@ const MULTIPART_RESERVED_FIELDS = new Set([
   'timestamp_granularities[]',
   'file',
 ]);
+
+/**
+ * Drop keys whose value is `undefined`.
+ *
+ * An object literal treats `{ a: undefined }` as PRESENT, so spreading named
+ * options over `extra` silently erases anything the caller set through the
+ * escape hatch. This keeps "unset" meaning unset.
+ */
+function defined<T extends Record<string, unknown>>(o: T): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o)) if (v !== undefined) out[k] = v;
+  return out as Partial<T>;
+}

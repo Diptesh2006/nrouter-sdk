@@ -30,9 +30,12 @@ name: CI
 # and every PR, which is exactly what that policy forbids.
 on:
   workflow_dispatch:
+  # NO standalone tag trigger. publish-js.yml CALLS this workflow on the release
+  # tag, and a `push: tags:` here too meant both ran for the same ref under the
+  # same concurrency group with cancel-in-progress — so whichever started second
+  # cancelled the other, and the publish workflow's REQUIRED validation could be
+  # cancelled nondeterministically. One entry point per tag.
   workflow_call:
-  push:
-    tags: ['sdk-*-v*']
 
 permissions:
   contents: read

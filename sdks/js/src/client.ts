@@ -69,7 +69,18 @@ function responseFromApiError(err: unknown): { status: number; headers: HeaderSo
     // bare envelope, and that is exactly the shape whose loss misclassifies a
     // guardrail block and a budget ceiling.
     const body = (err as unknown as Record<symbol, unknown>)[ORIGINAL_BODY] ?? err.error;
-    const text = body === undefined ? '' : JSON.stringify(body);
+    // A non-JSON error has NO parsed body at all — OpenAI keeps the response
+    // text in `message` instead. Reconstructing an empty body there threw away
+    // the only signal present: a text/plain 502 saying the upstream response
+    // was "too large" is a PERMANENT condition, and without its wording it
+    // classified as a transient service failure and invited a retry of a
+    // request that was already billed (gateway gate 8).
+    const text =
+      body !== undefined
+        ? JSON.stringify(body)
+        : err.message
+          ? JSON.stringify({ error: { message: redactKeys(err.message) } })
+          : '';
     return { status: err.status, headers, text };
   }
   // NOT a raw rethrow. DNS, TLS, a timeout, an abort or exhausted retries all

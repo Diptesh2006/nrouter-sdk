@@ -24,10 +24,26 @@ therefore an error here, not a skip — the self-test asserts that.
 
 ## What it will not catch
 
-It proves a constant is *present*, not that it is *used correctly*. An SDK could
-name every header and read none of them. That is what each SDK's own
-mutation-checked suite is for; the two gates are complements, and neither
-replaces the other.
+Two things, stated because a gate whose limits are unwritten gets read as
+covering more than it does.
+
+**It cannot bind each code to ITS status.** It requires every spec status to
+appear in a dispatch, but moving `invalid_request` from 400 to 503 leaves that
+set unchanged and passes. A per-code binding is not expressible here: these SDKs
+dispatch on the code first and the status second, in separate blocks — the
+correct architecture — so a code and its status are legitimately far apart in
+the source. A proximity heuristic was tried and flagged six false positives on a
+conformant tree; widening the window until they vanished would have measured
+nothing, so it was removed rather than tuned.
+
+**It proves a constant is used, not used CORRECTLY.** The declared-and-used rule
+catches a deleted parser lookup, but an SDK could still read a header into the
+wrong field.
+
+Both gaps are covered per SDK by that SDK's own suite — `each gateway code maps
+to its type`, the codeless-status tests, and the metadata parsing tests, every
+one mutation-checked. This gate covers what those cannot: that all nine agree
+with each other. Neither replaces the other.
 
 ## Exemptions, stated rather than silent
 

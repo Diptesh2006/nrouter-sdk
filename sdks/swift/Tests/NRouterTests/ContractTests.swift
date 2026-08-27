@@ -245,6 +245,28 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(result.body["text"] as? String, "hello")
     }
 
+    func testNoRenderingOfTheClientPrintsTheAPIKey() throws {
+        // A struct reflects its stored properties, so print(), dump() and the
+        // debugger all show `apiKey` unless all three protocols are supplied.
+        // That is a credential leak from an ordinary log line (Rule #5).
+        let client = try NRouter(apiKey: "sk-nrouter-SECRET123")
+
+        let described = String(describing: client)
+        let debugged = String(reflecting: client)
+        var dumped = ""
+        dump(client, to: &dumped)
+
+        for (label, rendered) in [
+            ("description", described), ("debugDescription", debugged), ("dump", dumped),
+        ] {
+            XCTAssertFalse(
+                rendered.contains("SECRET123"),
+                "the api key leaked into \(label): \(rendered)"
+            )
+        }
+        XCTAssertTrue(described.contains("sk-nrouter-...T123"), described)
+    }
+
     func testBaseURLTrailingSlashIsNormalised() throws {
         let client = try NRouter(apiKey: "sk-nrouter-abc", baseURL: "https://api.nrouter.ai/v1/")
         XCTAssertEqual(client.baseURL, "https://api.nrouter.ai/v1")

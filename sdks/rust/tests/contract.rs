@@ -267,3 +267,16 @@ fn a_codeless_404_is_only_model_not_found_when_it_names_a_model() {
         NRouterError::Other(_)
     ));
 }
+
+#[test]
+fn debug_never_prints_the_api_key() {
+    // A derived Debug prints `api_key` verbatim, so one `{:?}` in a caller's
+    // log leaks a credential that spends real credits (Rule #5).
+    let client = nrouter::http::Client::new("sk-nrouter-SECRET123").unwrap();
+    let rendered = format!("{client:?}");
+    assert!(
+        !rendered.contains("SECRET123"),
+        "the api key leaked into Debug: {rendered}"
+    );
+    assert!(rendered.contains("sk-nrouter-...T123"), "{rendered}");
+}

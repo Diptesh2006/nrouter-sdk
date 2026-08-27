@@ -301,6 +301,11 @@ public struct NRouter: Sendable {
         )
     }
 
+    /// `sk-nrouter-...abcd` — enough to identify, never enough to use.
+    var redactedKey: String {
+        "\(NRouter.keyPrefix)...\(apiKey.suffix(4))"
+    }
+
     /// Pull the gateway's stable `code` and message out of an error payload.
     ///
     /// The gateway nests them under `error`; a bare object is accepted too, so
@@ -319,6 +324,27 @@ public struct NRouter: Sendable {
             requestID: meta.requestID,
             limitSource: meta.limitSource,
             authReason: meta.authReason
+        )
+    }
+}
+
+// A struct reflects its stored properties by default, so `String(describing:)`,
+// `print()`, `dump()` and a debugger quicklook all print `apiKey` verbatim —
+// a credential that spends real credits, leaked by an ordinary log line
+// (Rule #5). All three protocols are needed: the first two cover printing and
+// `debugPrint`, and `CustomReflectable` is what `dump()` and the debugger read.
+extension NRouter: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public var description: String {
+        "NRouter(baseURL: \(baseURL), apiKey: \(redactedKey))"
+    }
+
+    public var debugDescription: String { description }
+
+    public var customMirror: Mirror {
+        Mirror(
+            self,
+            children: ["baseURL": baseURL, "apiKey": redactedKey],
+            displayStyle: .struct
         )
     }
 }

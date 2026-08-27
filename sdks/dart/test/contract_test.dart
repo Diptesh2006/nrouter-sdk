@@ -174,6 +174,14 @@ void main() {
       expect(NRouter.validateApiKey('sk-nrouter-abc'), 'sk-nrouter-abc');
     });
 
+    test('toString never prints the api key', () {
+      // A logged client must be useful without being dangerous (Rule #5).
+      final rendered =
+          NRouter(apiKey: 'sk-nrouter-SECRET123').toString();
+      expect(rendered, isNot(contains('SECRET123')));
+      expect(rendered, contains('sk-nrouter-...T123'));
+    });
+
     test('a trailing slash on the base URL is normalised', () {
       final client = NRouter(
         apiKey: 'sk-nrouter-abc',

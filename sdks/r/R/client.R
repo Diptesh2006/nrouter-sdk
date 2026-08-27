@@ -74,6 +74,26 @@ nrouter_client <- function(api_key = NULL, base_url = nrouter_default_base_url()
   )
 }
 
+#' Print an nRouter client without disclosing its key
+#'
+#' R's default list printer shows every element, so an interactive
+#' \code{client} or a \code{print(client)} would display the full API key — a
+#' credential that spends real credits, leaked by an ordinary session
+#' transcript. Only the prefix and last four characters are shown.
+#'
+#' @param x An \code{nrouter_client}.
+#' @param ... Ignored.
+#' @return \code{x}, invisibly.
+#' @export
+print.nrouter_client <- function(x, ...) {
+  key <- x$api_key
+  tail4 <- substr(key, max(1, nchar(key) - 3), nchar(key))
+  cat("<nrouter_client>\n")
+  cat("  base_url:", x$base_url, "\n")
+  cat("  api_key: ", paste0(nrouter_key_prefix(), "...", tail4), "\n")
+  invisible(x)
+}
+
 #' Pull the gateway's code and message out of an error payload
 #'
 #' The gateway nests them under \code{error}; a bare object is accepted too, so
@@ -270,11 +290,23 @@ nrouter_multipart <- function(client, path, file_path, fields = list()) {
 
   meta <- nrouter_meta(as.list(httr::headers(response)))
   status <- httr::status_code(response)
+  parse_failed <- FALSE
   parsed <- tryCatch(
     httr::content(response, as = "parsed", type = "application/json"),
-    error = function(e) list()
+    error = function(e) {
+      parse_failed <<- TRUE
+      list()
+    }
   )
   if (status >= 200 && status < 300) {
+    # Same rule as nrouter_request(): a 2xx whose JSON does not parse is a
+    # truncated response for a request that was BILLED, not an empty one.
+    if (parse_failed) {
+      stop(nrouter_transport_condition(paste0(
+        "nRouter returned ", status, " with unparseable JSON; the request was ",
+        "billed but the body did not arrive intact."
+      )))
+    }
     return(list(body = parsed, meta = meta, status_code = status))
   }
   stop(nrouter_error_from_payload(status, parsed, meta))

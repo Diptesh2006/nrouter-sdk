@@ -75,6 +75,15 @@ class NRouter {
   /// The gateway this client talks to, with any trailing slash removed.
   final String baseUrl;
 
+  /// Never the key. Dart's default `toString` is already opaque, but this is
+  /// stated rather than relied upon — and it makes a logged client useful
+  /// without making it dangerous (Rule #5).
+  @override
+  String toString() {
+    final tail = _apiKey.length >= 4 ? _apiKey.substring(_apiKey.length - 4) : '';
+    return 'NRouter(baseUrl: $baseUrl, apiKey: $keyPrefix...$tail)';
+  }
+
   /// Validate a key's shape, returning it unchanged.
   static String validateApiKey(String apiKey) {
     if (apiKey.isEmpty) {
@@ -154,7 +163,19 @@ class NRouter {
 
     final meta = NRouterResponseMeta.fromHeaders(response.headers);
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      final decoded = jsonDecode(response.body);
+      // A raw FormatException escapes the documented NRouterError hierarchy, so
+      // a caller catching the SDK's errors would miss response corruption
+      // entirely — on a request that was billed.
+      final Object? decoded;
+      try {
+        decoded = jsonDecode(response.body);
+      } on FormatException catch (e) {
+        throw NRouterTransportError(
+          'nRouter returned ${response.statusCode} with unparseable JSON '
+          '(${e.message}); the request was billed but the body did not arrive '
+          'intact.',
+        );
+      }
       if (decoded is! Map<String, dynamic>) {
         throw NRouterTransportError(
           'nRouter returned ${response.statusCode} with a JSON body that is not '

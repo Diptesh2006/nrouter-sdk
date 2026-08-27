@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import ClassVar, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,12 @@ class nRouterResponseMeta:
     #: Every response header this SDK reads, exactly as
     #: ``spec/nrouter-sdk-spec.json`` names them. Published so a caller (and the
     #: cross-SDK conformance gate) can see the set without parsing this module.
-    HEADER_NAMES: "tuple[str, ...]" = (
+    #:
+    #: ``ClassVar`` is load-bearing: without it ``dataclass`` makes this an
+    #: INSTANCE FIELD, so it becomes a constructor parameter, joins ``repr``,
+    #: ``==`` and ``asdict()`` — putting the whole header registry inside every
+    #: serialized response — and can be overridden per instance.
+    HEADER_NAMES: ClassVar[Tuple[str, ...]] = (
         "x-nr-request-id",
         "x-nr-request-cost",
         "x-nr-cost-status",

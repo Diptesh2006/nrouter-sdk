@@ -298,6 +298,15 @@ class ContractTest {
     }
 
     @Test
+    fun `toString never prints the api key`() {
+        // Making this a data class later would silently start printing apiKey
+        // into every log — a credential that spends real credits (Rule #5).
+        val rendered = NRouter(apiKey = "sk-nrouter-SECRET123").toString()
+        assertFalse(rendered.contains("SECRET123"), "the api key leaked: $rendered")
+        assertTrue(rendered.contains("sk-nrouter-...T123"), rendered)
+    }
+
+    @Test
     fun `a bare error envelope still yields a typed error`() = runBlocking {
         // A proxy that unwraps `error` must not downgrade this to a generic failure.
         server.enqueue(

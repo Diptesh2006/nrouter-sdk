@@ -50,6 +50,13 @@ roxygenise rather than hand-editing.
 > function is not actually exported. If an export is missing after roxygenise,
 > check that first line before anything else.
 
+> **Clean up after a check.** `R CMD build` and `R CMD check` leave
+> `nrouter_<version>.tar.gz` and `nrouter.Rcheck/` beside the package —
+> `.Rcheck/` being a full second copy of the sources. Both are gitignored, so
+> they will not be committed, but `scripts/verify-layout.sh` scans the working
+> tree and reports phantom failures while they exist. `rm -rf sdks/nrouter.Rcheck
+> sdks/nrouter_*.tar.gz` when the check is done.
+
 ## Easiest real distribution: R-universe
 
 No review queue, and it builds binaries for macOS and Windows:

@@ -170,3 +170,13 @@ test_that("a codeless 404 is only model_not_found when it names a model", {
   expect_true("nrouter_other_error" %in% class(other))
   expect_false("nrouter_not_found_error" %in% class(other))
 })
+
+test_that("printing a client never discloses its key", {
+  # R's default list printer shows every element, so an interactive `client`
+  # would display the full key — a credential that spends real credits, leaked
+  # by an ordinary session transcript (Rule #5).
+  client <- nrouter_client(api_key = "sk-nrouter-SECRET123")
+  rendered <- paste(capture.output(print(client)), collapse = "\n")
+  expect_false(grepl("SECRET123", rendered, fixed = TRUE))
+  expect_true(grepl("sk-nrouter-...T123", rendered, fixed = TRUE))
+})

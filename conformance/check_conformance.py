@@ -210,11 +210,27 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
             if code not in blob:
                 failures.append(f"{sdk}: error code {code!r} is not mapped")
 
-        # The code STRINGS are only half the error contract. The spec also
-        # fixes each code's HTTP status, and the gateway's main error path
-        # sends no code at all — so status dispatch is the ordinary route, not
-        # a fallback. A gate that ignores `http` lets `guardrail_blocked` move
-        # from 400 to 422 in the spec while every SDK stays green.
+        # The code STRINGS are only half the error contract: the spec also fixes
+        # each code's HTTP status, and the gateway's main error path sends no
+        # code at all, so status dispatch is the ordinary route rather than a
+        # fallback. Require every distinct spec status to appear in a dispatch.
+        #
+        # LIMIT, stated rather than papered over: this binds the SET of statuses,
+        # not each code to ITS status. Moving `invalid_request` from 400 to 503
+        # in the spec leaves the set unchanged and passes here.
+        #
+        # A per-code binding is NOT expressible in a text gate. These SDKs
+        # dispatch on the code first and the status second, in separate blocks —
+        # which is the correct architecture — so a code and its status are
+        # legitimately far apart in the source, and a proximity heuristic flags
+        # correct code. It was tried; it produced six false positives on a
+        # conformant tree, and tuning the window until they disappeared would
+        # have measured nothing.
+        #
+        # The code-to-status binding IS proven, per SDK, by each suite's
+        # `each gateway code maps to its type` and its codeless-status tests,
+        # every one of them mutation-checked. That is where the guarantee lives;
+        # this gate covers what those cannot — that all nine agree.
         for status in sorted({str(e["http"]) for e in spec["errors"].values()}):
             if status not in blob:
                 failures.append(
@@ -251,6 +267,8 @@ def self_test() -> int:
         ("a new error code", lambda d: d["errors"].update({"invented_code": {"http": 400}})),
         # Moving an EXISTING code's status must also bite: the contract is the
         # code AND its status, and a gate blind to `http` lets one drift.
+        # A status leaving the spec's set must bite. (Moving a code ONTO an
+        # existing status does not — see the LIMIT note in check().)
         ("an existing code's http", lambda d: d["errors"]["guardrail_blocked"].update({"http": 422})),
     ):
         mutated = json.loads(json.dumps(spec))

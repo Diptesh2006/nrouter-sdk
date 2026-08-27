@@ -140,6 +140,15 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             ),
             code=gateway_code,
         ) from err
+    if gateway_code:
+        # A code we do NOT know must not fall through to status classification.
+        # An unknown code on a 503 would become a retryable nRouterServiceError
+        # carrying the fabricated code `service_unavailable` — a confident wrong
+        # answer. Keep the base class and the code the gateway actually sent,
+        # which is what the other SDKs' `Other` variant does.
+        raise nRouterError(
+            message, request_id=request_id, code=gateway_code, status_code=status
+        ) from err
 
     if status == 400:
         if "guardrail" in message.lower():

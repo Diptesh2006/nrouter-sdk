@@ -20,11 +20,39 @@ pub struct Response<T> {
 }
 
 /// Thin nRouter HTTP client over the OpenAI wire format.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented by hand, NOT derived: a derived one prints `api_key`
+/// verbatim, so a single `{:?}` in a caller's log leaks a credential that spends
+/// real credits (Rule #5).
+#[derive(Clone)]
 pub struct Client {
     api_key: String,
     base_url: String,
     http: reqwest::Client,
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            // Never the key. Only the last four, and only enough to tell two
+            // keys apart in a log — the same shape the dashboard shows.
+            .field("api_key", &redacted(&self.api_key))
+            .field("base_url", &self.base_url)
+            .finish_non_exhaustive()
+    }
+}
+
+/// `sk-nrouter-...abcd` — enough to identify, never enough to use.
+fn redacted(api_key: &str) -> String {
+    let tail: String = api_key
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{}...{}", crate::KEY_PREFIX, tail)
 }
 
 impl Client {

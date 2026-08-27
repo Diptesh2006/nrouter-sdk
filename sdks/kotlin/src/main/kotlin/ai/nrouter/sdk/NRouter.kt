@@ -41,6 +41,14 @@ public class NRouter @JvmOverloads constructor(
     /** The gateway this client talks to, with any trailing slash removed. */
     public val baseURL: String = baseURL.trimEnd('/')
 
+    /**
+     * Never the key. A plain `class` already has an identity `toString`, but
+     * this is stated rather than relied upon: turning it into a `data class`
+     * later would silently start printing `apiKey` into every log (Rule #5).
+     */
+    override fun toString(): String =
+        "NRouter(baseURL=$baseURL, apiKey=$KEY_PREFIX...${apiKey.takeLast(4)})"
+
     /** A body paired with the metadata the gateway reported for it. */
     public data class Response(
         val body: JSONObject,

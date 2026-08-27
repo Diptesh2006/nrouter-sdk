@@ -478,17 +478,28 @@ export class Multimodal {
     requireNonEmpty(params.model, 'model');
 
     const fields: MultipartField[] = [];
-    // `extra` first so a named field below wins on conflict — the same
-    // precedence as the JSON bodies, so the two paths cannot surprise a
-    // caller differently.
-    for (const [name, value] of Object.entries(params.extra ?? {})) {
-      fields.push({ name, value: String(value) });
-    }
+    // MULTIPART IS NOT JSON, and "last one wins" does not hold here.
+    //
+    // In a JSON body a later key overwrites an earlier one, so emitting
+    // `extra` first genuinely lets the named field win. The gateway settles a
+    // multipart target from the FIRST part carrying that name
+    // (nrouter-rust-gateway src/http/audio.rs), so the identical ordering
+    // does the OPPOSITE: `extra.model` would be the one preflight authorizes
+    // and prices, while `params.model` — the value the caller passed and the
+    // one this SDK validated — is ignored. A caller could route and bill
+    // against a model they never named.
+    //
+    // So a reserved name is DROPPED from `extra` rather than emitted ahead of
+    // its named parameter, and the named parameter is written first.
     pushField(fields, 'model', params.model);
     pushField(fields, 'language', language);
     pushField(fields, 'prompt', params.prompt);
     pushField(fields, 'temperature', params.temperature);
     pushField(fields, 'response_format', params.response_format);
+    for (const [name, value] of Object.entries(params.extra ?? {})) {
+      if (MULTIPART_RESERVED_FIELDS.has(name)) continue;
+      fields.push({ name, value: String(value) });
+    }
     for (const granularity of params.timestampGranularities ?? []) {
       // Repeated field, not a comma-joined one: the provider reads
       // `timestamp_granularities[]` as a list and a joined string matches no
@@ -1183,3 +1194,21 @@ function decodeUtf8(bytes: Uint8Array): string {
   }
   return cachedDecoder.decode(bytes);
 }
+
+/**
+ * Field names this SDK writes itself on a multipart upload.
+ *
+ * One of these arriving through `extra` would be emitted a second time, and on
+ * multipart the FIRST part wins at the gateway — so the caller's own `model`
+ * would lose to a stray `extra.model`, and preflight would authorize and price
+ * the wrong one.
+ */
+const MULTIPART_RESERVED_FIELDS = new Set([
+  'model',
+  'language',
+  'prompt',
+  'temperature',
+  'response_format',
+  'timestamp_granularities[]',
+  'file',
+]);

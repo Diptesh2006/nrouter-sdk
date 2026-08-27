@@ -37,6 +37,18 @@ const INJECTED = 'X-Injected: yes';
 async function readBody(body: unknown): Promise<string> {
   if (body === null || body === undefined) return '';
   if (typeof body === 'string') return body;
+  // The nr.media path encodes multipart itself and hands the transport a
+  // Uint8Array. Without this branch the body reads as empty and every
+  // assertion below passes vacuously — which is how a test harness quietly
+  // stops testing anything.
+  // MEASURED: the vendor client re-wraps a Uint8Array body as a DataView
+  // before it reaches fetch, so testing for Uint8Array alone still read empty.
+  // Accept any ArrayBufferView.
+  if (ArrayBuffer.isView(body)) {
+    const v = body as ArrayBufferView;
+    return new TextDecoder().decode(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
+  }
+  if (body instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(body));
   if (typeof (body as any)[Symbol.asyncIterator] === 'function') {
     let out = '';
     for await (const part of body as AsyncIterable<Uint8Array>) {
@@ -145,4 +157,63 @@ test('a benign filename and field still travel unchanged', async () => {
   assert.match(body, /name="model"/);
   assert.match(body, /whisper-1/);
   assert.match(body, /hello there/);
+});
+
+// MULTIPART IS NOT JSON: the gateway settles a target from the FIRST part with
+// that name, so emitting `extra` ahead of the named parameters — correct for a
+// JSON body, where the last key wins — hands preflight a model the caller never
+// asked for, to authorize and to price.
+test('a reserved name in `extra` cannot displace the caller\'s own model', async () => {
+  let wire: string | null = null;
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async (_url: unknown, init: any) => {
+      wire = await readBody(init?.body);
+      return new Response(JSON.stringify({ text: 'ok' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  await client.nr.media.transcribe({
+    file: new Uint8Array([0x52, 0x49, 0x46, 0x46]),
+    fileName: 'speech.mp3',
+    model: 'whisper-1',
+    extra: { model: 'an-expensive-model-the-caller-never-named' },
+  });
+
+  const body = String(wire);
+  const first = body.indexOf('whisper-1');
+  const smuggled = body.indexOf('an-expensive-model-the-caller-never-named');
+  assert.notEqual(first, -1, "the caller's model must be on the wire");
+  assert.equal(smuggled, -1, 'a reserved name in `extra` must be dropped, not emitted');
+  // Belt and braces: even if it were emitted, the caller's must come first.
+  assert.ok(smuggled === -1 || first < smuggled, "the caller's model must be the FIRST model part");
+});
+
+test('a NON-reserved `extra` field still travels', async () => {
+  // The inverse guard: dropping reserved names must not drop everything.
+  let wire: string | null = null;
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async (_url: unknown, init: any) => {
+      wire = await readBody(init?.body);
+      return new Response(JSON.stringify({ text: 'ok' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  await client.nr.media.transcribe({
+    file: new Uint8Array([0x52, 0x49, 0x46, 0x46]),
+    fileName: 'speech.mp3',
+    model: 'whisper-1',
+    extra: { some_future_flag: 'on' },
+  });
+  assert.match(String(wire), /some_future_flag/);
+  assert.match(String(wire), /on/);
 });

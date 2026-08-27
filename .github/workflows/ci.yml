@@ -18,11 +18,20 @@ name: CI
 # setup, Dependency Graph). They execute on GitHub's own infrastructure and are
 # not billed as Actions minutes, so their green does not generalise to this file.
 
+# TRIGGERS ARE DELIBERATELY NARROW — see nrouter-infra-cicd's gh-workflow
+# skill: "Never add per-commit or per-PR hosted CI, or a required hosted check,
+# without explicit operator direction", and "It is tag-only, never per-commit
+# or per-PR." Ordinary commits run FOCUSED LOCAL checks; this file exists for
+# the tag path and for an explicitly requested manual run.
+#
+# The first draft carried `push: branches: [main]` and `pull_request:`. Nobody
+# noticed because Actions cannot run in this org today — the moment billing and
+# runners came back it would have started a hosted full-suite run on every push
+# and every PR, which is exactly what that policy forbids.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
+  push:
+    tags: ['sdk-*-v*']
 
 permissions:
   contents: read
@@ -102,7 +111,12 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          # >= 22.18, NOT 20. The test launcher hands `node --test` the .ts
+          # files directly and relies on native type stripping, which lands in
+          # 22.18. On Node 20 the run dies on the first `as` — so CI and every
+          # automated release would stop before a single test executed. '22'
+          # resolves to the newest 22.x, which is well past 22.18.
+          node-version: '22'
           cache: npm
           cache-dependency-path: sdks/js/package-lock.json
 

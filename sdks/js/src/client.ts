@@ -66,7 +66,15 @@ function responseFromApiError(err: unknown): { status: number; headers: HeaderSo
     const text = err.error === undefined ? '' : JSON.stringify(err.error);
     return { status: err.status, headers, text };
   }
-  throw err;
+  // NOT a raw rethrow. DNS, TLS, a timeout, an abort or exhausted retries all
+  // arrive here as a vendor APIConnectionError, and `nr.chat()` was the only
+  // helper that normalized it — so `nr.stream()` and every `nr.media.*` call
+  // handed the caller a VENDOR error instead, and a single
+  // `catch (e) { if (e instanceof nRouterError) ... }` silently missed them.
+  //
+  // The cause is preserved, so an abort is still recognisable through the
+  // chain and `isRetryable` still answers false for it.
+  throw transportError(err instanceof Error ? err.message : String(err), { cause: err });
 }
 
 function contentTypeOf(headers: HeaderSource): string {

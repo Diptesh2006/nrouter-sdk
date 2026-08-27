@@ -75,12 +75,22 @@ jobs:
     environment: npm-publish
     steps:
       - name: Checkout the tagged commit
+        # fetch-depth 0 + tags: the signature and ancestry checks below need the
+        # tag OBJECT and real history, which a shallow default checkout omits.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up Node with the npm registry
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          # >= 22.18, NOT 20. The test launcher hands `node --test` the .ts
+          # files directly and relies on native type stripping, which lands in
+          # 22.18. On Node 20 the run dies on the first `as` — so CI and every
+          # automated release would stop before a single test executed. '22'
+          # resolves to the newest 22.x, which is well past 22.18.
+          node-version: '22'
           # registry-url is what makes setup-node write an .npmrc pointing at
           # NODE_AUTH_TOKEN. Without it the token env var is read by nothing
           # and `npm publish` fails as unauthenticated.
@@ -94,6 +104,42 @@ jobs:
           python-version: '3.10'
 
       # The tag is the only input; everything else is derived from the tree.
+      - name: Assert the tag is a real, signed release tag on main
+        # BEFORE any credential is in scope. Everything below this step runs in
+        # the `npm-publish` environment and can reach NPM_TOKEN; a name/version
+        # check alone let ANY lightweight `sdk-js-v*` tag — including one on a
+        # commit never merged to main — walk into that environment.
+        #
+        # `git tag -s` in the runbook is an instruction, not enforcement, and
+        # npm provenance attests to the Actions run rather than to the source
+        # commit's lineage. Three separate properties, each fatal on its own:
+        #   1. an ANNOTATED tag object, not a lightweight ref
+        #   2. a GOOD signature on it
+        #   3. its commit is an ANCESTOR OF origin/main
+        # This is a floor, not the whole trust model: the authoritative shape
+        # is a protected `release-validation` environment with required
+        # reviewers and an immutable tag ruleset, verified by
+        # `sdlc/tools/release-trust-doctor.py`. That is repo settings, not YAML,
+        # and it has to be configured by an operator.
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$(git cat-file -t "refs/tags/$TAG_NAME")" != "tag" ]; then
+            echo "::error::$TAG_NAME is a LIGHTWEIGHT tag. Release tags must be annotated and signed: git tag -s $TAG_NAME -m '...'"
+            exit 1
+          fi
+          if ! git verify-tag "$TAG_NAME" 2>/dev/null; then
+            echo "::error::$TAG_NAME carries no valid signature. Sign it: git tag -s $TAG_NAME -m '...'"
+            exit 1
+          fi
+          git fetch --no-tags --depth=200 origin main
+          if ! git merge-base --is-ancestor "$TAG_NAME^{commit}" origin/main; then
+            echo "::error::$TAG_NAME points at a commit that is not on origin/main. A release must ship reviewed, merged code."
+            exit 1
+          fi
+          echo "annotated, signed, and on main: $TAG_NAME"
+
       - name: Assert the tag matches package.json
         id: version
         run: |

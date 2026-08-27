@@ -579,3 +579,16 @@ export function withResponse(
   }
   return err;
 }
+
+/**
+ * Whether a string is one of the nine STABLE gateway codes.
+ *
+ * The gateway puts an OpenAI-shaped family name in `type` on its ordinary
+ * error path — `gateway_error` — and a real stable code there only on the
+ * guardrail cut. Promoting `type` unconditionally therefore hands
+ * `classifyErrorClass` an unknown code, which takes precedence over the status
+ * fallback and collapses every 400/401/402/429/503 into a generic error.
+ */
+export function isSpecErrorCode(value: unknown): value is string {
+  return typeof value === 'string' && value in ERROR_CLASS_BY_CODE;
+}

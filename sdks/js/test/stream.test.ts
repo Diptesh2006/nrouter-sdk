@@ -117,8 +117,14 @@ test('parseSSE handles all three line endings', () => {
 // Chunk boundaries.
 // ---------------------------------------------------------------------------
 
+// Every OpenAI-protocol stream ends with this, and the gateway relays it
+// (nrouter-rust-gateway chat_completions.rs:783). A stream that stops without
+// it is truncated, and the SDK now refuses it — so a test that omits it is
+// testing a failure mode, not the one it means to.
+const DONE = 'data: [DONE]\n\n';
+
 test('an event SPLIT ACROSS TWO NETWORK CHUNKS reassembles', async () => {
-  const whole = frame('hello world');
+  const whole = frame('hello world') + DONE;
   const cut = Math.floor(whole.length / 2);
   const res = await streamChat(chunkRunner([whole.slice(0, cut), whole.slice(cut)]), {
     model: 'm',
@@ -144,7 +150,7 @@ test('a split at EVERY offset of a two-event stream still yields both', async ()
 test('a CRLF split between the \\r and the \\n does not merge two events', async () => {
   // Treating a dangling `\r` as a line end merges the events when the next
   // chunk opens with `\n`.
-  const whole = `data: {"choices":[{"delta":{"content":"a"}}]}\r\n\r\ndata: {"choices":[{"delta":{"content":"b"}}]}\r\n\r\n`;
+  const whole = `data: {"choices":[{"delta":{"content":"a"}}]}\r\n\r\ndata: {"choices":[{"delta":{"content":"b"}}]}\r\n\r\n${DONE}`;
   const cut = whole.indexOf('\r\n\r\n') + 3; // between the second \r and its \n
   const res = await streamChat(chunkRunner([whole.slice(0, cut), whole.slice(cut)]), {
     model: 'm',
@@ -157,7 +163,7 @@ test('a multi-byte character split across chunks is not mojibake', async () => {
   // One TextDecoder for the whole stream, always with { stream: true }. A
   // per-chunk decoder emits U+FFFD for the half it sees — the classic bug that
   // only appears under load, when chunks get small.
-  const whole = frame('héllo — ok');
+  const whole = frame('héllo — ok') + DONE;
   const bytes = encoder.encode(whole);
   // Split inside the em-dash's UTF-8 sequence.
   const dash = whole.indexOf('—');
@@ -333,4 +339,28 @@ test('an abort is never retryable', async () => {
 
   const { nRouterTransportError } = require('../dist/errors');
   assert.equal(isRetryable(new nRouterTransportError('gave up', { cause: abort })), false);
+});
+
+// A stream that stops mid-answer without its sentinel is TRUNCATED, and the
+// request was billed. Returning the partial text as if it were whole is the
+// same silently-wrong-and-confident failure the buffered path refuses.
+test('a stream that ends without [DONE] is refused, not reported complete', async () => {
+  const res = await streamChat(chunkRunner([frame('half an ans')]), { model: 'm', prompt: 'hi' });
+  await assert.rejects(
+    async () => {
+      for await (const _ of res.chunks) { /* drain */ }
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof nRouterError, 'a typed error');
+      assert.equal(isRetryable(err), true, 'the same request can succeed next time');
+      assert.match((err as Error).message, /\[DONE\]/);
+      return true;
+    },
+  );
+});
+
+test('...and text() re-throws rather than handing back the truncated answer', async () => {
+  const res = await streamChat(chunkRunner([frame('half an ans')]), { model: 'm', prompt: 'hi' });
+  await assert.rejects(async () => { for await (const _ of res.chunks) { /* drain */ } });
+  await assert.rejects(() => res.text(), /\[DONE\]/);
 });

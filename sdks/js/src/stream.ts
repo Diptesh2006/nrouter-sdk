@@ -12,7 +12,7 @@
 
 import type { NRouterCallOptions, ResponseMeta } from './types';
 import { metaFromHeaders , type HeaderSource } from './meta';
-import { createError, type nRouterError } from './errors';
+import { createError, type nRouterError , isSpecErrorCode , transportError } from './errors';
 import { buildChatBody } from './options';
 import { buildSamplingParams } from './sampling';
 
@@ -311,6 +311,24 @@ async function* readFrames(
       state.text += outcome.chunk.delta;
       yield outcome.chunk;
     }
+
+    // FELL OFF THE END WITHOUT `data: [DONE]`.
+    //
+    // Every `return` above is a sentinel we actually saw. Reaching here means
+    // the connection closed cleanly mid-answer — a dropped upstream, a proxy
+    // idle timeout, a killed worker. The frames already yielded are real and
+    // the request was BILLED, so the tokens are not the problem; reporting the
+    // result as COMPLETE is. `text()` would hand back a truncated answer that
+    // is indistinguishable from a short one, which is the same
+    // silently-wrong-and-confident failure the buffered path refuses.
+    //
+    // Transport, not configuration: the identical request can succeed next
+    // time, so this one IS retryable.
+    throw transportError(
+      'the stream ended without its [DONE] sentinel; the answer is truncated and ' +
+        'the request was billed. Retrying is safe.',
+      { status, meta },
+    );
   } catch (err) {
     // An abort is recorded like any other terminal condition so a later
     // `text()` cannot return the partial answer as if it were whole — but it
@@ -469,12 +487,17 @@ function errorFromValue(
 
   if (typeof inner === 'object' && inner !== null) {
     const err = inner as Record<string, unknown>;
-    const code =
-      typeof err.code === 'string'
-        ? err.code
-        : typeof err.type === 'string'
-          ? err.type
-          : null;
+    // `type` is promoted ONLY when it is a stable spec code. The gateway's
+    // ordinary error path sends type: "gateway_error", and promoting that
+    // hands classifyErrorClass an UNKNOWN code — which takes precedence over
+    // the status fallback, so every 400/401/402/429/503 on the streaming path
+    // collapsed into a generic error. The guardrail cut is the one frame that
+    // really does carry a spec code in `type`.
+    const code = typeof err.code === 'string' && err.code
+      ? err.code
+      : isSpecErrorCode(err.type)
+        ? err.type
+        : null;
     const message =
       typeof err.message === 'string' && err.message.trim() !== ''
         ? err.message

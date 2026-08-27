@@ -1,5 +1,8 @@
 package ai.nrouter.sdk
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -304,6 +307,54 @@ class ContractTest {
         val rendered = NRouter(apiKey = "sk-nrouter-SECRET123").toString()
         assertFalse(rendered.contains("SECRET123"), "the api key leaked: $rendered")
         assertTrue(rendered.contains("sk-nrouter-...T123"), rendered)
+    }
+
+    @Test
+    fun `cancelling the caller aborts the in-flight request`() = runBlocking {
+        // A cancelled coroutine does not interrupt a blocking OkHttp read, so
+        // on Android a ViewModel that goes away mid-inference would leave the
+        // request running — and a running inference is a BILLED one.
+        //
+        // Ask OKHTTP whether the call was cancelled. Two weaker observables
+        // were tried and both were vacuous: `job.isCancelled` is true after
+        // `job.cancel()` no matter what the SDK did, and timing `job.join()`
+        // measures coroutine cancellation, which returns immediately without
+        // waiting for the socket. Only the client's own event says the request
+        // actually stopped.
+        val cancelled = java.util.concurrent.CountDownLatch(1)
+        val listener = object : okhttp3.EventListener() {
+            override fun canceled(call: okhttp3.Call) = cancelled.countDown()
+        }
+        val client = NRouter(
+            apiKey = "sk-nrouter-test",
+            baseURL = server.url("/v1").toString(),
+            http = okhttp3.OkHttpClient.Builder().eventListener(listener).build(),
+        )
+
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "application/json")
+                .setBody("{}")
+                // Headers arrive at once and the body streams after, which is
+                // the real shape: by cancel time the wait is over and the READ
+                // is what is still running.
+                .setBodyDelay(4, java.util.concurrent.TimeUnit.SECONDS),
+        )
+
+        // Dispatchers.Default: runBlocking's single thread would otherwise be
+        // held by the call, and the cancel could not be delivered.
+        val job = launch(Dispatchers.Default) {
+            runCatching { client.chatCompletions(JSONObject()) }
+        }
+        delay(500)                     // headers in, body streaming
+        job.cancel()
+        job.join()
+
+        assertTrue(
+            cancelled.await(5, java.util.concurrent.TimeUnit.SECONDS),
+            "OkHttp never cancelled the call — the request is still running and billing",
+        )
     }
 
     @Test

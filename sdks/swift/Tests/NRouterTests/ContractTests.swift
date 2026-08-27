@@ -267,6 +267,35 @@ final class ContractTests: XCTestCase {
         XCTAssertTrue(described.contains("sk-nrouter-...T123"), described)
     }
 
+    func testMultipartEscapesHostileFilenames() async throws {
+        // A Unix filename may contain a quote, and CR/LF would end the header
+        // line early — letting a chosen filename inject extra multipart parts.
+        StubProtocol.captured = nil
+        StubProtocol.response = (200, ["content-type": "application/json"], Data("{}".utf8))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(
+            apiKey: "sk-nrouter-test",
+            session: URLSession(configuration: config)
+        )
+
+        _ = try await client.audioTranscriptions(
+            file: Data("x".utf8),
+            fileName: "eeee\"\r\nContent-Disposition: form-data; name=\"injected\"\r\n\r\nowned\r\n--x.mp3",
+            fields: [:]
+        )
+
+        let body = String(
+            data: try XCTUnwrap(StubProtocol.capturedBody), encoding: .utf8
+        ) ?? ""
+        XCTAssertFalse(
+            body.contains("name=\"injected\""),
+            "a filename injected a multipart part: \(body)"
+        )
+        // The quote survives, escaped, rather than terminating the parameter.
+        XCTAssertTrue(body.contains("\\\""), body)
+    }
+
     func testBaseURLTrailingSlashIsNormalised() throws {
         let client = try NRouter(apiKey: "sk-nrouter-abc", baseURL: "https://api.nrouter.ai/v1/")
         XCTAssertEqual(client.baseURL, "https://api.nrouter.ai/v1")

@@ -151,6 +151,18 @@ public struct NRouter: Sendable {
         let boundary = boundary ?? "nrouter-\(UUID().uuidString)"
         var body = Data()
 
+        // A Unix filename may legally contain a quote, and CR/LF would end the
+        // header line early — letting a chosen filename inject extra multipart
+        // parts. Escape per RFC 2616 quoted-string and drop the line breaks
+        // outright, since neither can appear in a header value at all.
+        func quoted(_ value: String) -> String {
+            value
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "\r", with: "")
+                .replacingOccurrences(of: "\n", with: "")
+        }
+
         func append(_ text: String) {
             body.append(Data(text.utf8))
         }
@@ -158,13 +170,13 @@ public struct NRouter: Sendable {
         // Sorted so the body is deterministic; a dictionary's order is not.
         for key in fields.keys.sorted() {
             append("--\(boundary)\r\n")
-            append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n")
+            append("Content-Disposition: form-data; name=\"\(quoted(key))\"\r\n\r\n")
             append("\(fields[key]!)\r\n")
         }
         append("--\(boundary)\r\n")
         append(
-            "Content-Disposition: form-data; name=\"\(filePartName)\"; "
-                + "filename=\"\(fileName)\"\r\n"
+            "Content-Disposition: form-data; name=\"\(quoted(filePartName))\"; "
+                + "filename=\"\(quoted(fileName))\"\r\n"
         )
         append("Content-Type: application/octet-stream\r\n\r\n")
         body.append(file)

@@ -1,7 +1,8 @@
 package ai.nrouter.sdk
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -28,8 +29,10 @@ import org.json.JSONObject
  * println(result.meta.cost?.let { "cost $$it" } ?: "unpriced")
  * ```
  *
- * The suspending calls move to [Dispatchers.IO] themselves, so calling one from
- * a UI coroutine will not block the main thread.
+ * The suspending calls are non-blocking and CANCELLABLE: they use OkHttp's
+ * async API, so calling one from a UI coroutine never blocks the main thread,
+ * and cancelling that coroutine actually cancels the in-flight request rather
+ * than leaving a billed inference running.
  */
 public class NRouter @JvmOverloads constructor(
     apiKey: String? = null,
@@ -149,21 +152,15 @@ public class NRouter @JvmOverloads constructor(
     public suspend fun bytes(
         path: String,
         body: JSONObject? = null,
-    ): RawResponse = withContext(Dispatchers.IO) {
-        val builder = Request.Builder().url(url(path)).header("Authorization", "Bearer $apiKey")
+    ): RawResponse {
+        val builder = Request.Builder().url(url(path))
         val request = if (body == null) {
             builder.get().build()
         } else {
             builder.post(body.toString().toRequestBody(JSON)).build()
         }
 
-        val response = try {
-            http.newCall(request).execute()
-        } catch (e: Exception) {
-            throw NRouterError.Transport(e.message ?: "the request never reached nRouter")
-        }
-
-        response.use {
+        return runCall(request) {
             val status = it.code
             val meta = NRouterResponseMeta.fromLookup { name -> it.header(name) }
             val raw = it.body?.bytes() ?: ByteArray(0)
@@ -178,18 +175,60 @@ public class NRouter @JvmOverloads constructor(
 
     private fun url(path: String): String = "$baseURL/${path.trimStart('/')}"
 
-    private suspend fun send(request: Request): Response = withContext(Dispatchers.IO) {
+    /**
+     * Run one call and read it, cancelling the call if the caller is cancelled.
+     *
+     * `withContext(Dispatchers.IO)` alone does NOT do this: a cancelled
+     * coroutine does not interrupt a blocking OkHttp read, so on Android a
+     * ViewModel that goes away mid-inference leaves the request running — and a
+     * running inference is a BILLED one.
+     *
+     * The body is read INSIDE the callback, on OkHttp's own dispatcher thread,
+     * so the continuation stays cancellable for the whole exchange rather than
+     * only while waiting for headers. That distinction is the entire point: a
+     * server sends headers promptly and streams the body afterwards, so by the
+     * time a caller gives up, the wait is over and the read is what is still
+     * running. `Call.cancel()` closes the stream and aborts it.
+     *
+     * `Job.invokeOnCompletion` is deliberately NOT used here — it fires when a
+     * job has finished, not when it starts cancelling, so it never runs while
+     * the read is still blocked. It was tried, and the request ran to
+     * completion anyway.
+     */
+    private suspend fun <T> runCall(
+        request: Request,
+        read: (okhttp3.Response) -> T,
+    ): T {
         val authed = request.newBuilder()
             .header("Authorization", "Bearer $apiKey")
             .build()
 
-        val response = try {
-            http.newCall(authed).execute()
-        } catch (e: Exception) {
-            throw NRouterError.Transport(e.message ?: "the request never reached nRouter")
-        }
+        return suspendCancellableCoroutine { continuation ->
+            val call = http.newCall(authed)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                    if (continuation.isCancelled) return
+                    continuation.resumeWithException(
+                        NRouterError.Transport(
+                            e.message ?: "the request never reached nRouter"
+                        )
+                    )
+                }
 
-        response.use {
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    try {
+                        continuation.resume(response.use(read))
+                    } catch (e: Throwable) {
+                        if (continuation.isCancelled) return
+                        continuation.resumeWithException(e)
+                    }
+                }
+            })
+        }
+    }
+
+    private suspend fun send(request: Request): Response = runCall(request) {
             val status = it.code
             val meta = NRouterResponseMeta.fromLookup { name -> it.header(name) }
             val contentType = it.header("content-type").orEmpty().lowercase()
@@ -223,7 +262,6 @@ public class NRouter @JvmOverloads constructor(
                 val parsed = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
                 throw NRouterError.fromCode(errorBody(status, parsed, meta))
             }
-        }
     }
 
     public companion object {

@@ -28,9 +28,11 @@ print(f"Cost: ${client.last_response.cost}")
 
 ### Other Branded SDKs
 
-Eight more branded packages, each pre-configured for nRouter. Every one of them
-resolves `NROUTER_API_KEY`, validates the `sk-nrouter-` prefix before any request, and
-points at `https://api.nrouter.ai/v1`:
+Eight more branded packages, each pre-configured for nRouter. Every one validates the
+`sk-nrouter-` prefix before any request and points at `https://api.nrouter.ai/v1`; all
+but Dart also resolve `NROUTER_API_KEY` (Dart requires an explicit key — `dart:io` does
+not exist in a Flutter web build, so an environment fallback would silently resolve to
+nothing):
 
 | Language | Install | Package | Typed errors | `x-nr-*` metadata |
 |----------|---------|---------|---|---|

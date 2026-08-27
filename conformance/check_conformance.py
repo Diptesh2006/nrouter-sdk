@@ -89,6 +89,20 @@ DELEGATES = {
     },
 }
 
+# An SDK that deliberately does NOT resolve the environment variable. Dart names
+# the constant so tooling and docs agree, but never reads it: `Platform.environment`
+# needs `dart:io`, which does not exist in a Flutter web build, and is empty on
+# mobile — a fallback that quietly resolves to nothing is worse than none.
+#
+# Listed here rather than silently passing on the constant's presence, because
+# "the string appears" was being read as "the behaviour exists". The reason is
+# recorded so this stays a decision instead of an oversight, and the gate now
+# reports it in its summary.
+NO_ENV_RESOLUTION = {
+    "dart": "requires an explicit key; dart:io is absent on Flutter web and "
+            "empty on mobile, so an env fallback would resolve to nothing",
+}
+
 # Spellings that must appear nowhere (Rule #35).
 #
 # Assembled from fragments rather than written literally, because
@@ -175,11 +189,10 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
                     f"{DELEGATES[sdk]['owner']}"
                 )
         else:
-            for label, needle in (
-                ("base URL", base_url),
-                ("env var", env_var),
-                ("key prefix", key_prefix),
-            ):
+            checks = [("base URL", base_url), ("key prefix", key_prefix)]
+            if sdk not in NO_ENV_RESOLUTION:
+                checks.append(("env var", env_var))
+            for label, needle in checks:
                 if needle not in blob:
                     failures.append(f"{sdk}: {label} {needle!r} appears nowhere")
 
@@ -360,6 +373,8 @@ def main() -> int:
     print(f"    error codes {len(spec['errors'])}")
     for sdk, why in WRAPPER_ONLY.items():
         print(f"    note: {sdk} checked for the connection contract only — {why}")
+    for sdk, why in NO_ENV_RESOLUTION.items():
+        print(f"    note: {sdk} does NOT resolve {spec['env_var']} — {why}")
     return 0
 
 

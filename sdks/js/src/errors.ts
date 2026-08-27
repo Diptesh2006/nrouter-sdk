@@ -592,3 +592,30 @@ export function withResponse(
 export function isSpecErrorCode(value: unknown): value is string {
   return typeof value === 'string' && value in ERROR_CLASS_BY_CODE;
 }
+
+/**
+ * A 2xx body that is really a refusal. Returns null for anything that could be
+ * a genuine response — see the SDK-026 note above for why this is conservative.
+ */
+export function errorEnvelopeOnSuccess(
+  decoded: unknown,
+): { code: string | null; message: string } | null {
+  if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) return null;
+  const body = decoded as Record<string, unknown>;
+
+  // Anything completion-shaped beside the error means this is a real response.
+  for (const key of ['choices', 'data', 'content', 'output', 'id', 'object', 'usage']) {
+    if (key in body) return null;
+  }
+
+  const node = body.error;
+  if (typeof node !== 'object' || node === null || Array.isArray(node)) return null;
+  const err = node as Record<string, unknown>;
+  const message = typeof err.message === 'string' ? err.message : null;
+  if (!message) return null;
+
+  // The gateway ships the stable code in `type` here, not `code` — the same
+  // asymmetry that made guardrail_blocked unreachable across these SDKs.
+  const raw = typeof err.code === 'string' ? err.code : typeof err.type === 'string' ? err.type : null;
+  return { code: raw, message };
+}

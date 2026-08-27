@@ -289,3 +289,32 @@ test('a text/plain error keeps its wording, so a permanent 502 stays permanent',
     },
   );
 });
+
+// A socket that dies AFTER the headers arrived: the request reached the
+// gateway and may have been billed, so the status and request id are the only
+// correlation the caller has. Letting the body read reject raw threw both away.
+test('a body-read failure keeps the status and request id', async () => {
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new Error('socket hang up'));
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json', 'x-nr-request-id': 'nrouter-cut' } },
+      ),
+  });
+  await assert.rejects(
+    () => client.nr.chat({ model: 'm', prompt: 'x' }),
+    (err: unknown) => {
+      const e = err as { status?: number | null; requestId?: string | null; message: string };
+      assert.equal(e.status, 200, 'the response DID arrive; status must not be null');
+      assert.equal(e.requestId, 'nrouter-cut', 'the request id must survive');
+      assert.match(e.message, /billed/);
+      return true;
+    },
+  );
+});

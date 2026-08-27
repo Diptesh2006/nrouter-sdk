@@ -39,7 +39,18 @@ SDK_SOURCES: dict[str, list[str]] = {
         "sdks/python/nroutersdk/_errors.py",
         "sdks/python/nroutersdk/_response.py",
     ],
-    "js": ["sdks/js/src/client.ts"],
+    # js was WRAPPER_ONLY until it grew a native surface: it now owns the 13
+    # headers, the 9 typed error classes and the status dispatch itself, so it
+    # is held to the same contract as every other native SDK.
+    "js": [
+        "sdks/js/src/client.ts",
+        # types.ts carries HEADER_NAMES; meta.ts carries the parse sites. The
+        # gate's declared-AND-used rule needs both files or every header reads
+        # as declared-but-never-parsed.
+        "sdks/js/src/types.ts",
+        "sdks/js/src/meta.ts",
+        "sdks/js/src/errors.ts",
+    ],
     "java": ["sdks/java/src/main/java/ai/nrouter/sdk/NRouter.java"],
     "kotlin": [
         "sdks/kotlin/src/main/kotlin/ai/nrouter/sdk/NRouter.kt",
@@ -75,7 +86,6 @@ SDK_SOURCES: dict[str, list[str]] = {
 # so the exemption is a decision rather than an oversight.
 WRAPPER_ONLY = {
     "java": "wraps com.openai:openai-java; transport and errors are the vendor's",
-    "js": "extends the openai package; transport and errors are the vendor's",
     "android": "delegates every wire concern to the shared sdks/kotlin artifact",
 }
 

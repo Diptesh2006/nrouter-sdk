@@ -30,6 +30,8 @@ import {
   parseErrorBody,
   parseRetryAfter,
   nRouterError,
+  createError,
+  errorEnvelopeOnSuccess,
 } from './errors';
 import type {
   ChatContentPart,
@@ -387,14 +389,16 @@ export class Multimodal {
 
     const body = jsonBody({
       ...(params.extra ?? {}),
-      model: params.model,
-      prompt: params.prompt,
-      n: params.n,
-      size: params.size,
-      quality: params.quality,
-      style: params.style,
-      response_format: params.response_format,
-      user: params.user,
+      ...defined({
+        model: params.model,
+        prompt: params.prompt,
+        n: params.n,
+        size: params.size,
+        quality: params.quality,
+        style: params.style,
+        response_format: params.response_format,
+        user: params.user,
+      }),
     });
 
     const raw = await this.send('POST', '/images/generations', body, options);
@@ -415,10 +419,12 @@ export class Multimodal {
 
     const body = jsonBody({
       ...(params.extra ?? {}),
-      model: params.model,
-      prompt: params.prompt,
-      seconds: params.seconds,
-      size: params.size,
+      ...defined({
+        model: params.model,
+        prompt: params.prompt,
+        seconds: params.seconds,
+        size: params.size,
+      }),
     });
 
     const raw = await this.send('POST', '/videos', body, options);
@@ -463,11 +469,13 @@ export class Multimodal {
 
     const body = jsonBody({
       ...(params.extra ?? {}),
-      model: params.model,
-      input: params.input as JsonValue,
-      dimensions: params.dimensions,
-      encoding_format: params.encoding_format,
-      user: params.user,
+      ...defined({
+        model: params.model,
+        input: params.input as JsonValue,
+        dimensions: params.dimensions,
+        encoding_format: params.encoding_format,
+        user: params.user,
+      }),
     });
 
     const raw = await this.send('POST', '/embeddings', body, options);
@@ -702,6 +710,24 @@ function requireJson(raw: RawResult, method: string): NRouterResponse<JsonObject
         'billed but the body did not arrive intact',
       { status: raw.status, meta: raw.meta, cause },
     );
+  }
+
+  // SDK-026 — A GUARDRAIL BLOCK ARRIVES AS HTTP 2xx, ON THIS PATH TOO.
+  //
+  // The gateway replaces a blocked payload with a top-level error envelope and
+  // KEEPS the upstream status, and post-call guardrails apply to every JSON
+  // modality — image, video, embeddings, transcription — not only to chat.
+  // `chat()` already refuses this; without the same check here `nr.media.*`
+  // resolved as SUCCESS and handed the caller the withheld document as if it
+  // were a result. One implementation, shared from errors.ts, so the two paths
+  // cannot drift.
+  const envelope = errorEnvelopeOnSuccess(parsed);
+  if (envelope) {
+    throw createError(envelope.message, {
+      code: envelope.code,
+      status: raw.status,
+      meta: raw.meta,
+    });
   }
 
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {

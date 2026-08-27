@@ -264,7 +264,24 @@ export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
       };
     }
 
-    const buffer = new Uint8Array(await res.arrayBuffer());
+    // The socket can fail AFTER the headers arrived. Letting arrayBuffer()
+    // reject raw here meant chat() reported a null status and null request id
+    // for a request that DID reach the gateway and may have been billed, and
+    // every nr.media.* helper leaked the bare Error because its own body-read
+    // catch is downstream of this point. Normalize here, where the status and
+    // headers are already in hand.
+    let buffer: Uint8Array;
+    try {
+      buffer = new Uint8Array(await res.arrayBuffer());
+    } catch (err) {
+      const meta = metaFromHeaders(res.headers);
+      const failure = transportError(
+        `the response body could not be read (${err instanceof Error ? err.message : String(err)}); ` +
+          'the request reached the gateway and may have been billed',
+        { status: res.status, meta, cause: err },
+      );
+      throw failure;
+    }
     return {
       status: res.status,
       headers: res.headers,

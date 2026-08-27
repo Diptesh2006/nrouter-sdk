@@ -16,10 +16,10 @@ preserved on the `main-legacy-pre-extraction` branch.
 This repo owns no `rules/`, but the workspace rules still bind. Claude Code loads
 them automatically; Codex, Gemini CLI and Antigravity do not and must open:
 
-- `/Users/gurukallam/nr/nrouter-brain/sdlc/rules/00-permanent-rules.md` —
+- `~/nr/nrouter-brain/sdlc/rules/00-permanent-rules.md` —
   especially **#14 the SDK is canonical**, #18 scratch, #20 direct-main,
   #28 never a $0 price, #35 brand.
-- `/Users/gurukallam/nr/nrouter-brain/nrouter-rust-gateway/rules/00-gateway-rules.md`
+- `~/nr/nrouter-brain/nrouter-rust-gateway/rules/00-gateway-rules.md`
   — the wire contract these SDKs implement. §4f gate 9 is why no provider
   credential or engine name may appear in a customer-visible surface.
 
@@ -71,3 +71,42 @@ not trust the README: `open-issues.csv` tracks what is unpublished.
 
 ⚠️ **This repo is public.** No credentials, no internal hostnames, no customer
 data, no engine name (Rule #29). A secret committed here is a secret disclosed.
+
+<!-- BEGIN GENERATED: permanent-rules-pointer (bootstrap.sh) -->
+
+## The Permanent Rules — for Codex, Gemini CLI and Antigravity
+
+You are reading this through `AGENTS.md` or `GEMINI.md`, which symlink to this file.
+Claude Code receives the rules below automatically via `@import`; **your harness does
+not**. They are mandatory all the same. Read the ones relevant to what you are about to
+touch BEFORE editing — each path is absolute and resolvable.
+
+**They are listed in READING ORDER, not alphabetically.** The first two are the
+authority and apply to everything; the rest are path-scoped detail that matters only
+when you touch that area. If you read nothing else, read the first one.
+
+- `~/nr/nrouter-brain/sdlc/rules/00-permanent-rules.md`
+- `~/nr/nrouter-brain/sdlc/rules/00-workspace-repos.md`
+- `~/nr/nrouter-brain/sdlc/rules/10-testing.md`
+- `~/nr/nrouter-brain/sdlc/rules/20-tdd-and-fleet.md`
+- `~/nr/nrouter-brain/nrouter-app/rules/02-multi-tenancy.md`
+- `~/nr/nrouter-brain/nrouter-app/rules/03-credit-safety.md`
+- `~/nr/nrouter-brain/nrouter-app/rules/05-frontend-standards.md`
+- `~/nr/nrouter-brain/nrouter-app/rules/07-stripe-integration.md`
+- `~/nr/nrouter-brain/nrouter-app/rules/11-api-routes.md`
+- `~/nr/nrouter-brain/nrouter-app/rules/13-enterprise-features.md`
+- `~/nr/nrouter-brain/nrouter-app/rules/17-virtual-keys.md`
+- `~/nr/nrouter-brain/nrouter-app/rules/30-email-templates.md`
+- `~/nr/nrouter-brain/nrouter-brand-marketing/rules/40-image-blog-standards.md`
+- `~/nr/nrouter-brain/nrouter-infra-cicd/rules/08-database.md`
+- `~/nr/nrouter-brain/nrouter-infra-cicd/rules/15-startup-health.md`
+- `~/nr/nrouter-brain/nrouter-infra-cicd/rules/16-infrastructure.md`
+- `~/nr/nrouter-brain/nrouter-manage-company/rules/19-soc2-new-feature-checklist.md`
+- `~/nr/nrouter-brain/nrouter-rust-gateway/rules/00-gateway-rules.md`
+- `~/nr/nrouter-brain/nrouter-rust-gateway/rules/01-provider-contract.md`
+
+`00-permanent-rules.md` is the authority: it carries the full prose of all
+the rules, the Rule→Skill map, and the enforcement map showing which rules
+auto-block versus which rely on discipline. Start there if you only read one.
+
+<!-- END GENERATED: permanent-rules-pointer -->

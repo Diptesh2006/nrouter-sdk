@@ -1,6 +1,7 @@
 package nrouter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -96,8 +97,14 @@ type Error struct {
 	LimitSource string
 	// AuthReason is the gateway's stable reason on a 401.
 	AuthReason string
-	// RetryAfter is the Retry-After header in whole seconds, when sent.
+	// RetryAfter is the Retry-After header in whole seconds, when sent. Both
+	// RFC 9110 forms are accepted: delta-seconds and an HTTP-date, which
+	// upstreams do send and the gateway relays unchanged.
 	RetryAfter *uint64
+	// Cause is the underlying error when one exists — a context cancellation,
+	// a DNS failure, a TLS handshake. Exposed through Unwrap so
+	// errors.Is(err, context.Canceled) keeps working through this type.
+	Cause error
 }
 
 func (e *Error) Error() string {
@@ -107,13 +114,33 @@ func (e *Error) Error() string {
 	return "nrouter: " + e.Message
 }
 
-// Unwrap exposes the sentinel so errors.Is works on the condition.
-func (e *Error) Unwrap() error { return sentinels[e.Kind] }
+// Unwrap exposes the sentinel so errors.Is matches on the condition, AND the
+// underlying cause so errors.Is(err, context.Canceled) still matches through
+// it. Multi-error Unwrap needs Go 1.20; go.mod declares 1.21.
+func (e *Error) Unwrap() []error {
+	sentinel := sentinels[e.Kind]
+	switch {
+	case sentinel != nil && e.Cause != nil:
+		return []error{sentinel, e.Cause}
+	case sentinel != nil:
+		return []error{sentinel}
+	case e.Cause != nil:
+		return []error{e.Cause}
+	}
+	return nil
+}
 
 // IsRetryable reports whether retrying the identical request could plausibly
 // succeed. Deliberately false for every 4xx naming a permanent condition: a
 // retry there burns quota and cannot change the answer.
+//
+// A cancelled or expired context is never retryable whatever its Kind — the
+// caller asked to stop, and a retry loop that ignores that spins past the
+// deadline it was told to respect.
 func (e *Error) IsRetryable() bool {
+	if errors.Is(e.Cause, context.Canceled) || errors.Is(e.Cause, context.DeadlineExceeded) {
+		return false
+	}
 	return e.Kind == KindRateLimit || e.Kind == KindService || e.Kind == KindTransport
 }
 
@@ -185,6 +212,20 @@ func classify(code, message string, status int) Kind {
 		return KindOther
 	case 429:
 		return KindRateLimit
+	case 502, 504:
+		// The gateway's ORDINARY upstream-failure status. GatewayError maps
+		// Upstream, UpstreamService, Sandbox and SandboxError to 502
+		// (src/errors.rs), every one of them transient, and leaving them
+		// KindOther made a provider blip non-retryable.
+		//
+		// UpstreamBodyTooLarge shares that 502 and is NOT transient: the same
+		// request produces the same oversized response forever. Its customer
+		// message is fixed — "the upstream response was too large to process"
+		// — so it is the one 502 that stays KindOther.
+		if strings.Contains(lower, "too large") {
+			return KindOther
+		}
+		return KindService
 	case 503:
 		return KindService
 	}

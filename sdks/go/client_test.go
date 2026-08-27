@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testKey = KeyPrefix + "test0000000000000abcd"
@@ -474,3 +475,194 @@ func TestTransportFailureIsTypedAndRetryable(t *testing.T) {
 		t.Fatal("a transport failure is retryable")
 	}
 }
+
+// --- regressions from the gpt-5.6-sol review --------------------------------
+
+// A pointer receiver puts String/GoString in *Client's method set only, so
+// formatting a dereferenced Client falls back to reflection over unexported
+// fields and prints the whole key. The original test only covered the pointer.
+func TestClientValueAlsoNeverPrintsTheKey(t *testing.T) {
+	c, err := New(testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := *c
+	type embedder struct{ Client }
+	for name, subject := range map[string]any{
+		"dereferenced": value,
+		"embedded":     embedder{Client: value},
+	} {
+		for _, format := range []string{"%v", "%s", "%+v", "%#v"} {
+			rendered := fmt.Sprintf(format, subject)
+			if strings.Contains(rendered, testKey) {
+				t.Fatalf("%s of a %s Client leaked the api key: %s", format, name, rendered)
+			}
+		}
+	}
+}
+
+// The gateway maps Upstream, UpstreamService, Sandbox and SandboxError to 502
+// (src/errors.rs) with no code, and every one of them is transient.
+func TestCodeless502IsATransientServiceFailure(t *testing.T) {
+	c := newTestClient(t, jsonHandler(502, nil, map[string]any{
+		"error": map[string]any{"type": "gateway_error", "message": "upstream service failed"},
+	}))
+	_, err := c.Models(context.Background())
+	var e *Error
+	if !errors.As(err, &e) || e.Kind != KindService {
+		t.Fatalf("got %#v; want KindService", err)
+	}
+	if !e.IsRetryable() {
+		t.Fatal("a transient upstream failure must be retryable")
+	}
+}
+
+// UpstreamBodyTooLarge shares that 502 and is deterministic: the identical
+// request produces the identical oversized response forever.
+func TestOversized502IsNotRetryable(t *testing.T) {
+	c := newTestClient(t, jsonHandler(502, nil, map[string]any{
+		"error": map[string]any{"message": "the upstream response was too large to process"},
+	}))
+	_, err := c.Models(context.Background())
+	var e *Error
+	if !errors.As(err, &e) {
+		t.Fatalf("got %#v", err)
+	}
+	if e.Kind != KindOther || e.IsRetryable() {
+		t.Fatalf("an oversized upstream response must not be retryable; got %s", e.Kind)
+	}
+}
+
+func TestContextCancellationIsPreservedAndNotRetryable(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
+
+	_, err := c.Models(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("errors.Is(err, context.Canceled) was false for %#v", err)
+	}
+	var e *Error
+	if !errors.As(err, &e) {
+		t.Fatalf("got %#v; want *Error", err)
+	}
+	if e.IsRetryable() {
+		t.Fatal("the caller asked to stop; a retry loop must not treat that as try-again")
+	}
+	// The sentinel still matches, so existing switches keep working.
+	if !errors.Is(err, ErrTransport) {
+		t.Fatal("the transport sentinel must still match")
+	}
+}
+
+// Without the read cap, a multi-megabyte error body is parsed whole and its
+// message is handed to the caller verbatim.
+func TestOversizedErrorBodyIsBoundedWhileReading(t *testing.T) {
+	huge := strings.Repeat("A", 3<<20)
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte(`{"error":{"message":"` + huge + `"}}`))
+	})
+	_, err := c.Models(context.Background())
+	var e *Error
+	if !errors.As(err, &e) {
+		t.Fatalf("got %#v", err)
+	}
+	if len(e.Message) > maxErrorBody {
+		t.Fatalf("an unbounded error body reached the caller: %d bytes", len(e.Message))
+	}
+	if e.Status != 500 {
+		t.Fatalf("status lost while truncating: %d", e.Status)
+	}
+}
+
+// The request reached the gateway and may have been billed; the identifiers
+// belong on the struct, not buried in a message string.
+func TestBodyReadFailureKeepsTheRequestID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("test server does not support hijacking")
+			return
+		}
+		conn, buf, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		// Promise 500 bytes, send 5, then drop the connection.
+		_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" +
+			"x-nr-request-id: nrouter-truncated\r\nContent-Length: 500\r\n\r\nabcde")
+		_ = buf.Flush()
+		_ = conn.Close()
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := New(testKey, WithBaseURL(srv.URL), WithHTTPClient(srv.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Models(context.Background())
+	var e *Error
+	if !errors.As(err, &e) || e.Kind != KindTransport {
+		t.Fatalf("got %#v; want a transport failure", err)
+	}
+	if e.RequestID != "nrouter-truncated" {
+		t.Fatalf("the request id must survive a body-read failure; got %q", e.RequestID)
+	}
+}
+
+func TestParseRetryAfterAcceptsBothRFC9110Forms(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		raw  string
+		want *uint64
+	}{
+		{"absent", "", nil},
+		{"delta seconds", "30", ptr(uint64(30))},
+		{"delta seconds padded", "  45  ", ptr(uint64(45))},
+		{"http date in the future", now.Add(90 * time.Second).Format(http.TimeFormat), ptr(uint64(90))},
+		{"http date in the past means now", now.Add(-time.Hour).Format(http.TimeFormat), ptr(uint64(0))},
+		{"garbage", "soon-ish", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseRetryAfter(tc.raw, now)
+			switch {
+			case tc.want == nil && got != nil:
+				t.Fatalf("want nil, got %d", *got)
+			case tc.want != nil && got == nil:
+				t.Fatalf("want %d, got nil", *tc.want)
+			case tc.want != nil && *got != *tc.want:
+				t.Fatalf("want %d, got %d", *tc.want, *got)
+			}
+		})
+	}
+}
+
+func TestRetryAfterHTTPDateReachesTheError(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", time.Now().Add(60*time.Second).UTC().Format(http.TimeFormat))
+		jsonHandler(429, nil, map[string]any{
+			"error": map[string]any{"code": "rate_limit_exceeded", "message": "slow"},
+		})(w, r)
+	})
+	_, err := c.Models(context.Background())
+	var e *Error
+	if !errors.As(err, &e) {
+		t.Fatalf("got %#v", err)
+	}
+	if e.RetryAfter == nil {
+		t.Fatal("an HTTP-date Retry-After must be parsed, not silently dropped")
+	}
+	// Second-resolution formatting can shave one second off.
+	if *e.RetryAfter < 58 || *e.RetryAfter > 60 {
+		t.Fatalf("RetryAfter was %d, want ~60", *e.RetryAfter)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

@@ -35,6 +35,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -127,7 +128,12 @@ func (c *Client) BaseURL() string { return c.baseURL }
 
 // String redacts the key: enough to tell two keys apart in a log, never
 // enough to use — the same shape the dashboard shows.
-func (c *Client) String() string {
+//
+// VALUE receiver, deliberately. A pointer receiver puts these methods in
+// *Client's method set ONLY, so `fmt.Printf("%+v", *client)` — or a Client
+// embedded by value — falls back to reflection and prints the whole key. A
+// value receiver is in both method sets and covers both forms.
+func (c Client) String() string {
 	tail := c.apiKey
 	if len(tail) > 4 {
 		tail = tail[len(tail)-4:]
@@ -136,7 +142,7 @@ func (c *Client) String() string {
 }
 
 // GoString keeps %#v redacted too; %v and %#v take different paths in fmt.
-func (c *Client) GoString() string { return c.String() }
+func (c Client) GoString() string { return c.String() }
 
 // ChatCompletions posts to /chat/completions.
 func (c *Client) ChatCompletions(ctx context.Context, body any) (*Response[map[string]any], error) {
@@ -296,14 +302,43 @@ func (c *Client) request(ctx context.Context, method, path string, body io.Reade
 func (c *Client) do(req *http.Request) (*http.Response, ResponseMeta, []byte, error) {
 	res, err := c.http.Do(req)
 	if err != nil {
-		return nil, ResponseMeta{}, nil, transportErr("%v", err)
+		// A cancelled or expired context is the CALLER's decision, not a
+		// network fault. Keeping the cause makes
+		// errors.Is(err, context.Canceled) true through this type, so a retry
+		// loop cannot mistake "stop" for "try again".
+		//
+		// No req.Context().Err() branch: MEASURED, http.Client.Do already
+		// returns a *url.Error that wraps the context error, so consulting the
+		// context again is dead code. A mutation test proved it — deleting the
+		// branch changed no result, which is how it was found.
+		failure := transportErr("%v", err)
+		failure.Cause = err
+		return nil, ResponseMeta{}, nil, failure
 	}
 	defer res.Body.Close()
 
 	meta := MetaFromLookup(func(name string) string { return res.Header.Get(name) })
-	raw, err := io.ReadAll(res.Body)
+
+	// Cap a FAILED response WHILE reading it, not after. An upstream returning
+	// a megabyte of HTML — or streaming indefinitely — on a 502 should not be
+	// pulled into memory whole just to produce a message nobody reads past the
+	// first line. A success is read in full: that is the payload the caller
+	// paid for.
+	body := io.Reader(res.Body)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		body = io.LimitReader(res.Body, maxErrorBody)
+	}
+	raw, err := io.ReadAll(body)
 	if err != nil {
-		return nil, meta, nil, transportErr("could not read the response body (request %s): %v", meta.RequestID, err)
+		failure := transportErr("could not read the response body: %v", err)
+		failure.Cause = err
+		// The request DID reach the gateway and may have been billed. Carry
+		// the identifiers on the struct so a caller can correlate it, rather
+		// than burying the request id in a message string.
+		failure.RequestID = meta.RequestID
+		failure.LimitSource = meta.LimitSource
+		failure.AuthReason = meta.AuthReason
+		return nil, meta, nil, failure
 	}
 	return res, meta, raw, nil
 }
@@ -347,9 +382,6 @@ func (c *Client) sendJSON(req *http.Request) (*Response[map[string]any], error) 
 // too, so a proxy that reshapes the envelope does not turn a typed error into
 // a generic one.
 func gatewayError(res *http.Response, meta ResponseMeta, raw []byte) *Error {
-	if len(raw) > maxErrorBody {
-		raw = raw[:maxErrorBody]
-	}
 	var envelope map[string]any
 	_ = json.Unmarshal(raw, &envelope)
 
@@ -372,10 +404,34 @@ func gatewayError(res *http.Response, meta ResponseMeta, raw []byte) *Error {
 		LimitSource: meta.LimitSource,
 		AuthReason:  meta.AuthReason,
 	}
-	if after := strings.TrimSpace(res.Header.Get("Retry-After")); after != "" {
-		if seconds, parseErr := strconv.ParseUint(after, 10, 64); parseErr == nil {
-			err.RetryAfter = &seconds
-		}
-	}
+	err.RetryAfter = parseRetryAfter(res.Header.Get("Retry-After"), time.Now())
 	return err
+}
+
+// parseRetryAfter accepts BOTH RFC 9110 forms. Upstreams send the HTTP-date
+// form and the gateway relays it unchanged, so a delta-seconds-only parse
+// silently yields nil and the caller retries before the provider said to.
+//
+// `now` is a parameter so the date branch is testable without a clock.
+func parseRetryAfter(raw string, now time.Time) *uint64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if seconds, err := strconv.ParseUint(raw, 10, 64); err == nil {
+		return &seconds
+	}
+	when, err := http.ParseTime(raw)
+	if err != nil {
+		return nil
+	}
+	// A date already in the past means retry now, which is 0 — never a
+	// negative wait wrapped around into an enormous unsigned one.
+	delta := when.Sub(now)
+	if delta <= 0 {
+		zero := uint64(0)
+		return &zero
+	}
+	seconds := uint64(delta.Round(time.Second) / time.Second)
+	return &seconds
 }

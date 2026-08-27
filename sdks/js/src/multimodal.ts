@@ -240,7 +240,20 @@ export interface TranscriptionParams {
  * input to declare — omitting it here rather than accepting and dropping it
  * is the difference between a compile error and a silently ignored argument.
  */
-export type TranslationParams = Omit<TranscriptionParams, 'language'>;
+/**
+ * Translation takes the transcription params MINUS the two that endpoint does
+ * not accept.
+ *
+ * `language` is absent because the output is always English. `timestamp
+ * Granularities` is absent because the translations wire accepts only file,
+ * model, prompt, response_format and temperature — offering it here let a
+ * caller pass an option that was either rejected outright or silently ignored,
+ * which is worse: word timings that never arrive and no error saying why.
+ */
+export type TranslationParams = Omit<
+  TranscriptionParams,
+  'language' | 'timestampGranularities'
+>;
 
 /**
  * A transcription result, discriminated by what actually came back.
@@ -517,7 +530,12 @@ export class Multimodal {
       if (MULTIPART_RESERVED_FIELDS.has(name)) continue;
       fields.push({ name, value: String(value) });
     }
-    for (const granularity of params.timestampGranularities ?? []) {
+    // Transcription only. `params` is the union, so a translation cannot carry
+    // these — but reading them off the union would silently start emitting
+    // them again the day the type changes.
+    const granularities =
+      'timestampGranularities' in params ? (params.timestampGranularities ?? []) : [];
+    for (const granularity of granularities) {
       // Repeated field, not a comma-joined one: the provider reads
       // `timestamp_granularities[]` as a list and a joined string matches no
       // enum value, so it is dropped and word timings never appear.

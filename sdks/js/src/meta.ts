@@ -131,7 +131,15 @@ function money(raw: string | null | undefined): number | null {
   if (value === null) return null;
   if (!UNSIGNED_DECIMAL.test(value)) return null;
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  // UNDERFLOW IS NOT ZERO. `1e-999` is syntactically a positive decimal and
+  // Number() collapses it to 0 — paired with `x-nr-cost-status: exact` that
+  // reports a FREE request, which is the one thing this whole function exists
+  // to prevent (Rule #28). A real zero is written "0", "0.0", "0e0" — its
+  // significand is zero. A zero whose significand was NOT is a value we could
+  // not represent, and "could not represent" is unknown, not free.
+  if (parsed === 0 && /[1-9]/.test(value)) return null;
+  return parsed;
 }
 
 /**

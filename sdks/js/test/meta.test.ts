@@ -220,3 +220,24 @@ test('metaFromLookup is the primitive metaFromHeaders is written in terms of', (
 test('a response with no x-nr-* headers at all equals EMPTY_META', () => {
   assert.deepEqual(metaFromHeaders({ 'content-type': 'application/json' }), EMPTY_META);
 });
+
+// UNDERFLOW IS NOT ZERO. `1e-999` is a syntactically valid positive decimal
+// that Number() collapses to 0; paired with `exact` that reports a FREE
+// request, which is the one thing this module exists to prevent (Rule #28).
+test('a cost that underflows to zero is unknown, not free', () => {
+  for (const raw of ['1e-999', '0.' + '0'.repeat(400) + '1']) {
+    const meta = metaFromLookup((n) =>
+      n === 'x-nr-request-cost' ? raw : n === 'x-nr-cost-status' ? 'exact' : null,
+    );
+    assert.equal(meta.cost, null, `underflowed value reported as a cost: ${raw}`);
+    assert.equal(isPriced(meta), false, `underflowed value reported as priced: ${raw}`);
+  }
+  // ...and a genuine zero still parses. The guard rejects values we cannot
+  // represent, not small ones.
+  for (const raw of ['0', '0.0', '0e0', '0.00000001']) {
+    const meta = metaFromLookup((n) =>
+      n === 'x-nr-request-cost' ? raw : n === 'x-nr-cost-status' ? 'exact' : null,
+    );
+    assert.equal(typeof meta.cost, 'number', `a real value was rejected: ${raw}`);
+  }
+});

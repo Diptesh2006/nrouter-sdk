@@ -34,16 +34,32 @@ but Dart also resolve `NROUTER_API_KEY` (Dart requires an explicit key — `dart
 not exist in a Flutter web build, so an environment fallback would silently resolve to
 nothing):
 
-| Language | Install | Package | Typed errors | `x-nr-*` metadata |
-|----------|---------|---------|---|---|
-| **TypeScript / JS** | `npm install @nrouter/sdk` | [`sdks/js/`](sdks/js/) | vendor SDK's | via `.asResponse()` |
-| **Java** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) | vendor SDK's | via an OkHttp interceptor |
-| **Kotlin** | Maven `ai.nrouter:nrouter-sdk-kotlin` | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
-| **Android** | Maven `ai.nrouter:nrouter-sdk-android` | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
-| **Swift** | SwiftPM `nrouter-sdk-swift` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
-| **Rust** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
-| **Dart / Flutter** | `dart pub add nrouter` | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
-| **R** | `install.packages("nrouter", repos = "https://nrouterai.r-universe.dev")` | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
+> **Published status is a fact, not an intention.** Only the packages marked
+> PUBLISHED below resolve today (checked 2026-08-26). The rest are complete and
+> tested in this repo but not yet on their registry, so their install command
+> will fail — build from source until each is released. Each SDK's
+> `PUBLISHING.md` has the steps; the backlog is [`open-issues.csv`](open-issues.csv).
+
+| Language | Install | Registry status | Package | Typed errors | `x-nr-*` metadata |
+|----------|---------|---|---------|---|---|
+| **TypeScript / JS** | `npm install @nrouter/sdk` | ⛔ not published | [`sdks/js/`](sdks/js/) | vendor SDK's | via `.asResponse()` |
+| **Java** | Maven `ai.nrouter:nrouter-sdk` | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | vendor SDK's | via an OkHttp interceptor |
+| **Kotlin** | Maven `ai.nrouter:nrouter-sdk-kotlin` | ⛔ not published | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
+| **Android** | Maven `ai.nrouter:nrouter-sdk-android` | ⛔ not published | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
+| **Swift** | SwiftPM `nrouter-sdk-swift` | ⛔ not published (repo not created) | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
+| **Rust** | `cargo add nrouter` | ⛔ not published | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
+| **Dart / Flutter** | `dart pub add nrouter` | ⛔ not published | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
+| **R** | `install.packages("nrouter", repos = "https://nrouterai.r-universe.dev")` | ⛔ not published | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
+
+Verify any row rather than trusting it:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://pypi.org/pypi/nrouter-sdk/json
+curl -s -o /dev/null -w "%{http_code}\n" https://registry.npmjs.org/@nrouter%2Fsdk
+curl -s -o /dev/null -w "%{http_code}\n" https://crates.io/api/v1/crates/nrouter
+curl -s -o /dev/null -w "%{http_code}\n" https://pub.dev/api/packages/nrouter
+curl -s https://repo1.maven.org/maven2/ai/nrouter/ | grep -oE 'href="[^"]+"'
+```
 
 The JS and Java SDKs extend a vendor OpenAI client, which owns the transport and its own
 error types; the rest are native clients that map the gateway's nine stable error codes to

@@ -296,6 +296,51 @@ final class ContractTests: XCTestCase {
         XCTAssertTrue(body.contains("\\\""), body)
     }
 
+    func testANonJSONOrMalformedTwoHundredIsAFailure() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(
+            apiKey: "sk-nrouter-test",
+            session: URLSession(configuration: config)
+        )
+
+        // /v1/audio/speech returns audio. Parsed as JSON it becomes [:] — the
+        // caller is billed and receives nothing while the call reports 200.
+        StubProtocol.response = (200, ["content-type": "audio/mpeg"], Data("ID3binary".utf8))
+        do {
+            _ = try await client.post("/audio/speech", [:])
+            XCTFail("a non-JSON 2xx reported success")
+        } catch let error as NRouterError {
+            XCTAssertTrue(error.errorDescription?.contains("bytes(_:_:)") == true,
+                          error.errorDescription ?? "")
+        }
+
+        // Truncated mid-stream, on a request that WAS billed.
+        StubProtocol.response = (
+            200, ["content-type": "application/json"], Data(#"{"choices":[{"#.utf8)
+        )
+        do {
+            _ = try await client.chatCompletions([:])
+            XCTFail("a malformed JSON 2xx reported success")
+        } catch let error as NRouterError {
+            XCTAssertTrue(error.errorDescription?.contains("billed") == true,
+                          error.errorDescription ?? "")
+        }
+    }
+
+    func testBytesReturnsTheRawBodyANonJSONEndpointSent() async throws {
+        StubProtocol.response = (200, ["content-type": "audio/mpeg"], Data("binary-audio".utf8))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(
+            apiKey: "sk-nrouter-test",
+            session: URLSession(configuration: config)
+        )
+        let raw = try await client.bytes("/audio/speech", [:])
+        XCTAssertEqual(String(data: raw.data, encoding: .utf8), "binary-audio")
+        XCTAssertEqual(raw.statusCode, 200)
+    }
+
     func testBaseURLTrailingSlashIsNormalised() throws {
         let client = try NRouter(apiKey: "sk-nrouter-abc", baseURL: "https://api.nrouter.ai/v1/")
         XCTAssertEqual(client.baseURL, "https://api.nrouter.ai/v1")

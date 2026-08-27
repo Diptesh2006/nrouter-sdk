@@ -266,6 +266,38 @@ void main() {
       );
     });
 
+    test('audio transcriptions sends multipart with a named file part',
+        () async {
+      // The gateway requires multipart/form-data with a binary `file` here;
+      // sent as JSON the endpoint is unreachable.
+      late http.BaseRequest seen;
+      String body = '';
+      final mock = MockClient.streaming((request, bodyStream) async {
+        seen = request;
+        body = String.fromCharCodes(await bodyStream.toBytes());
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('{"text":"hello"}')),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+      final result = await client.audioTranscriptions(
+        utf8.encode('fake-audio'),
+        'speech.mp3',
+        fields: {'model': 'whisper-1'},
+      );
+
+      expect(seen.headers['content-type'], startsWith('multipart/form-data'));
+      expect(body, contains('name="file"'));
+      // The extension is load-bearing: providers pick their decoder from it.
+      expect(body, contains('speech.mp3'));
+      expect(body, contains('name="model"'));
+      expect(body, contains('fake-audio'));
+      expect(result.body['text'], 'hello');
+    });
+
     test('a gateway error becomes its typed exception with metadata', () async {
       final mock = MockClient((request) async => http.Response(
             jsonEncode({

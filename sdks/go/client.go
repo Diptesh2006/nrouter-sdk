@@ -229,9 +229,20 @@ func (c *Client) Get(ctx context.Context, path string) (*Response[map[string]any
 // Multipart sends a multipart/form-data POST. The gateway requires a binary
 // `file` part on the audio endpoints, so the JSON helpers cannot reach them.
 func (c *Client) Multipart(ctx context.Context, path string, file []byte, fileName string, fields map[string]string) (*Response[map[string]any], error) {
+	// Go's multipart writer escapes quotes and backslashes in a
+	// Content-Disposition parameter but NOT line breaks, so a CR or LF in a
+	// filename or field name terminates the header and injects whatever
+	// follows as further MIME headers. Filenames routinely come from user
+	// uploads. Refuse before encoding anything.
+	if err := rejectHeaderInjection("file name", fileName); err != nil {
+		return nil, err
+	}
 	var buf bytes.Buffer
 	form := multipart.NewWriter(&buf)
 	for key, value := range fields {
+		if err := rejectHeaderInjection("form field name", key); err != nil {
+			return nil, err
+		}
 		if err := form.WriteField(key, value); err != nil {
 			return nil, configErr("could not encode form field %q: %v", key, err)
 		}
@@ -330,14 +341,11 @@ func (c *Client) do(req *http.Request) (*http.Response, ResponseMeta, []byte, er
 	}
 	raw, err := io.ReadAll(body)
 	if err != nil {
-		failure := transportErr("could not read the response body: %v", err)
-		failure.Cause = err
 		// The request DID reach the gateway and may have been billed. Carry
-		// the identifiers on the struct so a caller can correlate it, rather
-		// than burying the request id in a message string.
-		failure.RequestID = meta.RequestID
-		failure.LimitSource = meta.LimitSource
-		failure.AuthReason = meta.AuthReason
+		// the response context on the struct so a caller can correlate it,
+		// rather than burying the request id in a message string.
+		failure := transportErr("could not read the response body: %v", err).withResponse(res, meta)
+		failure.Cause = err
 		return nil, meta, nil, failure
 	}
 	return res, meta, raw, nil
@@ -357,22 +365,28 @@ func (c *Client) sendJSON(req *http.Request) (*Response[map[string]any], error) 
 	// Parsing it as JSON yields an empty object, so the caller pays and
 	// receives nothing while the call reports success. Refuse loudly and name
 	// the method that can actually return it.
+	//
+	// KindConfiguration, NOT KindTransport. The wrong METHOD was called for
+	// this endpoint, and no amount of retrying changes that — but every
+	// attempt is billed again. A generic `if err.IsRetryable() { retry }` loop
+	// around a streaming call would spend real credits in a tight loop.
 	contentType := strings.ToLower(res.Header.Get("Content-Type"))
 	if !strings.Contains(contentType, "json") {
-		return nil, transportErr(
+		return nil, configErr(
 			"gateway returned %d with content-type %q, which is not JSON; use Bytes() for "+
 				"binary or streaming endpoints (/audio/speech, /videos/{id}/content, or "+
 				"\"stream\": true) — the JSON helpers would report success with an empty body",
-			res.StatusCode, contentType)
+			res.StatusCode, contentType).withResponse(res, meta)
 	}
 
 	// A 2xx whose JSON does not parse is not an empty response — it is a
-	// truncated or corrupted one, for a request that was billed.
+	// truncated or corrupted one, for a request that was billed. This one IS
+	// transient: the same request can return an intact body next time.
 	var decoded map[string]any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, transportErr(
 			"gateway returned %d with unparseable JSON (%v); the request was billed but the "+
-				"body did not arrive intact", res.StatusCode, err)
+				"body did not arrive intact", res.StatusCode, err).withResponse(res, meta)
 	}
 	return &Response[map[string]any]{Body: decoded, Meta: meta}, nil
 }
@@ -434,4 +448,27 @@ func parseRetryAfter(raw string, now time.Time) *uint64 {
 	}
 	seconds := uint64(delta.Round(time.Second) / time.Second)
 	return &seconds
+}
+
+// withResponse stamps what the response already told us onto a failure raised
+// AFTER the headers arrived. Without it Status stays 0 — documented as "never
+// reached the gateway" — on a request that did reach it and may have been
+// billed, and the request id survives only inside a message string.
+func (e *Error) withResponse(res *http.Response, meta ResponseMeta) *Error {
+	if res != nil {
+		e.Status = res.StatusCode
+	}
+	e.RequestID = meta.RequestID
+	e.LimitSource = meta.LimitSource
+	e.AuthReason = meta.AuthReason
+	return e
+}
+
+// rejectHeaderInjection refuses a value that would break out of the MIME
+// header it is about to be written into.
+func rejectHeaderInjection(label, value string) error {
+	if strings.ContainsAny(value, "\r\n") {
+		return configErr("%s must not contain a carriage return or line feed: %q", label, value)
+	}
+	return nil
 }

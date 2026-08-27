@@ -384,11 +384,20 @@ func TestNonJSONSuccessIsRefusedNotSilentlyEmpty(t *testing.T) {
 	})
 	_, err := c.Post(context.Background(), "/audio/speech", map[string]any{"input": "hi"})
 	var e *Error
-	if !errors.As(err, &e) || e.Kind != KindTransport {
-		t.Fatalf("got %#v; want a transport refusal", err)
+	if !errors.As(err, &e) || e.Kind != KindConfiguration {
+		t.Fatalf("got %#v; want a KindConfiguration refusal", err)
 	}
 	if !strings.Contains(e.Message, "Bytes()") {
 		t.Fatalf("the refusal must name the method that works; got %q", e.Message)
+	}
+	// PERMANENT. Only calling a different method can succeed, and every
+	// attempt is billed — a generic `if IsRetryable { retry }` loop around a
+	// streaming call would spend real credits in a tight loop.
+	if e.IsRetryable() {
+		t.Fatal("calling the wrong method for an endpoint is never retryable")
+	}
+	if e.Status != 200 {
+		t.Fatalf("the response DID arrive; Status must not stay 0, got %d", e.Status)
 	}
 }
 
@@ -666,3 +675,71 @@ func TestRetryAfterHTTPDateReachesTheError(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// A failure raised after the headers arrived must carry what they said. Status
+// 0 is documented as "never reached the gateway"; leaving it there on a billed
+// response destroys the only correlation path the caller has.
+func TestPostHeaderFailuresKeepResponseContext(t *testing.T) {
+	cases := map[string]http.HandlerFunc{
+		"unparseable json": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("x-nr-request-id", "nrouter-ctx")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"truncated":`))
+		},
+		"non json": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "audio/mpeg")
+			w.Header().Set("x-nr-request-id", "nrouter-ctx")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte{0xFF})
+		},
+	}
+	for name, handler := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := newTestClient(t, handler)
+			_, err := c.Models(context.Background())
+			var e *Error
+			if !errors.As(err, &e) {
+				t.Fatalf("got %#v", err)
+			}
+			if e.RequestID != "nrouter-ctx" {
+				t.Fatalf("request id lost: %q", e.RequestID)
+			}
+			if e.Status != 200 {
+				t.Fatalf("status lost: %d", e.Status)
+			}
+		})
+	}
+}
+
+// Go's multipart writer escapes quotes and backslashes in a
+// Content-Disposition parameter but NOT line breaks, so a CR or LF terminates
+// the header and injects whatever follows. Filenames come from user uploads.
+func TestMultipartRefusesHeaderInjection(t *testing.T) {
+	reached := false
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		jsonHandler(200, nil, map[string]any{"ok": true})(w, r)
+	})
+	hostile := []struct {
+		name  string
+		file  string
+		field map[string]string
+	}{
+		{"filename CRLF", "a.mp3\r\nX-Injected: yes", map[string]string{"model": "whisper-1"}},
+		{"filename LF", "a.mp3\nX-Injected: yes", map[string]string{"model": "whisper-1"}},
+		{"field name CRLF", "a.mp3", map[string]string{"model\r\nX-Injected: yes": "whisper-1"}},
+	}
+	for _, tc := range hostile {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := c.AudioTranscriptions(context.Background(), []byte("RIFF"), tc.file, tc.field)
+			var e *Error
+			if !errors.As(err, &e) || e.Kind != KindConfiguration {
+				t.Fatalf("got %#v; want a KindConfiguration refusal", err)
+			}
+			if reached {
+				t.Fatal("the hostile request must be refused BEFORE it is sent")
+			}
+		})
+	}
+}

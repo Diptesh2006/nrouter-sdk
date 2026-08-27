@@ -79,7 +79,7 @@ data, no engine name (Rule #29). A secret committed here is a secret disclosed.
 You are reading this through `AGENTS.md` or `GEMINI.md`, which symlink to this file.
 Claude Code receives the rules below automatically via `@import`; **your harness does
 not**. They are mandatory all the same. Read the ones relevant to what you are about to
-touch BEFORE editing — each path is absolute and resolvable.
+touch BEFORE editing — each path resolves from your home directory (`~/`).
 
 **They are listed in READING ORDER, not alphabetically.** The first two are the
 authority and apply to everything; the rest are path-scoped detail that matters only

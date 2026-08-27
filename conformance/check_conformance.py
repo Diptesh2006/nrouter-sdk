@@ -210,6 +210,18 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
             if code not in blob:
                 failures.append(f"{sdk}: error code {code!r} is not mapped")
 
+        # The code STRINGS are only half the error contract. The spec also
+        # fixes each code's HTTP status, and the gateway's main error path
+        # sends no code at all — so status dispatch is the ordinary route, not
+        # a fallback. A gate that ignores `http` lets `guardrail_blocked` move
+        # from 400 to 422 in the spec while every SDK stays green.
+        for status in sorted({str(e["http"]) for e in spec["errors"].values()}):
+            if status not in blob:
+                failures.append(
+                    f"{sdk}: spec status {status} appears in no dispatch — a codeless "
+                    f"response with that status cannot be classified"
+                )
+
     return failures
 
 
@@ -237,6 +249,9 @@ def self_test() -> int:
         ("env_var", lambda d: d.update(env_var="NROUTER_TOKEN")),
         ("a new header", lambda d: d["response_headers"].update({"x-nr-invented": {}})),
         ("a new error code", lambda d: d["errors"].update({"invented_code": {"http": 400}})),
+        # Moving an EXISTING code's status must also bite: the contract is the
+        # code AND its status, and a gate blind to `http` lets one drift.
+        ("an existing code's http", lambda d: d["errors"]["guardrail_blocked"].update({"http": 422})),
     ):
         mutated = json.loads(json.dumps(spec))
         mutate(mutated)

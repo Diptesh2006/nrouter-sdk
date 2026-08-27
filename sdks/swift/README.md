@@ -115,6 +115,12 @@ try NRouter(
 `chatCompletions`, `embeddings`, `messages` (Anthropic wire format), `responses`,
 `models`, plus `post(_:_:)` and `get(_:)` for anything else under `/v1`.
 
+**Not JSON:** `audioTranscriptions` and `audioTranslations` send multipart/form-data
+(the gateway requires a binary `file` part, so the JSON helpers cannot reach them);
+`bytes(_:_:)` returns raw `Data` for `/v1/audio/speech`, video content, and anything
+else that does not answer in JSON. The JSON helpers refuse a non-JSON response
+rather than handing back an empty body for a request you were billed for.
+
 ## Build and test
 
 ```bash

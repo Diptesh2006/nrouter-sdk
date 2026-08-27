@@ -252,6 +252,52 @@ class ContractTest {
     }
 
     @Test
+    fun `a 2xx with unparseable JSON is a failure, not an empty success`() = runBlocking {
+        // Truncated mid-stream. The request was BILLED; returning {} reports
+        // success with nothing in it.
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "application/json")
+                .setHeader("x-nr-request-cost", "0.004")
+                .setBody("""{"choices":[{"message":"""),
+        )
+        val error = assertFailsWith<NRouterError.Transport> {
+            clientFor(server).chatCompletions(JSONObject())
+        }
+        assertTrue(error.message.orEmpty().contains("billed"), error.message.orEmpty())
+    }
+
+    @Test
+    fun `audio transcriptions sends multipart with a named file part`() = runBlocking {
+        // The gateway requires multipart/form-data with a binary `file` here.
+        // Sent as JSON the endpoint is unreachable, which is what the generic
+        // post() helper would have done.
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "application/json")
+                .setBody("""{"text":"hello"}"""),
+        )
+
+        val result = clientFor(server).audioTranscriptions(
+            file = "fake-audio".toByteArray(),
+            fileName = "speech.mp3",
+            fields = mapOf("model" to "whisper-1"),
+        )
+
+        val sent = server.takeRequest()
+        val contentType = sent.getHeader("Content-Type").orEmpty()
+        val body = sent.body.readUtf8()
+        assertTrue(contentType.startsWith("multipart/form-data"), contentType)
+        assertTrue(body.contains("""name="file""""), "no file part: $body")
+        // The extension is load-bearing: providers pick their decoder from it.
+        assertTrue(body.contains("speech.mp3"), "file name not sent: $body")
+        assertTrue(body.contains("""name="model""""), "no model field: $body")
+        assertEquals("hello", result.body.getString("text"))
+    }
+
+    @Test
     fun `a bare error envelope still yields a typed error`() = runBlocking {
         // A proxy that unwraps `error` must not downgrade this to a generic failure.
         server.enqueue(

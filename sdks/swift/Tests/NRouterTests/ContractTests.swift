@@ -210,8 +210,89 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(caseName(NRouterError.fromCode(body)), "guardrailBlocked")
     }
 
+    func testMultipartBodyCarriesTheNamedFilePart() async throws {
+        // The gateway requires multipart/form-data with a binary `file` part
+        // here; sent as JSON the endpoint is unreachable, which is what the
+        // generic post(_:_:) helper would have done. Capture the REAL request
+        // the SDK builds — asserting on a body the test rebuilt itself would
+        // pass no matter what the SDK sent.
+        StubProtocol.captured = nil
+        StubProtocol.response = (
+            200,
+            ["content-type": "application/json"],
+            Data(#"{"text":"hello"}"#.utf8)
+        )
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(apiKey: "sk-nrouter-test", session: URLSession(configuration: config))
+
+        let result = try await client.audioTranscriptions(
+            file: Data("fake-audio".utf8),
+            fileName: "speech.mp3",
+            fields: ["model": "whisper-1"]
+        )
+
+        let request = try XCTUnwrap(StubProtocol.captured)
+        let contentType = try XCTUnwrap(request.value(forHTTPHeaderField: "Content-Type"))
+        XCTAssertTrue(contentType.hasPrefix("multipart/form-data; boundary="), contentType)
+
+        let body = String(data: try XCTUnwrap(StubProtocol.capturedBody), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains(#"name="file""#), "no file part: \(body)")
+        // The extension is load-bearing: providers pick their decoder from it.
+        XCTAssertTrue(body.contains("speech.mp3"), "file name not sent: \(body)")
+        XCTAssertTrue(body.contains(#"name="model""#), "no model field: \(body)")
+        XCTAssertTrue(body.contains("fake-audio"), "file bytes not sent")
+        XCTAssertEqual(result.body["text"] as? String, "hello")
+    }
+
     func testBaseURLTrailingSlashIsNormalised() throws {
         let client = try NRouter(apiKey: "sk-nrouter-abc", baseURL: "https://api.nrouter.ai/v1/")
         XCTAssertEqual(client.baseURL, "https://api.nrouter.ai/v1")
     }
+}
+
+/// Captures the request the SDK actually builds, so assertions are about the
+/// SDK's behaviour rather than the test's own construction.
+final class StubProtocol: URLProtocol {
+    nonisolated(unsafe) static var captured: URLRequest?
+    nonisolated(unsafe) static var capturedBody: Data?
+    nonisolated(unsafe) static var response: (Int, [String: String], Data) = (200, [:], Data())
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.captured = request
+        // URLSession moves an httpBody onto a stream; read it back out or the
+        // body reads as nil and the assertions below would be vacuous.
+        if let body = request.httpBody {
+            Self.capturedBody = body
+        } else if let stream = request.httpBodyStream {
+            stream.open()
+            var data = Data()
+            let size = 4096
+            let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: size)
+            while stream.hasBytesAvailable {
+                let read = stream.read(buffer, maxLength: size)
+                if read <= 0 { break }
+                data.append(buffer, count: read)
+            }
+            buffer.deallocate()
+            stream.close()
+            Self.capturedBody = data
+        }
+
+        let (status, headers, payload) = Self.response
+        let http = HTTPURLResponse(
+            url: request.url!,
+            statusCode: status,
+            httpVersion: "HTTP/1.1",
+            headerFields: headers
+        )!
+        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: payload)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

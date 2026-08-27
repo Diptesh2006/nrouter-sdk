@@ -3,6 +3,7 @@ package ai.nrouter.sdk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -58,6 +59,49 @@ public class NRouter @JvmOverloads constructor(
 
     /** `POST /responses` */
     public suspend fun responses(body: JSONObject): Response = post("/responses", body)
+
+    /**
+     * `POST /audio/transcriptions` — Whisper-style speech to text.
+     *
+     * multipart/form-data, not JSON: the gateway requires a binary `file` part
+     * here, so the JSON helpers cannot reach this endpoint at all.
+     *
+     * @param file the audio bytes.
+     * @param fileName a name carrying the real extension — the upstream
+     *   providers select their decoder from it, so "audio" with no extension is
+     *   rejected where "speech.mp3" is not.
+     * @param fields the remaining form fields, e.g. `"model"`.
+     */
+    public suspend fun audioTranscriptions(
+        file: ByteArray,
+        fileName: String,
+        fields: Map<String, String> = emptyMap(),
+    ): Response = multipart("/audio/transcriptions", file, fileName, fields)
+
+    /** `POST /audio/translations` — speech in any language to English text. */
+    public suspend fun audioTranslations(
+        file: ByteArray,
+        fileName: String,
+        fields: Map<String, String> = emptyMap(),
+    ): Response = multipart("/audio/translations", file, fileName, fields)
+
+    /** Any multipart `POST` under the gateway's `/v1` root. */
+    public suspend fun multipart(
+        path: String,
+        file: ByteArray,
+        fileName: String,
+        fields: Map<String, String> = emptyMap(),
+        filePartName: String = "file",
+    ): Response {
+        val builder = MultipartBody.Builder().setType(MultipartBody.FORM)
+        fields.forEach { (key, value) -> builder.addFormDataPart(key, value) }
+        builder.addFormDataPart(
+            filePartName,
+            fileName,
+            file.toRequestBody(OCTET_STREAM),
+        )
+        return send(Request.Builder().url(url(path)).post(builder.build()).build())
+    }
 
     /** `GET /models` — what this key is allowed to route to. */
     public suspend fun models(): Response = get("/models")
@@ -142,7 +186,6 @@ public class NRouter @JvmOverloads constructor(
             val meta = NRouterResponseMeta.fromLookup { name -> it.header(name) }
             val contentType = it.header("content-type").orEmpty().lowercase()
             val text = it.body?.string().orEmpty()
-            val parsed = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
 
             if (status in 200..299) {
                 // A 2xx that is not JSON is a REAL RESPONSE you were billed for
@@ -158,8 +201,18 @@ public class NRouter @JvmOverloads constructor(
                             "the JSON helpers would report success with an empty body."
                     )
                 }
-                Response(parsed, meta, status)
+                // A 2xx whose JSON does not parse is NOT an empty response —
+                // it is a truncated or corrupted one, for a request that was
+                // billed. Returning {} here reports success with nothing in it.
+                val body = runCatching { JSONObject(text) }.getOrElse { e ->
+                    throw NRouterError.Transport(
+                        "nRouter returned $status with unparseable JSON (${e.message}); " +
+                            "the request was billed but the body did not arrive intact."
+                    )
+                }
+                Response(body, meta, status)
             } else {
+                val parsed = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
                 throw NRouterError.fromCode(errorBody(status, parsed, meta))
             }
         }
@@ -176,6 +229,7 @@ public class NRouter @JvmOverloads constructor(
         public const val KEY_PREFIX: String = "sk-nrouter-"
 
         private val JSON = "application/json; charset=utf-8".toMediaType()
+        private val OCTET_STREAM = "application/octet-stream".toMediaType()
 
         /**
          * Resolve and validate a key: explicit argument first, then environment.

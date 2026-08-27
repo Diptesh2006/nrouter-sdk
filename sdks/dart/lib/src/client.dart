@@ -104,6 +104,81 @@ class NRouter {
   Future<NRouterResponse> responses(Map<String, dynamic> body) =>
       post('/responses', body);
 
+  /// `POST /audio/transcriptions` — Whisper-style speech to text.
+  ///
+  /// multipart/form-data, not JSON: the gateway requires a binary `file` part
+  /// here, so the JSON helpers cannot reach this endpoint at all.
+  ///
+  /// [fileName] must carry the real extension — the upstream providers pick
+  /// their decoder from it, so `audio` is rejected where `speech.mp3` is not.
+  Future<NRouterResponse> audioTranscriptions(
+    List<int> file,
+    String fileName, {
+    Map<String, String> fields = const {},
+  }) =>
+      multipart('/audio/transcriptions', file, fileName, fields: fields);
+
+  /// `POST /audio/translations` — speech in any language to English text.
+  Future<NRouterResponse> audioTranslations(
+    List<int> file,
+    String fileName, {
+    Map<String, String> fields = const {},
+  }) =>
+      multipart('/audio/translations', file, fileName, fields: fields);
+
+  /// Any multipart `POST` under the gateway's `/v1` root.
+  Future<NRouterResponse> multipart(
+    String path,
+    List<int> file,
+    String fileName, {
+    Map<String, String> fields = const {},
+    String filePartName = 'file',
+  }) async {
+    final uri = Uri.parse(
+      '$baseUrl/${path.startsWith('/') ? path.substring(1) : path}',
+    );
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $_apiKey'
+      ..fields.addAll(fields)
+      ..files.add(
+        http.MultipartFile.fromBytes(filePartName, file, filename: fileName),
+      );
+
+    http.Response response;
+    try {
+      final streamed = await _http.send(request);
+      response = await http.Response.fromStream(streamed);
+    } on Exception catch (e) {
+      throw NRouterTransportError(e.toString());
+    }
+
+    final meta = NRouterResponseMeta.fromHeaders(response.headers);
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw NRouterTransportError(
+          'nRouter returned ${response.statusCode} with a JSON body that is not '
+          'an object; the request was billed but the body did not arrive intact.',
+        );
+      }
+      return NRouterResponse(
+        body: decoded,
+        meta: meta,
+        statusCode: response.statusCode,
+      );
+    }
+    Map<String, dynamic> parsed;
+    try {
+      final decoded = jsonDecode(response.body);
+      parsed = decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+    } on FormatException {
+      parsed = <String, dynamic>{};
+    }
+    throw NRouterError.fromCode(
+      errorBodyFrom(response.statusCode, parsed, meta),
+    );
+  }
+
   /// `GET /models` — what this key is allowed to route to.
   Future<NRouterResponse> models() => get('/models');
 
@@ -189,13 +264,6 @@ class NRouter {
     }
 
     final meta = NRouterResponseMeta.fromHeaders(response.headers);
-    Map<String, dynamic> parsed;
-    try {
-      final decoded = jsonDecode(response.body);
-      parsed = decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
-    } on FormatException {
-      parsed = <String, dynamic>{};
-    }
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       // A 2xx that is not JSON is a REAL RESPONSE you were billed for —
@@ -214,11 +282,37 @@ class NRouter {
           'body.',
         );
       }
+      // A 2xx whose JSON does not parse is NOT an empty response — it is a
+      // truncated or corrupted one, for a request that was billed. Returning
+      // {} here reports success with nothing in it.
+      final Object? decoded;
+      try {
+        decoded = jsonDecode(response.body);
+      } on FormatException catch (e) {
+        throw NRouterTransportError(
+          'nRouter returned ${response.statusCode} with unparseable JSON '
+          '(${e.message}); the request was billed but the body did not arrive '
+          'intact.',
+        );
+      }
+      if (decoded is! Map<String, dynamic>) {
+        throw NRouterTransportError(
+          'nRouter returned ${response.statusCode} with a JSON body that is not '
+          'an object; the request was billed but the body did not arrive intact.',
+        );
+      }
       return NRouterResponse(
-        body: parsed,
+        body: decoded,
         meta: meta,
         statusCode: response.statusCode,
       );
+    }
+    Map<String, dynamic> parsed;
+    try {
+      final decoded = jsonDecode(response.body);
+      parsed = decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+    } on FormatException {
+      parsed = <String, dynamic>{};
     }
     throw NRouterError.fromCode(
       errorBodyFrom(response.statusCode, parsed, meta),

@@ -102,6 +102,12 @@ let client = nrouter::http::Client::new("sk-nrouter-...")?
 `responses`, `models`, plus `post(path, body)` and `get(path)` for anything else
 under `/v1`.
 
+**Not JSON:** `audio_transcriptions` and `audio_translations` send multipart/form-data
+(the gateway requires a binary `file` part, so the JSON helpers cannot reach them);
+`bytes(method, path, body)` returns raw bytes for `/v1/audio/speech`, video content,
+and anything else that does not answer in JSON. The JSON helpers refuse a non-JSON
+response rather than handing back an empty body for a request you were billed for.
+
 ## Build and test
 
 ```bash
@@ -109,6 +115,12 @@ cargo test                                   # unit + integration + doc tests
 cargo clippy --all-targets -- -D warnings
 ```
 
-MSRV 1.75. Publishing: [PUBLISHING.md](PUBLISHING.md).
+MSRV 1.88 — the effective floor of the dependency graph (`icu_*` via reqwest's
+TLS stack declare 1.88). Derive it rather than trusting this line:
+
+```bash
+cargo metadata --format-version 1 --locked \
+  | python3 -c "import json,sys;print(max((p['rust_version'] for p in json.load(sys.stdin)['packages'] if p.get('rust_version')), key=lambda v:[int(x) for x in v.split('.')]))"
+``` Publishing: [PUBLISHING.md](PUBLISHING.md).
 
 [`async-openai`]: https://crates.io/crates/async-openai

@@ -79,6 +79,58 @@ impl Client {
         self.post("/responses", body).await
     }
 
+    /// `POST /audio/transcriptions` — Whisper-style speech to text.
+    ///
+    /// multipart/form-data, not JSON: the gateway requires a binary `file` part
+    /// here, so the JSON helpers cannot reach this endpoint at all.
+    ///
+    /// `file_name` must carry the real extension — the upstream providers pick
+    /// their decoder from it, so `"audio"` is rejected where `"speech.mp3"` is
+    /// not.
+    pub async fn audio_transcriptions(
+        &self,
+        file: Vec<u8>,
+        file_name: &str,
+        fields: &[(&str, &str)],
+    ) -> Result<Response<Value>, NRouterError> {
+        self.multipart("/audio/transcriptions", file, file_name, fields)
+            .await
+    }
+
+    /// `POST /audio/translations` — speech in any language to English text.
+    pub async fn audio_translations(
+        &self,
+        file: Vec<u8>,
+        file_name: &str,
+        fields: &[(&str, &str)],
+    ) -> Result<Response<Value>, NRouterError> {
+        self.multipart("/audio/translations", file, file_name, fields)
+            .await
+    }
+
+    /// Any multipart `POST` under the gateway's `/v1` root.
+    pub async fn multipart(
+        &self,
+        path: &str,
+        file: Vec<u8>,
+        file_name: &str,
+        fields: &[(&str, &str)],
+    ) -> Result<Response<Value>, NRouterError> {
+        let mut form = reqwest::multipart::Form::new();
+        for (key, value) in fields {
+            form = form.text((*key).to_string(), (*value).to_string());
+        }
+        let part = reqwest::multipart::Part::bytes(file).file_name(file_name.to_string());
+        form = form.part("file", part);
+
+        let req = self
+            .http
+            .post(self.url(path))
+            .bearer_auth(&self.api_key)
+            .multipart(form);
+        self.send(req).await
+    }
+
     /// `GET /models` — what this key is allowed to route to.
     pub async fn models(&self) -> Result<Response<Value>, NRouterError> {
         self.get("/models").await
@@ -198,7 +250,15 @@ impl Client {
                      the JSON helpers would report success with an empty body."
                 )));
             }
-            let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            // A 2xx whose JSON does not parse is NOT an empty response — it is
+            // a truncated or corrupted one, for a request that was billed.
+            // Returning Null here reports success with nothing in it.
+            let body: Value = serde_json::from_slice(&bytes).map_err(|e| {
+                NRouterError::Transport(format!(
+                    "nRouter returned {status} with unparseable JSON ({e}); the request was \
+                     billed but the body did not arrive intact."
+                ))
+            })?;
             return Ok(Response { body, meta });
         }
         let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);

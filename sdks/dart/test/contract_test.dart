@@ -239,6 +239,25 @@ void main() {
       expect(raw.meta.cost, 0.004);
     });
 
+    test('a 2xx with unparseable JSON is a failure, not an empty success',
+        () async {
+      // Truncated mid-stream. The request was BILLED; returning {} reports
+      // success with nothing in it.
+      final mock = MockClient((request) async => http.Response(
+            '{"choices":[{"message":',
+            200,
+            headers: {
+              'content-type': 'application/json',
+              'x-nr-request-cost': '0.004',
+            },
+          ));
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+      await expectLater(
+        client.chatCompletions({}),
+        throwsA(isA<NRouterTransportError>()),
+      );
+    });
+
     test('a gateway error becomes its typed exception with metadata', () async {
       final mock = MockClient((request) async => http.Response(
             jsonEncode({

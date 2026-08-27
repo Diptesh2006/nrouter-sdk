@@ -110,6 +110,76 @@ public struct NRouter: Sendable {
         try await post("/responses", body)
     }
 
+    /// `POST /audio/transcriptions` — Whisper-style speech to text.
+    ///
+    /// multipart/form-data, not JSON: the gateway requires a binary `file` part
+    /// here, so the JSON helpers cannot reach this endpoint at all.
+    ///
+    /// `fileName` must carry the real extension — the upstream providers pick
+    /// their decoder from it, so `"audio"` is rejected where `"speech.mp3"` is
+    /// not.
+    public func audioTranscriptions(
+        file: Data,
+        fileName: String,
+        fields: [String: String] = [:]
+    ) async throws -> Response {
+        try await multipart("/audio/transcriptions", file: file, fileName: fileName, fields: fields)
+    }
+
+    /// `POST /audio/translations` — speech in any language to English text.
+    public func audioTranslations(
+        file: Data,
+        fileName: String,
+        fields: [String: String] = [:]
+    ) async throws -> Response {
+        try await multipart("/audio/translations", file: file, fileName: fileName, fields: fields)
+    }
+
+    /// Any multipart `POST` under the gateway's `/v1` root.
+    ///
+    /// The boundary is caller-injectable ONLY so a test can assert a fixed
+    /// body; leaving it nil generates a fresh one per request, which is what a
+    /// caller wants.
+    public func multipart(
+        _ path: String,
+        file: Data,
+        fileName: String,
+        fields: [String: String] = [:],
+        filePartName: String = "file",
+        boundary: String? = nil
+    ) async throws -> Response {
+        let boundary = boundary ?? "nrouter-\(UUID().uuidString)"
+        var body = Data()
+
+        func append(_ text: String) {
+            body.append(Data(text.utf8))
+        }
+
+        // Sorted so the body is deterministic; a dictionary's order is not.
+        for key in fields.keys.sorted() {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n")
+            append("\(fields[key]!)\r\n")
+        }
+        append("--\(boundary)\r\n")
+        append(
+            "Content-Disposition: form-data; name=\"\(filePartName)\"; "
+                + "filename=\"\(fileName)\"\r\n"
+        )
+        append("Content-Type: application/octet-stream\r\n\r\n")
+        body.append(file)
+        append("\r\n--\(boundary)--\r\n")
+
+        var request = URLRequest(url: try url(path))
+        request.httpMethod = "POST"
+        request.setValue(
+            "multipart/form-data; boundary=\(boundary)",
+            forHTTPHeaderField: "Content-Type"
+        )
+        request.httpBody = body
+        return try await send(request)
+    }
+
     /// `GET /models` — what this key is allowed to route to.
     public func models() async throws -> Response {
         try await get("/models")
@@ -196,7 +266,6 @@ public struct NRouter: Sendable {
         }
 
         let meta = NRouterResponseMeta(response: http)
-        let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
 
         if (200..<300).contains(http.statusCode) {
             // A 2xx that is not JSON is a REAL RESPONSE you were billed for —
@@ -214,8 +283,19 @@ public struct NRouter: Sendable {
                         + "would report success with an empty body."
                 )
             }
-            return Response(body: parsed, meta: meta, statusCode: http.statusCode)
+            // A 2xx whose JSON does not parse is NOT an empty response — it is
+            // a truncated or corrupted one, for a request that was billed.
+            // Returning [:] here reports success with nothing in it.
+            guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            else {
+                throw NRouterError.transport(
+                    "nRouter returned \(http.statusCode) with unparseable JSON; the request "
+                        + "was billed but the body did not arrive intact."
+                )
+            }
+            return Response(body: body, meta: meta, statusCode: http.statusCode)
         }
+        let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         throw NRouterError.fromCode(
             NRouter.errorBody(status: http.statusCode, payload: parsed, meta: meta)
         )

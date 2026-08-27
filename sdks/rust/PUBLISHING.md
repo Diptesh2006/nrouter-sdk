@@ -47,9 +47,16 @@ check <https://docs.rs/nrouter> after publishing rather than assuming.
   `cargo test`. They are `no_run` because they need a live key, so they are
   proven to COMPILE, not to succeed against the gateway — keep them `no_run` or
   they fail in CI without credentials.
-- **`rust-version = "1.75"` is a promise.** Using a newer language feature
-  compiles on your toolchain and breaks consumers on the stated MSRV; raise the
-  field in the same commit, and treat it as a breaking change.
+- **`rust-version` is a promise, and it covers DEPENDENCIES too.** Declaring a
+  floor your transitive graph does not meet fails in the consumer's build, not
+  yours — `cargo build` on a modern toolchain says nothing about it. Check the
+  real floor before every release, and treat raising it as breaking:
+
+  ```bash
+  cargo metadata --format-version 1 --locked \
+    | python3 -c "import json,sys;print(max((p['rust_version'] for p in json.load(sys.stdin)['packages'] if p.get('rust_version')), key=lambda v:[int(x) for x in v.split('.')]))"
+  cargo +<that-version> check --locked     # the only real proof
+  ```
 - **The `nrouter` crate name is already ours.** Do not publish under a variant
   name to work around an error — a squatted second name is worse than a fixed
   first one.

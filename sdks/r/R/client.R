@@ -135,9 +135,13 @@ nrouter_request <- function(client, path, body = NULL,
 
   meta <- nrouter_meta(as.list(httr::headers(response)))
   status <- httr::status_code(response)
+  parse_failed <- FALSE
   parsed <- tryCatch(
     httr::content(response, as = "parsed", type = "application/json"),
-    error = function(e) list()
+    error = function(e) {
+      parse_failed <<- TRUE
+      list()
+    }
   )
 
   if (status >= 200 && status < 300) {
@@ -153,6 +157,15 @@ nrouter_request <- function(client, path, body = NULL,
         "', which is not JSON. Use nrouter_bytes() for binary or streaming ",
         "endpoints (/v1/audio/speech, /v1/videos/{id}/content, or stream = TRUE); ",
         "the JSON helpers would report success with an empty body."
+      )))
+    }
+    # A 2xx whose JSON does not parse is NOT an empty response — it is a
+    # truncated or corrupted one, for a request that was billed. Returning an
+    # empty list here reports success with nothing in it.
+    if (parse_failed) {
+      stop(nrouter_transport_condition(paste0(
+        "nRouter returned ", status, " with unparseable JSON; the request was ",
+        "billed but the body did not arrive intact."
       )))
     }
     return(list(body = parsed, meta = meta, status_code = status))
@@ -230,6 +243,57 @@ nrouter_messages <- function(client, body) {
 #' @export
 nrouter_responses <- function(client, body) {
   nrouter_request(client, "/responses", body)
+}
+
+#' Send a multipart request to the nRouter gateway
+#'
+#' multipart/form-data, not JSON: \code{/v1/audio/transcriptions} and
+#' \code{/v1/audio/translations} require a binary \code{file} part, so the JSON
+#' helpers cannot reach those endpoints at all.
+#'
+#' @param client An \code{nrouter_client}.
+#' @param path Path under the gateway's \code{/v1} root.
+#' @param file_path Path to the file to upload. Its EXTENSION is load-bearing —
+#'   the upstream providers pick their decoder from it.
+#' @param fields Named list of additional form fields, e.g. \code{model}.
+#' @return A list with \code{body}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_multipart <- function(client, path, file_path, fields = list()) {
+  url <- paste0(client$base_url, "/", sub("^/+", "", path))
+  auth <- httr::add_headers(Authorization = paste("Bearer", client$api_key))
+  body <- c(fields, list(file = httr::upload_file(file_path)))
+
+  response <- tryCatch(
+    httr::POST(url, auth, body = body, encode = "multipart"),
+    error = function(e) stop(nrouter_transport_condition(conditionMessage(e)))
+  )
+
+  meta <- nrouter_meta(as.list(httr::headers(response)))
+  status <- httr::status_code(response)
+  parsed <- tryCatch(
+    httr::content(response, as = "parsed", type = "application/json"),
+    error = function(e) list()
+  )
+  if (status >= 200 && status < 300) {
+    return(list(body = parsed, meta = meta, status_code = status))
+  }
+  stop(nrouter_error_from_payload(status, parsed, meta))
+}
+
+#' POST /audio/transcriptions - Whisper-style speech to text
+#' @inheritParams nrouter_multipart
+#' @return A list with \code{body}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_audio_transcriptions <- function(client, file_path, fields = list()) {
+  nrouter_multipart(client, "/audio/transcriptions", file_path, fields)
+}
+
+#' POST /audio/translations - speech in any language to English text
+#' @inheritParams nrouter_multipart
+#' @return A list with \code{body}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_audio_translations <- function(client, file_path, fields = list()) {
+  nrouter_multipart(client, "/audio/translations", file_path, fields)
 }
 
 #' GET /models — what this key is allowed to route to

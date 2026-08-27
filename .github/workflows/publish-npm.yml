@@ -136,8 +136,14 @@ jobs:
         run: |
           # `npm publish` exiting 0 is npm ACCEPTING the upload; this is the
           # registry SERVING it. Different events, seconds apart.
-          for _ in $(seq 1 12); do
+          # 5 minutes, same reason as the PyPI pipeline: a registry can lag a
+          # fresh upload by more than a minute, and a short window turns a good
+          # release into a red run.
+          for _ in $(seq 1 30); do
             [ "$(npm view '@nrouter_ai/sdk' version)" = "$V" ] && exit 0
-            sleep 5
+            sleep 10
           done
-          echo "::error::the registry is not serving $V"; exit 1
+          # The upload already succeeded; this is a confirmation timeout, not a
+          # failed publish. Republishing cannot work — the version is taken.
+          echo "::error::could not confirm npm is serving $V within 5 minutes. The upload SUCCEEDED; check https://www.npmjs.com/package/@nrouter_ai/sdk rather than republishing."
+          exit 1

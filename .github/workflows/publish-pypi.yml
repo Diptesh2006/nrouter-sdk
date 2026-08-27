@@ -110,8 +110,18 @@ jobs:
         run: |
           # twine exiting 0 is PyPI accepting the upload; this is PyPI serving
           # it. Different events.
-          for _ in $(seq 1 12); do
+          # 5 minutes, not 1. MEASURED on the 2.1.1 release: twine reported
+          # success, this step polled for 60s and failed, and the version was
+          # serving shortly after — PyPI's JSON API lags a fresh upload by more
+          # than a minute. A too-short window turns a good release into a red
+          # pipeline and invites someone to "fix" it by republishing, which
+          # cannot work: the version is already taken.
+          for _ in $(seq 1 30); do
             [ "$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/nrouter-sdk/$V/json")" = "200" ] && exit 0
-            sleep 5
+            sleep 10
           done
-          echo "::error::PyPI is not serving $V"; exit 1
+          # NOT "the publish failed" — the upload already succeeded above. This
+          # is only "we could not confirm it inside the window". Check the
+          # registry by hand before doing anything else; do NOT rerun to fix it.
+          echo "::error::could not confirm PyPI is serving $V within 5 minutes. The upload SUCCEEDED; verify at https://pypi.org/project/nrouter-sdk/$V/ rather than republishing."
+          exit 1

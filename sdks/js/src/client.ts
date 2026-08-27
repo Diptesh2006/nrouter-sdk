@@ -31,40 +31,30 @@ export type NRouterModelList = {
   [key: string]: unknown;
 };
 
+/**
+ * The slice of the inherited OpenAI client this helper needs: its own request
+ * pipeline. Going through it is what keeps the caller's `fetch` override,
+ * `timeout`, `maxRetries`, `httpAgent`, `defaultHeaders` and `defaultQuery`
+ * applied to model discovery, and is why no global `fetch` is required.
+ */
+type RawRequester = {
+  get(path: string, opts?: unknown): { asResponse(): Promise<{ json(): Promise<unknown> }> };
+};
+
 export class NRouterModels {
-  constructor(private readonly apiKey: string, private readonly baseURL: string) {}
+  constructor(private readonly client: RawRequester) {}
 
   /**
-   * List models using nRouter's raw JSON response.
+   * List models from nRouter's raw JSON response.
    *
-   * The OpenAI JS SDK currently receives the right raw body from nRouter, but
-   * its page parser exposes an empty `data` array. This helper stays direct so
-   * model discovery remains reliable.
+   * The OpenAI JS SDK receives the right raw body from nRouter, but its page
+   * parser exposes an empty `data` array. Reading the raw response keeps model
+   * discovery reliable without leaving the client's configured transport: a
+   * non-2xx still raises the SDK's own typed error before we get here.
    */
   async list(): Promise<NRouterModelList> {
-    const fetchImpl = (globalThis as any).fetch;
-    if (typeof fetchImpl !== "function") {
-      throw new Error("nRouter model listing requires a global fetch implementation.");
-    }
-
-    const response = await fetchImpl(`${this.baseURL.replace(/\/+$/, "")}/models`, {
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-    });
-
-    if (!response.ok) {
-      let message = `nRouter models request failed with status ${response.status}`;
-      try {
-        const body = await response.json();
-        message = body?.error?.message || body?.error || message;
-      } catch {
-        // Keep the status-based message when the body is not JSON.
-      }
-      throw new Error(message);
-    }
-
-    return response.json();
+    const response = await this.client.get("/models").asResponse();
+    return (await response.json()) as NRouterModelList;
   }
 }
 
@@ -90,7 +80,7 @@ export class nRouter extends OpenAI {
       baseURL,
     });
 
-    this.nrouterModels = new NRouterModels(apiKey, baseURL);
+    this.nrouterModels = new NRouterModels(this as unknown as RawRequester);
     this.nrouter_models = this.nrouterModels;
   }
 }

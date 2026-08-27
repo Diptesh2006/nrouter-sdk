@@ -175,8 +175,14 @@ class nRouterRateLimitError(nRouterError):
         request_id: Optional[str] = None,
         limit_source: Optional[str] = None,
         retry_after: Optional[int] = None,
+        code: Optional[str] = None,
     ) -> None:
-        super().__init__(message, request_id=request_id)
+        # Both `rate_limit_exceeded` and `tpm_limit_exceeded` are 429 and both
+        # raise this class, so dispatching on status is correct. But the class
+        # default would then report `rate_limit_exceeded` for a TPM refusal,
+        # which is a wrong stable code on a right exception — pass through what
+        # the gateway actually said when it said anything.
+        super().__init__(message, request_id=request_id, code=code)
         self.limit_source = limit_source
         self.retry_after = retry_after
 

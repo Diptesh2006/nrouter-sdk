@@ -1,11 +1,26 @@
 [package]
 name = "nrouter"
-version = "1.0.0"
+version = "2.1.0"
 edition = "2021"
+# The EFFECTIVE floor of the transitive graph, not an aspiration. `cargo
+# metadata` reports dependencies declaring up to 1.88 (icu_*), and
+# `cargo +1.75.0 check --locked` fails outright. A rust-version below what the
+# graph needs is a promise the crate cannot keep, and it fails in the
+# consumer's build rather than ours.
+rust-version = "1.88"
 description = "nRouter SDK — one API key for models across six provider clouds"
 license = "MIT"
 homepage = "https://nrouter.ai"
-repository = "https://github.com/nRouterAI/nrouter-ent-ai-hub"
+repository = "https://github.com/nRouterAI/nrouter-sdk"
+documentation = "https://docs.rs/nrouter"
+readme = "README.md"
+keywords = ["llm", "ai", "openai", "gateway", "anthropic"]
+categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
 async-openai = "0.25"
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

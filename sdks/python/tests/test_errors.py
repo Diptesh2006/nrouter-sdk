@@ -32,14 +32,26 @@ from nroutersdk import (
 from nroutersdk.client import _maybe_raise_nrouter_error
 
 
-def status_error(status: int, message: str, headers: dict | None = None) -> APIStatusError:
-    """An APIStatusError carrying the gateway's real envelope."""
+def status_error(
+    status: int,
+    message: str,
+    headers: dict | None = None,
+    code: str | None = None,
+) -> APIStatusError:
+    """An APIStatusError carrying the gateway's real envelope.
+
+    `code` is optional because the gateway does not always send one; omitting it
+    is the shape this SDK saw before 2.1.0 and must keep handling.
+    """
     request = httpx.Request("POST", "https://api.nrouter.ai/v1/chat/completions")
+    error: dict = {"type": "gateway_error", "message": message}
+    if code is not None:
+        error["code"] = code
     response = httpx.Response(
         status,
         request=request,
         headers=headers or {},
-        json={"error": {"type": "gateway_error", "message": message}},
+        json={"error": error},
     )
     return APIStatusError(message, response=response, body=None)
 
@@ -154,3 +166,87 @@ def test_a_generic_404_is_not_reported_as_a_missing_model():
     with pytest.raises(nRouterError) as caught:
         _maybe_raise_nrouter_error(err)
     assert not isinstance(caught.value, nRouterNotFoundError)
+
+
+def test_a_tpm_refusal_reports_its_own_code_not_the_class_default():
+    """`tpm_limit_exceeded` and `rate_limit_exceeded` share status 429.
+
+    Both correctly raise nRouterRateLimitError, but reporting the class default
+    `rate_limit_exceeded` for a TPM refusal is a wrong stable code on a right
+    exception — and `code` is what a caller branches on when `limit_source` is
+    absent.
+    """
+    with pytest.raises(nRouterRateLimitError) as caught:
+        _maybe_raise_nrouter_error(
+            status_error(429, "token rate exceeded", code="tpm_limit_exceeded")
+        )
+    assert caught.value.code == "tpm_limit_exceeded"
+
+
+def test_an_rpm_refusal_keeps_its_own_code_too():
+    with pytest.raises(nRouterRateLimitError) as caught:
+        _maybe_raise_nrouter_error(
+            status_error(429, "too many requests", code="rate_limit_exceeded")
+        )
+    assert caught.value.code == "rate_limit_exceeded"
+
+
+def test_a_429_without_a_code_falls_back_to_the_class_default():
+    with pytest.raises(nRouterRateLimitError) as caught:
+        _maybe_raise_nrouter_error(status_error(429, "too many requests"))
+    assert caught.value.code == "rate_limit_exceeded"
+
+
+def test_a_code_when_present_beats_the_status():
+    """The gateway's WAF and upstream passthrough DO send a code.
+
+    Status alone cannot separate the two 429s or the two 400s, so a code the
+    gateway did send must win.
+    """
+    with pytest.raises(nRouterGuardrailBlockedError):
+        _maybe_raise_nrouter_error(
+            # A message that does NOT say "guardrail" — only the code does.
+            status_error(400, "request rejected", code="guardrail_blocked")
+        )
+
+
+def test_the_header_name_list_matches_what_is_parsed():
+    from nroutersdk import nRouterResponseMeta
+
+    assert len(nRouterResponseMeta.HEADER_NAMES) == 13
+    meta = nRouterResponseMeta.from_headers(
+        {name: "1" for name in nRouterResponseMeta.HEADER_NAMES}
+    )
+    # Every advertised header must reach a field; a name in the list that the
+    # parser ignores is a promise the SDK does not keep.
+    assert meta.request_id is not None
+    assert meta.cost is not None
+    assert meta.limit_source is not None
+    assert meta.response_cache is not None
+
+
+def test_auth_reason_reaches_the_metadata():
+    """HEADER_NAMES advertises it, so the parser has to produce it.
+
+    A name in that list the parser ignores is a promise the SDK does not keep,
+    and the cross-SDK gate cannot see the difference.
+    """
+    from nroutersdk import nRouterResponseMeta
+
+    meta = nRouterResponseMeta.from_headers(
+        {"x-nr-auth-reason": "key_route_not_allowed", "x-nr-request-id": "req_1"}
+    )
+    assert meta.auth_reason == "key_route_not_allowed"
+
+
+def test_a_service_error_keeps_the_code_the_gateway_named():
+    """`credit_check_failed` and `service_unavailable` share one class.
+
+    Without the code the exception reports the class default, so a caller
+    branching on the stable code is handed the wrong one.
+    """
+    with pytest.raises(nRouterServiceError) as caught:
+        _maybe_raise_nrouter_error(
+            status_error(503, "credit system unavailable", code="credit_check_failed")
+        )
+    assert caught.value.code == "credit_check_failed"

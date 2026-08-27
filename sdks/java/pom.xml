@@ -31,9 +31,9 @@
     </developers>
 
     <scm>
-        <connection>scm:git:https://github.com/Diptesh2006/nrouter-sdk.git</connection>
-        <developerConnection>scm:git:https://github.com/Diptesh2006/nrouter-sdk.git</developerConnection>
-        <url>https://github.com/Diptesh2006/nrouter-sdk</url>
+        <connection>scm:git:https://github.com/nRouterAI/nrouter-sdk.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/nRouterAI/nrouter-sdk.git</developerConnection>
+        <url>https://github.com/nRouterAI/nrouter-sdk</url>
     </scm>
 
     <properties>

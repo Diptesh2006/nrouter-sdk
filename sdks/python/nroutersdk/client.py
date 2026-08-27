@@ -84,14 +84,71 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
     error = body.get("error")
     if isinstance(error, dict):
         message = error.get("message") or str(err)
+        # The gateway names a stable code inside the error object when it can.
+        # It is not the classifier — status is, per the note above — but where
+        # two codes share one status it is the only thing that separates them.
+        gateway_code = error.get("code") if isinstance(error.get("code"), str) else None
     elif isinstance(error, str):
         message = error
+        gateway_code = None
     else:
         message = str(err)
+        gateway_code = None
 
     headers = err.response.headers
     request_id = headers.get("x-nr-request-id") or body.get("request_id")
     status = err.status_code
+
+    # A code, when the gateway sends one, is the strongest signal and the only
+    # thing separating `rate_limit_exceeded` from `tpm_limit_exceeded`. The main
+    # error path sends none — see the note above — so this is a preference, not
+    # the primary route, and it stays forward-compatible with a gateway that
+    # starts sending codes on every path.
+    _BY_CODE = {
+        "invalid_request": nRouterRequestError,
+        "guardrail_blocked": nRouterGuardrailBlockedError,
+        "invalid_api_key": nRouterAuthenticationError,
+        "insufficient_credits": nRouterCreditError,
+        "model_not_found": nRouterNotFoundError,
+        "credit_check_failed": nRouterServiceError,
+        "service_unavailable": nRouterServiceError,
+    }
+    if gateway_code in _BY_CODE:
+        cls = _BY_CODE[gateway_code]
+        if cls is nRouterAuthenticationError:
+            raise cls(
+                message,
+                request_id=request_id,
+                auth_reason=headers.get("x-nr-auth-reason"),
+            ) from err
+        if cls is nRouterServiceError:
+            # `credit_check_failed` and `service_unavailable` share this class.
+            # Without the code the exception reports the class default, so a
+            # caller branching on the stable code gets the wrong one.
+            raise cls(message, request_id=request_id, code=gateway_code) from err
+        raise cls(message, request_id=request_id) from err
+    if gateway_code in ("rate_limit_exceeded", "tpm_limit_exceeded"):
+        retry_after_hdr = headers.get("retry-after")
+        raise nRouterRateLimitError(
+            message,
+            request_id=request_id,
+            limit_source=headers.get("x-nr-limit-source"),
+            retry_after=(
+                int(retry_after_hdr)
+                if retry_after_hdr and retry_after_hdr.isdigit()
+                else None
+            ),
+            code=gateway_code,
+        ) from err
+    if gateway_code:
+        # A code we do NOT know must not fall through to status classification.
+        # An unknown code on a 503 would become a retryable nRouterServiceError
+        # carrying the fabricated code `service_unavailable` — a confident wrong
+        # answer. Keep the base class and the code the gateway actually sent,
+        # which is what the other SDKs' `Other` variant does.
+        raise nRouterError(
+            message, request_id=request_id, code=gateway_code, status_code=status
+        ) from err
 
     if status == 400:
         if "guardrail" in message.lower():
@@ -133,6 +190,9 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             # not attribute the refusal — never a guessed "rpm".
             limit_source=headers.get("x-nr-limit-source"),
             retry_after=int(retry_after) if retry_after and retry_after.isdigit() else None,
+            # `tpm_limit_exceeded` and `rate_limit_exceeded` share this status;
+            # keep whichever the gateway named rather than the class default.
+            code=gateway_code,
         ) from err
 
     if status == 500 or status == 503:

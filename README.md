@@ -56,7 +56,9 @@ Verify any row rather than trusting it:
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" https://pypi.org/pypi/nrouter-sdk/json
 curl -s -o /dev/null -w "%{http_code}\n" https://registry.npmjs.org/@nrouter%2Fsdk
-curl -s -o /dev/null -w "%{http_code}\n" https://crates.io/api/v1/crates/nrouter
+# crates.io blocks curl's default user agent with a 403, which is NOT an
+# answer about the crate. Send one it accepts.
+curl -s -A "nrouter-registry-check" -o /dev/null -w "%{http_code}\n" https://crates.io/api/v1/crates/nrouter
 curl -s -o /dev/null -w "%{http_code}\n" https://pub.dev/api/packages/nrouter
 curl -s https://repo1.maven.org/maven2/ai/nrouter/ | grep -oE 'href="[^"]+"'
 ```

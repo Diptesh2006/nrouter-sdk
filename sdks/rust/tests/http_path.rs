@@ -28,15 +28,49 @@ fn serve_once(status: u16, content_type: &str, body: &str) -> (String, mpsc::Rec
 
     thread::spawn(move || {
         if let Ok((mut stream, _)) = listener.accept() {
-            let mut buf = vec![0u8; 65536];
-            let read = stream.read(&mut buf).unwrap_or(0);
-            let _ = tx.send(String::from_utf8_lossy(&buf[..read]).to_string());
+            // Read until the whole request is in hand. A single read() takes
+            // only the first TCP segment, so a multipart body split across
+            // segments would be captured half-formed — the assertions would
+            // flake, and replying early can reset the connection while the
+            // client is still writing.
+            let mut raw: Vec<u8> = Vec::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                let n = match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                raw.extend_from_slice(&chunk[..n]);
+
+                // Headers complete?
+                let Some(head_end) = find(&raw, b"\r\n\r\n") else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&raw[..head_end]).to_lowercase();
+                let want: usize = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
+                if raw.len() >= head_end + 4 + want {
+                    break;
+                }
+            }
+
+            let _ = tx.send(String::from_utf8_lossy(&raw).to_string());
             let _ = stream.write_all(response.as_bytes());
             let _ = stream.flush();
         }
     });
 
     (format!("http://{addr}/v1"), rx)
+}
+
+/// First index of `needle` in `haystack`.
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn client(base: &str) -> Client {

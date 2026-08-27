@@ -171,7 +171,59 @@ export async function chat(
     );
   }
 
+  // SDK-026 — A GUARDRAIL BLOCK ARRIVES AS HTTP 200.
+  //
+  // The gateway serves PostCallVerdict::Blocked by REPLACING the body with
+  // {"error":{"type":"guardrail_blocked","message":...}} while keeping the
+  // UPSTREAM status: axum_status is computed from the provider's status before
+  // the verdict is consulted (chat_completions.rs:527 vs ~598). So the one
+  // refusal a caller most needs to see arrives labelled 200, and every "2xx =
+  // success" client hands it back as a completion with no `choices`. The
+  // application shows an empty answer and the guardrail protects nobody
+  // downstream, while reading as configured in the dashboard.
+  //
+  // The test is deliberately narrow. A real completion never carries a
+  // top-level `error`, and the withheld document carries nothing ELSE — so
+  // requiring both (an error object with a message, AND no completion-shaped
+  // key beside it) cannot swallow a legitimate reply whose payload happens to
+  // mention an error.
+  const envelope = errorEnvelopeOnSuccess(decoded);
+  if (envelope) {
+    throw createError(envelope.message, {
+      code: envelope.code,
+      status: res.status,
+      meta,
+    });
+  }
+
   return { body: decoded as Record<string, unknown>, meta };
+}
+
+/**
+ * A 2xx body that is really a refusal. Returns null for anything that could be
+ * a genuine response — see the SDK-026 note above for why this is conservative.
+ */
+function errorEnvelopeOnSuccess(
+  decoded: unknown,
+): { code: string | null; message: string } | null {
+  if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) return null;
+  const body = decoded as Record<string, unknown>;
+
+  // Anything completion-shaped beside the error means this is a real response.
+  for (const key of ['choices', 'data', 'content', 'output', 'id', 'object', 'usage']) {
+    if (key in body) return null;
+  }
+
+  const node = body.error;
+  if (typeof node !== 'object' || node === null || Array.isArray(node)) return null;
+  const err = node as Record<string, unknown>;
+  const message = typeof err.message === 'string' ? err.message : null;
+  if (!message) return null;
+
+  // The gateway ships the stable code in `type` here, not `code` — the same
+  // asymmetry that made guardrail_blocked unreachable across these SDKs.
+  const raw = typeof err.code === 'string' ? err.code : typeof err.type === 'string' ? err.type : null;
+  return { code: raw, message };
 }
 
 /**

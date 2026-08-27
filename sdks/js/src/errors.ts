@@ -72,12 +72,28 @@ export interface nRouterErrorOptions {
  * gateway should never echo one, but a message is assembled from a body we do
  * not control, and a key printed once into a log aggregator is a key rotated.
  *
- * The prefix is preserved and only the secret tail is replaced, so a
+ * The prefix is preserved and only the secret TAIL is replaced, so a
  * configuration message that legitimately says "must start with sk-nrouter-"
  * still reads correctly.
+ *
+ * That property is the whole reason this is two passes and not one. The single
+ * expression `/(sk-(?:nrouter-)?)[A-Za-z0-9._-]{6,}/` backtracks: on the literal
+ * text `sk-nrouter-` it matches the group as `sk-` and the tail as `nrouter-`,
+ * producing "must start with sk-***" — hiding the one thing the reader needs.
+ * It was also NOT IDEMPOTENT: `sk-nrouter-<secret>` redacted twice became
+ * `sk-******`, because after the first pass `nrouter-` was again a valid tail.
+ * Nothing leaked either way — it over-redacts — but a redactor that mangles its
+ * own output cannot be run defensively at more than one layer, and this one is
+ * (parseErrorBody redacts, then the constructor redacts again).
+ *
+ * Pass 1 handles a real customer key. Pass 2 catches any other `sk-` credential
+ * a body might echo, and refuses to touch the branded prefix. `*` is outside
+ * the tail character class, so neither pass can match its own output.
  */
 function redactKeys(message: string): string {
-  return message.replace(/(sk-(?:nrouter-)?)[A-Za-z0-9._-]{6,}/g, '$1***');
+  return message
+    .replace(/(sk-nrouter-)[A-Za-z0-9._-]{6,}/g, '$1***')
+    .replace(/(sk-)(?!nrouter-)[A-Za-z0-9._-]{6,}/g, '$1***');
 }
 
 /**

@@ -1,16 +1,46 @@
-// nRouter client: thin wrapper around the OpenAI SDK.
+// nRouter client: the OpenAI wire format, plus everything the hosted
+// playground can do.
+//
+// The class still EXTENDS the vendor OpenAI client, so every call you already
+// write keeps working unchanged. What it adds is the `nr` namespace: the
+// options a user can toggle in the playground — prompt templates, guardrail
+// selection, the response cache, the Claude-safe sampling policy, image
+// attachments — plus the `x-nr-*` metadata the vendor client discards.
 
-import OpenAI from "openai";
+import OpenAI from 'openai';
 
-const DEFAULT_BASE_URL = "https://api.nrouter.ai/v1";
-const ENV_KEY = "NROUTER_API_KEY";
-const KEY_PREFIX = "sk-nrouter-";
+import { chat as runChat, chatText, compare as runCompare, type ChatRunner } from './chat';
+import { configurationError, transportError } from './errors';
+import { metaFromHeaders, type HeaderSource } from './meta';
+import { NRouterModels, type RawRequester } from './models';
+import { Multimodal, type Transport, type TransportRequest, type TransportResponse } from './multimodal';
+import { streamChat, type StreamRunner, type StreamResult } from './stream';
+import type { NRouterCallOptions, NRouterResponse, ResponseMeta } from './types';
 
+/** The gateway's customer surface. A dynamic value: override it for stage. */
+export const DEFAULT_BASE_URL = 'https://api.nrouter.ai/v1';
+/** The one environment variable this SDK reads. */
+export const ENV_KEY = 'NROUTER_API_KEY';
+/** Every customer key carries this prefix. */
+export const KEY_PREFIX = 'sk-nrouter-';
+
+/**
+ * Resolve and validate a key: the explicit argument first, then the
+ * environment.
+ *
+ * Validation happens before any request, so a malformed key fails locally
+ * rather than as a 401 that looks like a revoked credential.
+ */
 function resolveApiKey(apiKey?: string): string {
   const resolved = apiKey || process.env[ENV_KEY];
-  if (!resolved || !resolved.startsWith(KEY_PREFIX)) {
-    throw new Error(
-      `nRouter API keys must start with '${KEY_PREFIX}'; pass apiKey or set ${ENV_KEY}.`
+  if (!resolved) {
+    throw configurationError(
+      `No nRouter API key: pass apiKey or set ${ENV_KEY}.`,
+    );
+  }
+  if (!resolved.startsWith(KEY_PREFIX)) {
+    throw configurationError(
+      `nRouter API keys must start with ${KEY_PREFIX}; got one that does not.`,
     );
   }
   return resolved;
@@ -18,69 +48,240 @@ function resolveApiKey(apiKey?: string): string {
 
 type NRouterOptions = ConstructorParameters<typeof OpenAI>[0];
 
-export type NRouterModel = {
-  id: string;
-  object?: string;
-  owned_by?: string;
-  [key: string]: unknown;
-};
-
-export type NRouterModelList = {
-  data: NRouterModel[];
-  object?: string;
-  [key: string]: unknown;
-};
-
 /**
- * The slice of the inherited OpenAI client this helper needs: its own request
- * pipeline. Going through it is what keeps the caller's `fetch` override,
- * `timeout`, `maxRetries`, `httpAgent`, `defaultHeaders` and `defaultQuery`
- * applied to model discovery, and is why no global `fetch` is required.
+ * The vendor client raises its own typed error on a non-2xx BEFORE the raw
+ * response reaches us, which would make every nRouter error code unreachable.
+ * This turns that throw back into a response so our own classifier — which
+ * knows the nine gateway codes, the codeless status dispatch and the
+ * `Retry-After` forms — is the one that decides.
+ *
+ * Anything that is not an APIError (DNS, TLS, an abort) is genuinely transport
+ * and is re-thrown as such.
  */
-type RawRequester = {
-  get(path: string, opts?: unknown): { asResponse(): Promise<{ json(): Promise<unknown> }> };
-};
-
-export class NRouterModels {
-  constructor(private readonly client: RawRequester) {}
-
-  /**
-   * List models from nRouter's raw JSON response.
-   *
-   * The OpenAI JS SDK receives the right raw body from nRouter, but its page
-   * parser exposes an empty `data` array. Reading the raw response keeps model
-   * discovery reliable without leaving the client's configured transport: a
-   * non-2xx still raises the SDK's own typed error before we get here.
-   */
-  async list(): Promise<NRouterModelList> {
-    const response = await this.client.get("/models").asResponse();
-    return (await response.json()) as NRouterModelList;
+function responseFromApiError(err: unknown): { status: number; headers: HeaderSource; text: string } {
+  if (err instanceof OpenAI.APIError && typeof err.status === 'number') {
+    const headers = (err.headers ?? new Headers()) as Headers;
+    // `error` is the PARSED body. Re-serializing it is lossless for our
+    // purposes: the classifier reads `error.code`/`error.message` back out.
+    const text = err.error === undefined ? '' : JSON.stringify(err.error);
+    return { status: err.status, headers, text };
   }
+  throw err;
+}
+
+function contentTypeOf(headers: HeaderSource): string {
+  const value =
+    typeof (headers as { get?: unknown }).get === 'function'
+      ? (headers as { get(name: string): string | null | undefined }).get('content-type')
+      : (headers as Record<string, string | string[] | undefined>)['content-type'];
+  const single = Array.isArray(value) ? value[0] : value;
+  return (single ?? '').toLowerCase();
 }
 
 /**
- * Client pre-configured for nRouter (OpenAI wire format).
+ * Client pre-configured for nRouter.
  *
- * Supports the same resources as the OpenAI SDK (chat.completions,
- * completions, embeddings, images, ...). Use `client.nrouterModels.list()` for
- * model discovery because OpenAI JS currently mis-parses nRouter's otherwise
- * valid raw model list.
+ * Every OpenAI resource (`chat.completions`, `embeddings`, `images`, …) is
+ * inherited unchanged. `client.nr` adds the nRouter surface.
  */
 export class nRouter extends OpenAI {
+  /** Model discovery. See models.ts for why it reads the raw response. */
   readonly nrouterModels: NRouterModels;
+  /** Snake-case alias kept for callers written against 1.0.0. */
   readonly nrouter_models: NRouterModels;
+  /** Everything the playground can do. */
+  readonly nr: NRouterSurface;
 
   constructor(options: NRouterOptions = {}) {
     const apiKey = resolveApiKey(options?.apiKey);
     const baseURL = options?.baseURL || DEFAULT_BASE_URL;
 
-    super({
-      ...options,
-      apiKey,
-      baseURL,
-    });
+    super({ ...options, apiKey, baseURL });
 
     this.nrouterModels = new NRouterModels(this as unknown as RawRequester);
     this.nrouter_models = this.nrouterModels;
+    this.nr = new NRouterSurface(this);
   }
+}
+
+/**
+ * The nRouter-specific surface, hung off `client.nr` so it cannot collide with
+ * a vendor resource now or after an upstream release.
+ */
+export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
+  readonly media: Multimodal;
+
+  constructor(private readonly client: nRouter) {
+    this.media = new Multimodal(this);
+  }
+
+  /** Model discovery, reachable from the same namespace as everything else. */
+  get models(): NRouterModels {
+    return this.client.nrouterModels;
+  }
+
+  /** One buffered call with full playground parity; returns body AND metadata. */
+  chat(opts: NRouterCallOptions): Promise<NRouterResponse<Record<string, unknown>>> {
+    return runChat(this, opts);
+  }
+
+  /** The assistant text of a buffered reply, defensively. */
+  text(res: NRouterResponse<Record<string, unknown>>): string {
+    return chatText(res);
+  }
+
+  /** The same options against several models at once, results in model order. */
+  compare(
+    opts: NRouterCallOptions,
+    models: string[],
+  ): Promise<NRouterResponse<Record<string, unknown>>[]> {
+    return runCompare(this, opts, models);
+  }
+
+  /** Server-sent-events streaming, with the response metadata beside it. */
+  stream(opts: NRouterCallOptions, signal?: AbortSignal): Promise<StreamResult> {
+    return streamChat(this, opts, signal);
+  }
+
+  /** Parse the `x-nr-*` headers of a response obtained some other way. */
+  meta(headers: HeaderSource): ResponseMeta {
+    return metaFromHeaders(headers);
+  }
+
+  // --- ChatRunner ---------------------------------------------------------
+  async request(
+    pathOrReq: string | TransportRequest,
+    body?: unknown,
+  ): Promise<
+    { status: number; headers: HeaderSource; text: string; contentType: string } & TransportResponse
+  > {
+    // ONE method serving both seams. ChatRunner calls request(path, body);
+    // Transport (multimodal) calls request({method, path, body, ...}). They are
+    // distinguished by argument shape rather than by two near-identical
+    // methods, because two implementations of "send a request" is exactly how
+    // a header or a refusal ends up applied on one path and not the other.
+    const req: TransportRequest =
+      typeof pathOrReq === 'string'
+        ? { method: 'POST', path: pathOrReq, contentType: 'application/json', body: encodeJson(body) }
+        : pathOrReq;
+
+    let res: FetchResponse;
+    try {
+      res = await this.raw(req);
+    } catch (err) {
+      const recovered = responseFromApiError(err);
+      const headers = recovered.headers;
+      const bytes = new TextEncoder().encode(recovered.text);
+      return {
+        status: recovered.status,
+        headers,
+        text: recovered.text,
+        contentType: contentTypeOf(headers),
+        bytes: async () => bytes,
+      };
+    }
+
+    const buffer = new Uint8Array(await res.arrayBuffer());
+    return {
+      status: res.status,
+      headers: res.headers,
+      text: new TextDecoder().decode(buffer),
+      contentType: contentTypeOf(res.headers),
+      bytes: async () => buffer,
+    };
+  }
+
+  // --- StreamRunner -------------------------------------------------------
+  async open(
+    path: string,
+    body: unknown,
+    signal?: AbortSignal,
+  ): Promise<{
+    status: number;
+    headers: HeaderSource;
+    body: AsyncIterable<Uint8Array> | null;
+    text?: () => Promise<string>;
+  }> {
+    let res: FetchResponse;
+    try {
+      res = await this.raw({
+        method: 'POST',
+        path,
+        contentType: 'application/json',
+        body: encodeJson(body),
+        signal,
+      });
+    } catch (err) {
+      const recovered = responseFromApiError(err);
+      return {
+        status: recovered.status,
+        headers: recovered.headers,
+        body: null,
+        text: async () => recovered.text,
+      };
+    }
+    return {
+      status: res.status,
+      headers: res.headers,
+      // A stream must NOT be buffered here: the whole point is that the caller
+      // sees the first token before the last one exists.
+      body: res.body as unknown as AsyncIterable<Uint8Array> | null,
+      text: () => res.text(),
+    };
+  }
+
+  /**
+   * The single place a request leaves this SDK.
+   *
+   * It goes through the VENDOR client's own pipeline, which is what keeps the
+   * caller's `fetch` override, `timeout`, `maxRetries`, `httpAgent`,
+   * `defaultHeaders` and `defaultQuery` applied to every nRouter call too —
+   * and is why this SDK never touches the API key itself.
+   */
+  private async raw(req: TransportRequest): Promise<FetchResponse> {
+    const headers: Record<string, string> = {};
+    if (req.contentType) headers['content-type'] = req.contentType;
+
+    const options = {
+      body: req.body,
+      headers,
+      signal: req.signal as AbortSignal | undefined,
+      // The vendor client would otherwise JSON-encode `body` a second time.
+      __binaryRequest: true,
+    } as unknown as Record<string, unknown>;
+
+    const promise =
+      req.method === 'GET'
+        ? this.client.get(req.path, options)
+        : this.client.post(req.path, options);
+    const res = (await promise.asResponse()) as unknown as FetchResponse;
+    // DUCK-TYPED, not `instanceof Response`. MEASURED: the vendor client hands
+    // back a Response whose CONSTRUCTOR IS NAMED `Response` but is not the
+    // global one — node-fetch's, or undici's bundled copy, depending on the
+    // runtime. `res instanceof Response` is therefore false for a perfectly
+    // good response, and the guard rejected every call in the first end-to-end
+    // run. Check for the capabilities actually used instead.
+    if (typeof res?.status !== 'number' || typeof res?.headers?.get !== 'function') {
+      throw transportError('the vendor client returned an unusable response object');
+    }
+    return res;
+  }
+}
+
+/**
+ * The slice of a fetch Response this SDK uses.
+ *
+ * Structural on purpose: see the note in `raw` — the concrete class differs by
+ * runtime and naming it would tie the SDK to one of them.
+ */
+interface FetchResponse {
+  status: number;
+  headers: { get(name: string): string | null };
+  arrayBuffer(): Promise<ArrayBuffer>;
+  text(): Promise<string>;
+  body: unknown;
+}
+
+function encodeJson(body: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(body ?? {}));
 }

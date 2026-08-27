@@ -11,7 +11,7 @@
 // and a live call cannot.
 
 import type { NRouterCallOptions, ResponseMeta } from './types';
-import { metaFromHeaders } from './meta';
+import { metaFromHeaders , type HeaderSource } from './meta';
 import { createError, type nRouterError } from './errors';
 import { buildChatBody } from './options';
 import { buildSamplingParams } from './sampling';
@@ -60,7 +60,7 @@ export interface StreamRunner {
     signal?: AbortSignal,
   ): Promise<{
     status: number;
-    headers: Headers | Record<string, string | string[] | undefined>;
+    headers: HeaderSource;
     body: AsyncIterable<Uint8Array> | null;
     /** Read the whole body as text. Used only on a non-2xx, to classify it. */
     text?: () => Promise<string>;

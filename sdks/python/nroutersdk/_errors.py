@@ -195,7 +195,7 @@ class nRouterServiceError(nRouterError):
     """
 
     code = "service_unavailable"
-    status_code = 503
+    status_code = None
 
 
 __all__ = [

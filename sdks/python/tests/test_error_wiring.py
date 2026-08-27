@@ -21,6 +21,7 @@ from nroutersdk import (
     nRouterGuardrailBlockedError,
     nRouterNotFoundError,
     nRouterRateLimitError,
+    nRouterServiceError,
     nRouter,
 )
 
@@ -63,6 +64,7 @@ def chat(c: nRouter):
         (402, "insufficient credits", nRouterCreditError),
         (404, "unknown model: gpt-9", nRouterNotFoundError),
         (429, "rate limit exceeded", nRouterRateLimitError),
+        (500, "a backend service is temporarily unavailable", nRouterServiceError),
     ],
 )
 def test_a_real_call_raises_the_typed_error(status, message, expected):

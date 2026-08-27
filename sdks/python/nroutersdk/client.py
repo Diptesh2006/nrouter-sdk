@@ -195,8 +195,10 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             code=gateway_code,
         ) from err
 
-    if status == 503:
-        raise nRouterServiceError(message, request_id=request_id) from err
+    if status == 500 or status == 503:
+        raise nRouterServiceError(
+            message, request_id=request_id, status_code=status
+        ) from err
 
 
 # ---------------------------------------------------------------------------

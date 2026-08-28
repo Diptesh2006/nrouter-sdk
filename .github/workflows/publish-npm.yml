@@ -266,6 +266,38 @@ jobs:
       # halves: a token left beside OIDC is a fallback npm prefers silently, so
       # the run goes green without proving OIDC works — and bypass-2FA tokens
       # lose direct publish in January 2027.
+      # The token is only as scoped as the registry it is SENT to. npm gives a
+      # project `.npmrc` precedence over the one setup-node writes, and
+      # `publishConfig.registry` overrides both for a publish — so a merged
+      # change under sdks/js could redirect this upload, and the long-lived
+      # credential, to a host the attacker controls. `--ignore-scripts` does
+      # not help: no script has to run for that.
+      #
+      # This runs BEFORE the token is ever in an environment. It is a
+      # token-arm control and can go away with the token.
+      - name: Refuse a repository-controlled npm config
+        run: |
+          set -euo pipefail
+          for f in ../../.npmrc ../.npmrc ./.npmrc; do
+            if [ -e "$f" ]; then
+              echo "::error::$f exists; a repository-controlled npm config can redirect the publish registry and with it the token"
+              exit 1
+            fi
+          done
+
+          reg="$(node -p "require('./package.json').publishConfig?.registry ?? ''")"
+          if [ -n "$reg" ] && [ "$reg" != "https://registry.npmjs.org/" ] && [ "$reg" != "https://registry.npmjs.org" ]; then
+            echo "::error::package.json publishConfig.registry is '$reg'; this workflow publishes only to registry.npmjs.org"
+            exit 1
+          fi
+
+          eff="$(npm config get registry)"
+          if [ "$eff" != "https://registry.npmjs.org/" ]; then
+            echo "::error::effective npm registry is '$eff', not registry.npmjs.org"
+            exit 1
+          fi
+          echo "registry confirmed: $eff"
+
       #
       # --ignore-scripts is a CREDENTIAL control, not a build preference.
       # `npm publish` runs prepack/prepublishOnly, and it runs them with

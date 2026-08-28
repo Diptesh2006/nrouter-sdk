@@ -13,15 +13,16 @@
 #
 # and a merge without a bump does nothing, quietly and green.
 #
-# NO REPO SECRET. Publishing is npm trusted publishing (OIDC) against a
-# trusted publisher registered on the package for THIS repo and THIS workflow
-# filename — so renaming this file breaks publishing until the registration is
-# updated to match, which is the security property, not a snag.
+# Requires the NPM_TOKEN repo secret, for now. The intended end state is npm
+# trusted publishing (OIDC) with NO secret at all; everything on this side is
+# ready and the remaining step is a registration only a human with 2FA can
+# perform. The Publish step carries the exact fields and the measured proof
+# that it is not yet done.
 #
-# The credential this replaced was a bypass-2FA granular token, and npm is
-# withdrawing direct publish from those in January 2027
-# (github.blog changelog, 2026-07-31). OIDC deletes the credential rather than
-# rotating it: nothing to expire, leak, or re-issue every 90 days.
+# It matters on a clock, not just on principle: the current credential is a
+# bypass-2FA granular token, npm withdraws direct publish from those in
+# January 2027 (github.blog changelog, 2026-07-31), and this one expires
+# 2026-11-26.
 name: npm
 
 on:
@@ -232,8 +233,35 @@ jobs:
       # of bypass-2FA publishing would land as a surprise outage. The proof
       # this path ran is the provenance attestation on the published version
       # naming this workflow.
+      # 🛑 STILL THE TOKEN PATH — trusted publishing is NOT yet registered.
+      # MEASURED, run 33205627773 (2026-08-28): with this env removed, npm
+      # signed a provenance statement and then failed
+      #
+      #     npm error code E404
+      #     404 Not Found - PUT https://registry.npmjs.org/@nrouter_ai%2fsdk
+      #     '@nrouter_ai/sdk@1.1.2' could not be found or you do not have
+      #     permission to access it
+      #
+      # which is npm's UNAUTHENTICATED response wearing a 404 — no credential
+      # was presented, because no trusted publisher matched. Read it as "the
+      # package is missing" and you will go looking in the wrong place; it is
+      # published and it is public.
+      #
+      # THE ONE REMAINING STEP IS A HUMAN AT npmjs.com, because editing
+      # trusted-publishing configuration is itself on npm's interactive-2FA
+      # list: @nrouter_ai/sdk > Settings > Trusted Publisher > GitHub Actions,
+      # organization `nRouterAI`, repository `nrouter-sdk`, workflow filename
+      # `publish-npm.yml`, environment EMPTY (this job declares none, and a
+      # name here would never match).
+      #
+      # Then DELETE these two lines and `gh secret delete NPM_TOKEN`. Both
+      # halves: a token left beside OIDC is a fallback npm prefers silently, so
+      # the run goes green without proving OIDC works — and bypass-2FA tokens
+      # lose direct publish in January 2027.
       - name: Publish
         run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Verify the registry serves it
         env:

@@ -285,11 +285,23 @@ jobs:
             fi
           done
 
-          reg="$(node -p "require('./package.json').publishConfig?.registry ?? ''")"
-          if [ -n "$reg" ] && [ "$reg" != "https://registry.npmjs.org/" ] && [ "$reg" != "https://registry.npmjs.org" ]; then
-            echo "::error::package.json publishConfig.registry is '$reg'; this workflow publishes only to registry.npmjs.org"
-            exit 1
-          fi
+          # ALLOWLIST publishConfig, do not merely check `registry`. npm treats
+          # EVERY publishConfig key as runtime config, so checking the registry
+          # host alone leaves the transport open: `https-proxy` plus
+          # `strict-ssl: false` routes this publish through an attacker's TLS
+          # proxy while the hostname still reads registry.npmjs.org, and npm
+          # sends NODE_AUTH_TOKEN to it because the registry "matches".
+          # `access: public` is the only key this package needs.
+          node -e '
+            const pc = require("./package.json").publishConfig ?? {};
+            const allowed = { access: "public" };
+            const bad = Object.entries(pc).filter(([k, v]) => allowed[k] !== v);
+            if (bad.length) {
+              console.error("::error::package.json publishConfig may contain only {access:\"public\"}; refusing: " +
+                bad.map(([k, v]) => k + "=" + JSON.stringify(v)).join(", "));
+              process.exit(1);
+            }
+          '
 
           eff="$(npm config get registry)"
           if [ "$eff" != "https://registry.npmjs.org/" ]; then

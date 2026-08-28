@@ -48,3 +48,20 @@ default base URL of `https://api.nrouter.ai/v1`. It doesn't yet have the typed e
 automatic cost-header capture, or `credits`/`guardrails`/`prompts` namespaces that
 [`sdks/python/`](../python/) has — see that package for the fuller pattern this one will
 grow into.
+
+## How guardrails, budgets and routing work
+
+They are enforced at the **gateway**, not in this package — so they apply to
+every request on the key, they behave the same from every nRouter SDK, and this
+client cannot turn them off:
+
+- [Guardrails](https://nrouter.ai/docs/guides/guardrails) — PII redaction and
+  injection protection, pre-call and post-call.
+- [Budget controls](https://nrouter.ai/docs/guides/budget-controls) — spend
+  limits per key, team and organization.
+- [Routing and fallbacks](https://nrouter.ai/docs/guides/router-settings) —
+  failover chains across providers.
+- [Observability](https://nrouter.ai/docs/guides/observability) — per-request
+  cost and usage.
+- [Java quickstart](https://nrouter.ai/docs/sdks/java) and the
+  [API reference](https://nrouter.ai/docs/api-reference).

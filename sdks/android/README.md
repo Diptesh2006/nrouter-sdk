@@ -95,3 +95,20 @@ export ANDROID_HOME=$HOME/Library/Android/sdk    # or set sdk.dir in local.prope
 
 Publishing — **and the ordering rule that the core must be on Central first** —
 is in [PUBLISHING.md](PUBLISHING.md).
+
+## How guardrails, budgets and routing work
+
+They are enforced at the **gateway**, not in this package — so they apply to
+every request on the key, they behave the same from every nRouter SDK, and this
+client cannot turn them off:
+
+- [Guardrails](https://nrouter.ai/docs/guides/guardrails) — PII redaction and
+  injection protection, pre-call and post-call.
+- [Budget controls](https://nrouter.ai/docs/guides/budget-controls) — spend
+  limits per key, team and organization.
+- [Routing and fallbacks](https://nrouter.ai/docs/guides/router-settings) —
+  failover chains across providers.
+- [Observability](https://nrouter.ai/docs/guides/observability) — per-request
+  cost and usage.
+- [API reference](https://nrouter.ai/docs/api-reference) — the wire
+  contract every SDK here implements.

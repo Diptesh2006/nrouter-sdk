@@ -57,6 +57,22 @@ jobs:
           cache: npm
           cache-dependency-path: sdks/js/package-lock.json
 
+      # The runner's Node 22 bundles npm 10.9.8, and OIDC trusted publishing
+      # landed in npm 11.5.0 (2025-07-24, npm/cli#8336). Registering a trusted
+      # publisher on npmjs.com while the runner still shipped npm 10 would look
+      # like the registration had failed: npm would simply not attempt OIDC and
+      # would fall back to NODE_AUTH_TOKEN, publishing successfully by the old
+      # path with nothing saying so.
+      #
+      # This raises the floor NOW, before that switch, so the change that turns
+      # OIDC on is one line and not a debugging session. It alters nothing
+      # today — with a token present and no trusted publisher registered, npm
+      # 11 authenticates exactly as npm 10 did.
+      - name: npm >= 11.5.1, the floor for OIDC trusted publishing
+        run: |
+          npm install -g 'npm@^11.5.1'
+          npm --version
+
       - run: npm ci
 
       # The tests and the cross-SDK contract gate. Nothing publishes if either

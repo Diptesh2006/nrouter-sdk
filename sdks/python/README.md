@@ -5,6 +5,10 @@ provider clouds. One key, one bill,
 the live multi-provider catalog, built-in guardrails, and prompt management. The exact current
 models are published at [nrouter.ai/api/public/models](https://nrouter.ai/api/public/models).
 
+As of 2026-08-29, the runnable examples use Anthropic Claude models because
+those are the models currently live through the gateway. Check
+`client.models.list()` with your key before choosing another model.
+
 ## SDKs
 
 | Language | Package | Install | Status |
@@ -74,7 +78,7 @@ SDKs that have **not** been built — do not paste them into a customer doc.
 ```python
 from nroutersdk import nRouter
 client = nRouter()
-response = client.chat.completions.create(model="gpt-5.5", messages=[{"role": "user", "content": "Hello!"}])
+response = client.chat.completions.create(model="anthropic/claude-sonnet-4-5-20250929", messages=[{"role": "user", "content": "Hello!"}])
 print(f"Cost: ${client.last_response.cost}")
 print(client.last_response.response_cache)      # "hit", "miss", or None
 print(client.last_response.response_cache_age)  # seconds on hits, otherwise None
@@ -83,7 +87,7 @@ print(client.last_response.response_cache_age)  # seconds on hits, otherwise Non
 ### Anthropic Messages
 ```python
 message = client.messages.create(
-    model="claude-sonnet-4-5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     messages=[{"role": "user", "content": "Hello!"}],
     max_tokens=256,
 )
@@ -105,7 +109,7 @@ audio uploads remain multipart; large JSON message bodies are not truncated by t
 ```typescript
 import { nRouter } from "@nrouter_ai/sdk";
 const client = new nRouter();
-const res = await client.chat.completions.create({ model: "gpt-5.5", messages: [{ role: "user", content: "Hello!" }] });
+const res = await client.chat.completions.create({ model: "anthropic/claude-sonnet-4-5-20250929", messages: [{ role: "user", content: "Hello!" }] });
 ```
 
 ### Go
@@ -118,7 +122,7 @@ fmt.Println(client.LastResponse.Cost)
 ### Ruby
 ```ruby
 client = nRouter::Client.new
-response = client.chat(parameters: { model: "gpt-5.5", messages: [{ role: "user", content: "Hello!" }] })
+response = client.chat(parameters: { model: "anthropic/claude-sonnet-4-5-20250929", messages: [{ role: "user", content: "Hello!" }] })
 ```
 
 ### PHP
@@ -138,7 +142,7 @@ ChatCompletion resp = nrouter.openai().chat().completions().create(...);
 curl https://api.nrouter.ai/v1/chat/completions \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"gpt-5.5","messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"anthropic/claude-sonnet-4-5-20250929","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 ---

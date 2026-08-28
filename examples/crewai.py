@@ -14,7 +14,7 @@ from crewai import Agent, Task, Crew
 # nRouter SDK for guardrails, credits, prompts.
 # CrewAI uses env vars (OPENAI_API_KEY/OPENAI_API_BASE) for LLM calls.
 client = nRouter()  # reads NROUTER_API_KEY from env
-MODEL = "gpt-5.5"
+MODEL = "anthropic/claude-sonnet-4-5-20250929"
 
 # ━━━ 1. SEE WHAT THIS KEY CAN REACH ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -32,7 +32,7 @@ researcher = Agent(
     role="Researcher",
     goal="Find accurate information about a topic",
     backstory="You are an expert researcher with attention to detail.",
-    llm="claude-sonnet-4-5",
+    llm="anthropic/claude-sonnet-4-5-20250929",
     verbose=True,
 )
 
@@ -41,7 +41,7 @@ writer = Agent(
     role="Writer",
     goal="Write clear, engaging content",
     backstory="You are a skilled technical writer.",
-    llm="gpt-5.5",
+    llm="anthropic/claude-sonnet-4-5-20250929",
     verbose=True,
 )
 

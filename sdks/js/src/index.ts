@@ -5,7 +5,7 @@
  *
  *   const client = new nRouter();              // reads NROUTER_API_KEY
  *   const res = await client.nr.chat({
- *     model: "claude-sonnet-4-5",
+ *     model: "anthropic/claude-sonnet-4-5-20250929",
  *     prompt: "Hello!",
  *     guardrailIds: ["<uuid>"],                // playground parity
  *     cache: false,
@@ -26,6 +26,7 @@ export {
   type ResponseMeta,
   type HeaderName,
   type NRouterExtraBody,
+  type NRouterFeatureOptions,
   type NRouterCallOptions,
   type NRouterResponse,
   type ChatMessage,
@@ -34,6 +35,7 @@ export {
 } from './types';
 
 export { metaFromHeaders, metaFromLookup, isPriced, EMPTY_META } from './meta';
+export { jsonRequest } from './json';
 
 // Typed errors. Catch `nRouterError` for all of them, a subclass for one.
 export {
@@ -73,7 +75,7 @@ export {
 } from './sampling';
 
 // Body construction, exported for the same reason.
-export { buildChatBody, buildExtraBody, buildMessages } from './options';
+export { buildChatBody, buildExtraBody, buildFeatureBody, buildMessages } from './options';
 
 export { NRouterModels, type NRouterModel, type NRouterModelList, type RawRequester } from './models';
 

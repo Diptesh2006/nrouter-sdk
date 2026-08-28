@@ -18,6 +18,7 @@ import type {
   ChatMessage,
   NRouterCallOptions,
   NRouterExtraBody,
+  NRouterFeatureOptions,
 } from './types';
 
 /**
@@ -31,7 +32,7 @@ import type {
  * gateway rules §4f gate 5) — a body-supplied tenancy field is the
  * spend-attribution spoof that gate exists to stop.
  */
-export function buildExtraBody(opts: NRouterCallOptions): NRouterExtraBody {
+export function buildExtraBody(opts: NRouterFeatureOptions): NRouterExtraBody {
   const extra: NRouterExtraBody = {};
 
   if (opts.promptTemplateId) {
@@ -84,6 +85,16 @@ export function buildExtraBody(opts: NRouterCallOptions): NRouterExtraBody {
   }
 
   return extra;
+}
+
+export function buildFeatureBody(
+  body: Record<string, unknown>,
+  opts: NRouterFeatureOptions = {},
+): Record<string, unknown> {
+  return {
+    ...body,
+    ...buildExtraBody(opts),
+  };
 }
 
 /** Build the image content-parts for one turn, in the playground's order. */

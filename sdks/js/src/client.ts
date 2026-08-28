@@ -14,8 +14,10 @@ import { configurationError, isAbortLike, redactKeys, transportError } from './e
 import { metaFromHeaders, type HeaderSource } from './meta';
 import { NRouterModels, type RawRequester } from './models';
 import { Multimodal, type Transport, type TransportRequest, type TransportResponse } from './multimodal';
+import { buildFeatureBody } from './options';
+import { jsonRequest } from './json';
 import { streamChat, type StreamRunner, type StreamResult } from './stream';
-import type { NRouterCallOptions, NRouterResponse, ResponseMeta } from './types';
+import type { NRouterCallOptions, NRouterFeatureOptions, NRouterResponse, ResponseMeta } from './types';
 
 /** The gateway's customer surface. A dynamic value: override it for stage. */
 export const DEFAULT_BASE_URL = 'https://api.nrouter.ai/v1';
@@ -239,6 +241,27 @@ export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
   /** Server-sent-events streaming, with the response metadata beside it. */
   stream(opts: NRouterCallOptions, signal?: AbortSignal): Promise<StreamResult> {
     return streamChat(this, opts, signal);
+  }
+
+  /** POST /v1/responses with nRouter feature options and response metadata. */
+  responses(
+    body: Record<string, unknown>,
+    opts?: NRouterFeatureOptions,
+  ): Promise<NRouterResponse<Record<string, unknown>>> {
+    return jsonRequest(this, '/responses', buildFeatureBody(body, opts));
+  }
+
+  /** POST /v1/messages with nRouter feature options and response metadata. */
+  messages(
+    body: Record<string, unknown>,
+    opts?: NRouterFeatureOptions,
+  ): Promise<NRouterResponse<Record<string, unknown>>> {
+    return jsonRequest(this, '/messages', buildFeatureBody(body, opts));
+  }
+
+  /** POST /v1/messages/count_tokens. This endpoint is not billed. */
+  countTokens(body: Record<string, unknown>): Promise<NRouterResponse<Record<string, unknown>>> {
+    return jsonRequest(this, '/messages/count_tokens', body);
   }
 
   /** Parse the `x-nr-*` headers of a response obtained some other way. */

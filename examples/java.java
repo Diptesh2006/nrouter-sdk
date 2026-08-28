@@ -34,7 +34,7 @@ public class nRouterExample {
 
         ChatCompletion response = client.chat().completions().create(
                 ChatCompletionCreateParams.builder()
-                        .model("claude-sonnet-4-5")
+                        .model("anthropic/claude-sonnet-4-5-20250929")
                         .addMessage(ChatCompletionMessageParam.ofUser(
                                 ChatCompletionUserMessageParam.builder()
                                         .content("Hello!")
@@ -57,7 +57,7 @@ public class nRouterExample {
         try {
             client.chat().completions().create(
                 ChatCompletionCreateParams.builder()
-                    .model("gpt-5.5")
+                    .model("anthropic/claude-sonnet-4-5-20250929")
                     .addMessage(ChatCompletionMessageParam.ofUser(
                         ChatCompletionUserMessageParam.builder()
                             .content("My SSN is 123-45-6789")

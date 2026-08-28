@@ -13,7 +13,7 @@ from langchain_core.tools import tool
 # nRouter SDK handles auth, base URL, and nRouter-specific APIs.
 # LangChain's ChatOpenAI handles LLM calls pointed at nRouter.
 client = nRouter()  # reads NROUTER_API_KEY from env
-MODEL = "gpt-5.5"
+MODEL = "anthropic/claude-sonnet-4-5-20250929"
 NROUTER_BASE = "https://api.nrouter.ai"
 NROUTER_KEY = os.environ["NROUTER_API_KEY"]
 
@@ -61,7 +61,7 @@ except (nRouterGuardrailBlockedError, BadRequestError) as e:
 # Use a nRouter prompt template — injected server-side before the model sees it
 # The template's system prompt wraps your message automatically
 llm_with_prompt = ChatOpenAI(
-    model="gpt-5.5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     api_key=NROUTER_KEY,
     base_url=f"{NROUTER_BASE}/v1",
     model_kwargs={
@@ -79,7 +79,7 @@ print(f"\nSummarized (Spanish): {response.content}")
 # By default, ALL org-enabled guardrails apply automatically.
 # Pass nrouter_guardrail_ids to run only specific guardrails on this request.
 llm_selective_guardrails = ChatOpenAI(
-    model="gpt-5.5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     api_key=NROUTER_KEY,
     base_url=f"{NROUTER_BASE}/v1",
     model_kwargs={
@@ -90,7 +90,7 @@ llm_selective_guardrails = ChatOpenAI(
 # Disable cache for a single request
 # Cache is enabled by default. Pass nrouter_cache: False for a fresh response.
 llm_no_cache = ChatOpenAI(
-    model="gpt-5.5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     api_key=NROUTER_KEY,
     base_url=f"{NROUTER_BASE}/v1",
     model_kwargs={

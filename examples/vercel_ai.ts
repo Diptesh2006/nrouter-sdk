@@ -26,7 +26,7 @@ const headers = { Authorization: `Bearer ${process.env.NROUTER_API_KEY}` };
 // Cache, guardrails, and rate limits auto-apply from org config.
 
 const { text } = await generateText({
-  model: nrouterRouter("claude-sonnet-4-5"),
+  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
   prompt: "What is quantum computing?",
 });
 console.log(text);
@@ -35,7 +35,7 @@ console.log(text);
 // ━━━ 3. STREAMING WITH GUARDRAILS ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const stream = await streamText({
-  model: nrouterRouter("gpt-5.5"),
+  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
   prompt: "Write a haiku about API security",
 });
 for await (const chunk of stream.textStream) {
@@ -45,7 +45,7 @@ for await (const chunk of stream.textStream) {
 // ━━━ 4. WITH PROMPT TEMPLATE + VARIABLES ━━━━━━━━━━━━━━━━━━━
 
 const { text: summarized } = await generateText({
-  model: nrouterRouter("gpt-5.5"),
+  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
   prompt: "Q1 revenue was $4.2M, up 23% YoY with strong enterprise growth...",
   // nRouter-specific: inject a server-side prompt template with Jinja2 variables
   body: {
@@ -59,7 +59,7 @@ console.log(`\nSummarized: ${summarized}`);
 // By default, ALL org-enabled guardrails apply automatically.
 // Pass nrouter_guardrail_ids to run only specific guardrails on this request.
 const { text: guarded } = await generateText({
-  model: nrouterRouter("gpt-5.5"),
+  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
   prompt: "Summarize Q1 earnings...",
   body: {
     nrouter_guardrail_ids: ["guardrail-uuid-1", "guardrail-uuid-2"],
@@ -69,7 +69,7 @@ const { text: guarded } = await generateText({
 // Disable cache for a single request
 // Cache is enabled by default. Pass nrouter_cache: false for a fresh response.
 const { text: fresh } = await generateText({
-  model: nrouterRouter("gpt-5.5"),
+  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
   prompt: "What's the latest news?",
   body: {
     nrouter_cache: false,
@@ -79,7 +79,7 @@ const { text: fresh } = await generateText({
 // ━━━ 5. TOOL CALLING WITH GUARDRAILS ━━━━━━━━━━━━━━━━━━━━━━
 
 const { text: weatherResult } = await generateText({
-  model: nrouterRouter("gpt-5.5"),
+  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
   prompt: "What's the weather in Tokyo?",
   tools: {
     getWeather: tool({
@@ -111,7 +111,7 @@ const { text: weatherResult } = await generateText({
 //   // Prompt templates injected server-side.
 //   // Cost tracked per-request.
 //   const result = streamText({
-//     model: nrouter("gpt-5.5"),
+//     model: nrouter("anthropic/claude-sonnet-4-5-20250929"),
 //     messages,
 //     body: {
 //       nrouter_prompt_template_id: "customer-support-template",

@@ -25,7 +25,7 @@ if not os.environ.get("NROUTER_API_KEY"):
 # Reads NROUTER_API_KEY and defaults to https://api.nrouter.ai/v1.
 client = nRouter()
 
-MODEL = "gpt-5.5"
+MODEL = "anthropic/claude-sonnet-4-5-20250929"
 
 # ━━━ 1. WHAT THIS KEY CAN REACH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Scoped to your key — you see exactly the models you may call.
@@ -75,7 +75,7 @@ print()
 # ━━━ 5. THE ANTHROPIC WIRE, SAME KEY ━━━━━━━━━━━━━━━━━━━━━━━
 # `/v1/messages` speaks Anthropic's format. Use it with an Anthropic model.
 message = client.messages.create(
-    model="claude-sonnet-4-5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     messages=[{"role": "user", "content": "Hello!"}],
     max_tokens=512,
 )
@@ -83,7 +83,7 @@ print(message["content"][0]["text"])
 
 # Count input tokens without generating anything.
 print(client.messages.count_tokens(
-    model="claude-sonnet-4-5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     messages=[{"role": "user", "content": "Hello!"}],
 ))
 

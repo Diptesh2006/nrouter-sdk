@@ -12,7 +12,7 @@ NROUTER_KEY = os.environ["NROUTER_API_KEY"]
 # nRouter SDK for guardrails, credits, prompts.
 # AutoGen uses config_list for LLM calls pointed at nRouter.
 client = nRouter()  # reads NROUTER_API_KEY from env
-MODEL = "gpt-5.5"
+MODEL = "anthropic/claude-sonnet-4-5-20250929"
 
 # ━━━ 1. SEE WHAT THIS KEY CAN REACH ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -27,12 +27,12 @@ print("Models:", [m.id for m in client.models.list().data])
 
 config_list = [
     {
-        "model": "claude-sonnet-4-5",
+        "model": "anthropic/claude-sonnet-4-5-20250929",
         "api_key": NROUTER_KEY,
         "base_url": f"{NROUTER_BASE}/v1",
     },
     {
-        "model": "gpt-5.5",
+        "model": "anthropic/claude-sonnet-4-5-20250929",
         "api_key": NROUTER_KEY,
         "base_url": f"{NROUTER_BASE}/v1",
     },

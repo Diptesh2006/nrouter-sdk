@@ -9,7 +9,7 @@ const client = new OpenAI({
 });
 
 const response = await client.chat.completions.create({
-  model: "claude-sonnet-4-5",
+  model: "anthropic/claude-sonnet-4-5-20250929",
   messages: [{ role: "user", content: "Hello, nRouter!" }],
 });
 

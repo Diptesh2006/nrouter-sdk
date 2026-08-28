@@ -1,5 +1,5 @@
 import type { ChatRunner, ChatRunnerResponse } from './chat';
-import { createError, parseErrorBody, transportError } from './errors';
+import { configurationError, createError, parseErrorBody, transportError } from './errors';
 import { metaFromHeaders } from './meta';
 import type { NRouterResponse, ResponseMeta } from './types';
 
@@ -15,11 +15,26 @@ export async function jsonRequest(
     throw gatewayFailure(res, meta);
   }
 
+  // A 2xx that is not JSON is a REAL response the caller was BILLED for —
+  // audio bytes, a video body, an SSE stream. CONFIGURATION, not transport,
+  // and the distinction is money: `transportError` is retryable, so a caller's
+  // ordinary `while (isRetryable(e))` loop would resend an already-charged
+  // POST at whatever rate the loop turns. The wrong method was called for this
+  // endpoint and no retry changes that. Same refusal, same reasoning, as
+  // chat.ts REFUSAL 1 and multimodal.ts `requireJson`.
+  //
+  // `status` and `meta` are carried deliberately: without them the failure
+  // reports status null — "never reached the gateway" — on a request that
+  // plainly did, and the request id, the caller's only join key to the spend
+  // row, would exist nowhere but a message string.
   if (!isJson(res.contentType)) {
-    throw transportError(`${path} returned ${res.contentType || 'no content type'}, not JSON`, {
-      status: res.status,
-      meta,
-    });
+    throw configurationError(
+      `${path} returned ${res.status} with content-type ` +
+        `"${res.contentType || 'none'}", which is not JSON. Use the raw-bytes ` +
+        'path for binary or streaming endpoints — parsing this as JSON would ' +
+        'report success with an empty body for a request that was billed.',
+      { status: res.status, meta },
+    );
   }
 
   let decoded: unknown;

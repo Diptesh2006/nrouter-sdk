@@ -134,7 +134,13 @@ test('generic JSON helpers classify gateway errors', async () => {
   );
 });
 
-test('generic JSON helpers reject non-JSON success bodies as transport failures', async () => {
+// This test asserted nRouterTransportError and was PINNING THE DEFECT: it
+// passed precisely because json.ts classified a billed 2xx as retryable. A
+// test can be green and still be the bug's alibi. Corrected to the
+// classification chat.ts and multimodal.ts have used all along; the money
+// reasoning is on the regression test below.
+test('generic JSON helpers reject non-JSON success bodies as a permanent misuse', async () => {
+  const { nRouterConfigurationError } = require('../dist/index');
   const client = new nRouter({
     apiKey: TEST_KEY,
     maxRetries: 0,
@@ -143,6 +149,43 @@ test('generic JSON helpers reject non-JSON success bodies as transport failures'
 
   await assert.rejects(
     () => client.nr.responses({ model: 'm', input: 'x' }),
-    nRouterTransportError,
+    nRouterConfigurationError,
+  );
+});
+
+// REGRESSION — a 2xx that is not JSON must be PERMANENT, never retryable.
+//
+// The response was BILLED. `nr.responses()`/`nr.messages()` returning a
+// retryable error here means a caller's ordinary `while (isRetryable(e))` loop
+// resends an already-charged POST, at whatever rate the loop turns. chat.ts
+// (REFUSAL 1) and multimodal.ts (`requireJson`) both classify this as
+// CONFIGURATION for exactly that reason — the wrong method was called for the
+// endpoint, and no retry can change it. json.ts shipped it as a transport
+// error, which is the same defect a reviewer already caught once in the Go
+// draft.
+test('a 2xx that is not JSON is permanent, not retryable — a retry re-bills it', async () => {
+  const { isRetryable, nRouterConfigurationError } = require('../dist/index');
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    fetch: async () =>
+      new Response('RIFF....binary audio....', {
+        status: 200,
+        headers: { 'content-type': 'audio/mpeg', 'x-nr-request-id': 'req_billed_1' },
+      }),
+  });
+
+  await assert.rejects(
+    () => client.nr.responses({ model: 'claude-sonnet-4-5', input: 'hi' }),
+    (err) => {
+      assert.ok(
+        err instanceof nRouterConfigurationError,
+        `expected a configuration error, got ${err?.constructor?.name}`,
+      );
+      assert.equal(isRetryable(err), false, 'a billed 2xx must never be retryable');
+      // The request id is the caller's only join key to the spend row.
+      assert.equal(err.meta?.requestId, 'req_billed_1');
+      assert.equal(err.status, 200);
+      return true;
+    },
   );
 });

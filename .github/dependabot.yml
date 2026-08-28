@@ -1,73 +1,96 @@
 # Dependency updates for a public repo with ten SDK toolchains.
 #
-# Grouped and monthly on purpose: ungrouped weekly updates across this many
-# ecosystems produce more pull requests than anyone reads, and a review queue
-# nobody reads is how a malicious update gets waved through. Security updates
-# are NOT subject to this schedule — Dependabot raises those immediately.
+# Monthly and grouped: ungrouped weekly updates across this many ecosystems
+# produce more pull requests than anyone reads, and a review queue nobody reads
+# is how a malicious update gets waved through. Security advisories ignore this
+# schedule entirely — Dependabot opens those immediately for any CVE.
+#
+# MAJORS ARE ALWAYS THEIR OWN GROUP. Folded in with routine updates, one
+# breaking major blocks every unrelated patch in the same PR and hides which
+# change caused the failure. `dependency-type` splits are declared only for npm
+# and pip, the ecosystems that distinguish production from development; the
+# others get minor+patch and major.
+#
+# ⚠️ Dependabot must never touch a `version` field: on main, a version bump
+# PUBLISHES an immutable registry release. Nothing here asks it to — do not add
+# a `versioning-strategy` that would.
 version: 2
+
 updates:
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: monthly }
+    schedule: &monthly
+      interval: monthly
+      day: "first"
+      time: "07:00"
+      timezone: "UTC"
+    commit-message: { prefix: ci }
     groups:
-      actions: { patterns: ['*'] }
-    commit-message: { prefix: 'ci' }
+      actions-minor-patch: { update-types: [minor, patch] }
+      actions-major:       { update-types: [major] }
 
   - package-ecosystem: npm
     directory: /sdks/js
-    schedule: { interval: monthly }
+    schedule: *monthly
+    commit-message: { prefix: deps(js) }
     groups:
-      js: { patterns: ['*'] }
-    commit-message: { prefix: 'deps(js)' }
-    # A version bump on main PUBLISHES. Dependabot must never touch the
-    # version field, and it does not — but this is where someone would add a
-    # "versioning-strategy" that made it, so: do not.
+      js-prod:  { dependency-type: production,  update-types: [minor, patch] }
+      js-dev:   { dependency-type: development, update-types: [minor, patch] }
+      js-major: { update-types: [major] }
 
   - package-ecosystem: pip
     directory: /sdks/python
-    schedule: { interval: monthly }
+    schedule: *monthly
+    commit-message: { prefix: deps(py) }
     groups:
-      python: { patterns: ['*'] }
-    commit-message: { prefix: 'deps(py)' }
+      py-prod:  { dependency-type: production,  update-types: [minor, patch] }
+      py-dev:   { dependency-type: development, update-types: [minor, patch] }
+      py-major: { update-types: [major] }
 
   - package-ecosystem: cargo
     directory: /sdks/rust
-    schedule: { interval: monthly }
+    schedule: *monthly
+    commit-message: { prefix: deps(rust) }
     groups:
-      rust: { patterns: ['*'] }
-    commit-message: { prefix: 'deps(rust)' }
+      rust-minor-patch: { update-types: [minor, patch] }
+      rust-major:       { update-types: [major] }
 
   - package-ecosystem: maven
     directory: /sdks/java
-    schedule: { interval: monthly }
+    schedule: *monthly
+    commit-message: { prefix: deps(java) }
     groups:
-      java: { patterns: ['*'] }
-    commit-message: { prefix: 'deps(java)' }
+      java-minor-patch: { update-types: [minor, patch] }
+      java-major:       { update-types: [major] }
 
   - package-ecosystem: gradle
     directory: /sdks/kotlin
-    schedule: { interval: monthly }
+    schedule: *monthly
+    commit-message: { prefix: deps(kotlin) }
     groups:
-      kotlin: { patterns: ['*'] }
-    commit-message: { prefix: 'deps(kotlin)' }
+      kotlin-minor-patch: { update-types: [minor, patch] }
+      kotlin-major:       { update-types: [major] }
 
   - package-ecosystem: gradle
     directory: /sdks/android
-    schedule: { interval: monthly }
+    schedule: *monthly
+    commit-message: { prefix: deps(android) }
     groups:
-      android: { patterns: ['*'] }
-    commit-message: { prefix: 'deps(android)' }
+      android-minor-patch: { update-types: [minor, patch] }
+      android-major:       { update-types: [major] }
 
   - package-ecosystem: pub
     directory: /sdks/dart
-    schedule: { interval: monthly }
+    schedule: *monthly
+    commit-message: { prefix: deps(dart) }
     groups:
-      dart: { patterns: ['*'] }
-    commit-message: { prefix: 'deps(dart)' }
+      dart-minor-patch: { update-types: [minor, patch] }
+      dart-major:       { update-types: [major] }
 
   - package-ecosystem: gomod
     directory: /sdks/go
-    schedule: { interval: monthly }
+    schedule: *monthly
+    commit-message: { prefix: deps(go) }
     groups:
-      go: { patterns: ['*'] }
-    commit-message: { prefix: 'deps(go)' }
+      go-minor-patch: { update-types: [minor, patch] }
+      go-major:       { update-types: [major] }

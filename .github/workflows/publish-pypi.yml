@@ -18,7 +18,7 @@ name: pypi
 on:
   push:
     branches: [main]
-    paths: &paths
+    paths:
       - 'sdks/python/**'
       - 'spec/**'
       - 'conformance/**'
@@ -27,7 +27,11 @@ on:
   # NOTHING — see IS_RELEASE below. Without this, a PR touching only the Python
   # SDK ran zero checks and its first execution was the run that published it.
   pull_request:
-    paths: *paths
+    paths:
+      - 'sdks/python/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - '.github/workflows/publish-pypi.yml'
   workflow_dispatch:
 
 permissions:

@@ -28,7 +28,7 @@ name: npm
 on:
   push:
     branches: [main]
-    paths: &paths
+    paths:
       - 'sdks/js/**'
       - 'spec/**'
       - 'conformance/**'
@@ -52,7 +52,11 @@ on:
   # emits no release evidence — tag-only `release-validation` remains the sole
   # authoritative full suite.
   pull_request:
-    paths: *paths
+    paths:
+      - 'sdks/js/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - '.github/workflows/publish-npm.yml'
   workflow_dispatch:
 
 # Default for the whole file. `id-token: write` is granted to the publish job

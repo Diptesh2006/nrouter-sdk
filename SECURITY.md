@@ -48,11 +48,19 @@ maintained, and is not this project. Use `nrouter-sdk`.
 
 ## Release integrity
 
-Published npm versions carry [npm provenance][prov] attestations linking the
-tarball to the exact commit and workflow that built it. Verify with:
+npm versions **1.1.1 and later** carry [npm provenance][prov] attestations
+linking the tarball to the exact commit and workflow that built it. Verify with:
 
 ```bash
 npm audit signatures
 ```
+
+⚠️ **1.0.0 and 1.1.0 have NO attestation** — verified against the registry, not
+assumed. Both were uploaded by hand before CI held a working credential, and
+provenance can only be produced by a GitHub Actions run, so it cannot be added
+retroactively. Treat those two as unattested; 1.1.1 onward is the verifiable
+line. `PUBLISHING.md` still documents a local `npm publish` as an
+Actions-outage fallback, and anything released that way would be unattested
+too — prefer waiting for CI over taking that path.
 
 [prov]: https://docs.npmjs.com/generating-provenance-statements

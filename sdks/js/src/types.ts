@@ -82,7 +82,17 @@ export interface NRouterExtraBody {
  * The playground is the reference surface: an option a user can toggle there
  * and cannot express here is a feature that exists only inside our own UI.
  */
-export interface NRouterCallOptions {
+export interface NRouterFeatureOptions {
+  /** Prompt template + its Jinja2 variables. */
+  promptTemplateId?: string;
+  promptVariables?: Record<string, string>;
+  /** Restrict evaluation to these guardrails. Omit to apply all org-enabled ones. */
+  guardrailIds?: string[];
+  /** Set false to force provider egress. Omitted when true; true is the gateway default. */
+  cache?: boolean;
+}
+
+export interface NRouterCallOptions extends NRouterFeatureOptions {
   model: string;
   /** Convenience for a single-turn call; ignored when `messages` is supplied. */
   prompt?: string;

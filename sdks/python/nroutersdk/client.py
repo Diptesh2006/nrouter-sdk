@@ -32,7 +32,7 @@ _KEY_PREFIX = "sk-nrouter-"
 #: Kept in ONE place because it was previously a literal in a keyword default,
 #: which is how it drifted to `gpt-4o` and stayed there. Any surface that needs
 #: a default imports this name.
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4-5-20250929"
 
 
 def _resolve_api_key(api_key: Optional[str]) -> str:

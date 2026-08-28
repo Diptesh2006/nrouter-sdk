@@ -25,7 +25,7 @@ func main() {
 	// Chat — cache, guardrails, and rate limits auto-apply from org config.
 	response, err := client.Chat.Completions.New(context.Background(),
 		openai.ChatCompletionNewParams{
-			Model: "claude-sonnet-4-5",
+			Model: "anthropic/claude-sonnet-4-5-20250929",
 			Messages: []openai.ChatCompletionMessageParamUnion{
 				openai.UserMessage("Hello!"),
 			},
@@ -56,6 +56,6 @@ func main() {
 	//   x-nr-request-id: nrouter-a1b2c3d4e5f67890
 	//   x-nr-request-cost: 0.00347
 	//   x-nr-cost-status: exact
-	//   x-nr-model: gpt-5.5
+	//   x-nr-model: anthropic/claude-sonnet-4-5-20250929
 	//   x-nr-total-tokens: 60
 }

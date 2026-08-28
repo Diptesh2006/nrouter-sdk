@@ -15,6 +15,11 @@ One key. One bill. The live multi-provider catalog. Guardrails, prompt templates
 tracking built in. Browse the exact models available now at
 [nrouter.ai/api/public/models](https://nrouter.ai/api/public/models).
 
+Live catalogue note: as of 2026-08-29, the public examples use Anthropic
+Claude models because those are the models currently live through the gateway.
+Other provider routes may exist in the SDK contract, but examples should use a
+model returned by your own `/v1/models` response before spending.
+
 ## Quick Start
 
 ### Python (Branded SDK)
@@ -26,7 +31,7 @@ from nroutersdk import nRouter
 
 client = nRouter()  # reads NROUTER_API_KEY from env
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)

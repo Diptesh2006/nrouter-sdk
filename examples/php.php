@@ -31,14 +31,14 @@ $client = OpenAI::factory()
     ->make();
 
 $response = $client->chat()->create([
-    'model' => 'claude-sonnet-4-5',
+    'model' => 'anthropic/claude-sonnet-4-5-20250929',
     'messages' => [['role' => 'user', 'content' => 'Hello!']],
 ]);
 echo $response->choices[0]->message->content . "\n";
 
 // With prompt template + variables
 $withPrompt = $client->chat()->create([
-    'model' => 'gpt-5.5',
+    'model' => 'anthropic/claude-sonnet-4-5-20250929',
     'messages' => [['role' => 'user', 'content' => 'Q1 revenue was $4.2M...']],
     'nrouter_prompt_template_id' => 'your-summarizer-id',
     'nrouter_prompt_variables' => ['language' => 'Spanish', 'max_length' => '100'],
@@ -48,7 +48,7 @@ $withPrompt = $client->chat()->create([
 // By default, ALL org-enabled guardrails apply automatically.
 // Pass nrouter_guardrail_ids to run only specific guardrails on this request.
 $withGuardrails = $client->chat()->create([
-    'model' => 'gpt-5.5',
+    'model' => 'anthropic/claude-sonnet-4-5-20250929',
     'messages' => [['role' => 'user', 'content' => 'Summarize Q1 earnings...']],
     'nrouter_guardrail_ids' => ['guardrail-uuid-1', 'guardrail-uuid-2'],
 ]);
@@ -56,7 +56,7 @@ $withGuardrails = $client->chat()->create([
 // Disable cache for a single request
 // Cache is enabled by default. Pass nrouter_cache: false for a fresh response.
 $noCacheResponse = $client->chat()->create([
-    'model' => 'gpt-5.5',
+    'model' => 'anthropic/claude-sonnet-4-5-20250929',
     'messages' => [['role' => 'user', 'content' => 'What is the latest news?']],
     'nrouter_cache' => false,
 ]);
@@ -65,7 +65,7 @@ $noCacheResponse = $client->chat()->create([
 
 try {
     $client->chat()->create([
-        'model' => 'gpt-5.5',
+        'model' => 'anthropic/claude-sonnet-4-5-20250929',
         'messages' => [['role' => 'user', 'content' => 'My SSN is 123-45-6789']],
     ]);
 } catch (\Exception $e) {

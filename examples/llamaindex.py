@@ -13,7 +13,7 @@ from llama_index.core.llms import ChatMessage
 # nRouter SDK for guardrails, credits, prompts.
 # LlamaIndex's OpenAI client handles LLM calls pointed at nRouter.
 client = nRouter()  # reads NROUTER_API_KEY from env
-MODEL = "gpt-5.5"
+MODEL = "anthropic/claude-sonnet-4-5-20250929"
 NROUTER_BASE = "https://api.nrouter.ai"
 NROUTER_KEY = os.environ["NROUTER_API_KEY"]
 
@@ -29,7 +29,7 @@ print("Models:", [m.id for m in client.models.list().data])
 # ━━━ 2. CONFIGURE LLAMAINDEX WITH NROUTER ━━━━━━━━━━━━━
 
 llm = OpenAI(
-    model="claude-sonnet-4-5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     api_key=NROUTER_KEY,
     api_base=f"{NROUTER_BASE}/v1",
 )
@@ -57,7 +57,7 @@ except Exception as e:
 # ━━━ 4. WITH PROMPT TEMPLATE (per-request) ━━━━━━━━━━━━━━━━
 
 llm_with_prompt = OpenAI(
-    model="gpt-5.5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     api_key=NROUTER_KEY,
     api_base=f"{NROUTER_BASE}/v1",
     additional_kwargs={
@@ -72,7 +72,7 @@ print(f"\nSummarized (Spanish): {response.text}")
 # By default, ALL org-enabled guardrails apply automatically.
 # Pass nrouter_guardrail_ids to run only specific guardrails on this request.
 llm_selective_guardrails = OpenAI(
-    model="gpt-5.5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     api_key=NROUTER_KEY,
     api_base=f"{NROUTER_BASE}/v1",
     additional_kwargs={
@@ -83,7 +83,7 @@ llm_selective_guardrails = OpenAI(
 # Disable cache for a single request
 # Cache is enabled by default. Pass nrouter_cache: False for a fresh response.
 llm_no_cache = OpenAI(
-    model="gpt-5.5",
+    model="anthropic/claude-sonnet-4-5-20250929",
     api_key=NROUTER_KEY,
     api_base=f"{NROUTER_BASE}/v1",
     additional_kwargs={

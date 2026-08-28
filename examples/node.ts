@@ -24,7 +24,7 @@ const client = new OpenAI({ apiKey: NROUTER_KEY, baseURL: `${NROUTER_BASE}/v1` }
 // Guardrails, cache, and rate limits are all enforced server-side.
 // No extra code needed — just call the API normally.
 const response = await client.chat.completions.create({
-  model: "claude-sonnet-4-5",
+  model: "anthropic/claude-sonnet-4-5-20250929",
   messages: [{ role: "user", content: "Hello!" }],
 });
 console.log(response.choices[0].message.content);
@@ -33,7 +33,7 @@ console.log(response.choices[0].message.content);
 // Prompt templates are opt-in: pass the template ID + Jinja2 variables.
 // The template's system prompt is injected server-side before the LLM call.
 const withPrompt = await client.chat.completions.create({
-  model: "gpt-5.5",
+  model: "anthropic/claude-sonnet-4-5-20250929",
   messages: [{ role: "user", content: "Q1 revenue was $4.2M..." }],
   // @ts-expect-error nRouter-specific fields
   nrouter_prompt_template_id: "your-summarizer-id",
@@ -44,7 +44,7 @@ const withPrompt = await client.chat.completions.create({
 // By default, ALL org-enabled guardrails apply automatically.
 // Pass nrouter_guardrail_ids to run only a subset on this request.
 const withGuardrails = await client.chat.completions.create({
-  model: "gpt-5.5",
+  model: "anthropic/claude-sonnet-4-5-20250929",
   messages: [{ role: "user", content: "Summarize Q1 earnings..." }],
   // @ts-expect-error nRouter-specific fields
   nrouter_guardrail_ids: ["guardrail-uuid-1", "guardrail-uuid-2"],
@@ -53,7 +53,7 @@ const withGuardrails = await client.chat.completions.create({
 // ━━━ 4. DISABLE CACHE (per-request opt-out) ━━━━━━━━━━━━━━━━
 // Cache is enabled by default. Pass nrouter_cache: false for fresh responses.
 const noCacheResponse = await client.chat.completions.create({
-  model: "gpt-5.5",
+  model: "anthropic/claude-sonnet-4-5-20250929",
   messages: [{ role: "user", content: "What's the latest news?" }],
   // @ts-expect-error nRouter-specific fields
   nrouter_cache: false,
@@ -61,7 +61,7 @@ const noCacheResponse = await client.chat.completions.create({
 
 // ━━━ 5. READ COST + METADATA FROM RESPONSE ━━━━━━━━━━━━━━━━━
 const raw = await client.chat.completions
-  .create({ model: "gpt-5.4-mini", messages: [{ role: "user", content: "Hi" }] })
+  .create({ model: "anthropic/claude-sonnet-4-5-20250929", messages: [{ role: "user", content: "Hi" }] })
   .asResponse();
 const cost = raw.headers.get("x-nr-request-cost");
 const costStatus = raw.headers.get("x-nr-cost-status");
@@ -72,7 +72,7 @@ console.log(`Total tokens: ${raw.headers.get("x-nr-total-tokens")}`);
 // ━━━ 6. HANDLE ERRORS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 try {
   await client.chat.completions.create({
-    model: "gpt-5.5",
+    model: "anthropic/claude-sonnet-4-5-20250929",
     messages: [{ role: "user", content: "My SSN is 123-45-6789" }],
   });
 } catch (e: any) {
@@ -83,7 +83,7 @@ try {
 
 // ━━━ 7. STREAMING + EMBEDDINGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const stream = await client.chat.completions.create({
-  model: "gpt-5.5", messages: [{ role: "user", content: "Write a haiku" }], stream: true,
+  model: "anthropic/claude-sonnet-4-5-20250929", messages: [{ role: "user", content: "Write a haiku" }], stream: true,
 });
 for await (const chunk of stream) {
   process.stdout.write(chunk.choices[0]?.delta?.content || "");

@@ -34,7 +34,7 @@ client = OpenAI::Client.new(
 
 response = client.chat(
   parameters: {
-    model: "claude-sonnet-4-5",
+    model: "anthropic/claude-sonnet-4-5-20250929",
     messages: [{ role: "user", content: "Hello!" }],
   }
 )
@@ -44,7 +44,7 @@ puts response.dig("choices", 0, "message", "content")
 
 response = client.chat(
   parameters: {
-    model: "gpt-5.5",
+    model: "anthropic/claude-sonnet-4-5-20250929",
     messages: [{ role: "user", content: "Summarize Q1 earnings..." }],
     nrouter_prompt_template_id: "your-summarizer-id",
     nrouter_prompt_variables: { language: "Spanish", max_length: "100" },
@@ -56,7 +56,7 @@ response = client.chat(
 # Pass nrouter_guardrail_ids to run only specific guardrails on this request.
 response = client.chat(
   parameters: {
-    model: "gpt-5.5",
+    model: "anthropic/claude-sonnet-4-5-20250929",
     messages: [{ role: "user", content: "Summarize Q1 earnings..." }],
     nrouter_guardrail_ids: ["guardrail-uuid-1", "guardrail-uuid-2"],
   }
@@ -66,7 +66,7 @@ response = client.chat(
 # Cache is enabled by default. Pass nrouter_cache: false for a fresh response.
 response = client.chat(
   parameters: {
-    model: "gpt-5.5",
+    model: "anthropic/claude-sonnet-4-5-20250929",
     messages: [{ role: "user", content: "What is the latest news?" }],
     nrouter_cache: false,
   }
@@ -77,7 +77,7 @@ response = client.chat(
 begin
   client.chat(
     parameters: {
-      model: "gpt-5.5",
+      model: "anthropic/claude-sonnet-4-5-20250929",
       messages: [{ role: "user", content: "My SSN is 123-45-6789" }],
     }
   )

@@ -12,11 +12,11 @@ to correct a release, only appended to.
 
 ## JavaScript / TypeScript — npm `@nrouter_ai/sdk`
 
-### Unreleased
-- `nrouter` JSON helpers (`sdks/js/src/json.ts`), contributed in #6. On `main`
-  and **not published** — `package.json` is still at 1.1.2. A maintainer bumps
-  it when the change is ready to ship; see CONTRIBUTING.md on why a contributor
-  must not.
+### 1.2.0 — 2026-08-29
+- `nrouter` JSON helpers (`sdks/js/src/json.ts`), contributed in #6. MINOR, not
+  patch: this adds surface, and semver is the only warning a consumer gets.
+- README links the gateway-side capability docs. npmjs.com renders this README,
+  so a docs change reaches the package page only on a release.
 
 ### 1.1.2 — 2026-08-28
 - Ships the rewritten `sdks/js/README.md`, which is the page npmjs.com renders,

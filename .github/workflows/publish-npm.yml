@@ -188,7 +188,15 @@ jobs:
   # rather than a lateral move.
   publish:
     needs: verify
-    if: github.event_name != 'pull_request' && needs.verify.outputs.publish == 'true'
+    # MAIN ONLY, and `workflow_dispatch` is exactly why. Dispatch accepts an
+    # arbitrary --ref, so a collaborator could run this workflow from a branch
+    # and publish from it with the repository secret, without that branch ever
+    # reaching main or passing review. Excluding pull requests alone did not
+    # close that; the ref check does.
+    if: >-
+      github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+      && needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -258,8 +266,17 @@ jobs:
       # halves: a token left beside OIDC is a fallback npm prefers silently, so
       # the run goes green without proving OIDC works — and bypass-2FA tokens
       # lose direct publish in January 2027.
+      #
+      # --ignore-scripts is a CREDENTIAL control, not a build preference.
+      # `npm publish` runs prepack/prepublishOnly, and it runs them with
+      # NODE_AUTH_TOKEN in the environment — so a future commit adding one
+      # line to package.json's "scripts" could read the long-lived publish
+      # token straight out of env and exfiltrate it, entirely inside a normal
+      # code change. This package builds in the verify job and needs no
+      # publish lifecycle script, so there is nothing to lose by refusing to
+      # run them.
       - name: Publish
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

@@ -19,9 +19,12 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    # NO `day:` — Dependabot accepts it only for `interval: weekly`, and only
+    # as a weekday name. `day: "first"` fails schema validation and takes every
+    # entry in this file down with it: no PRs at all, silently. A monthly
+    # interval already runs on the first of the month.
     schedule: &monthly
       interval: monthly
-      day: "first"
       time: "07:00"
       timezone: "UTC"
     commit-message: { prefix: ci }

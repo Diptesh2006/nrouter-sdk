@@ -36,8 +36,12 @@ cd sdks/python && python -m pip install -e ".[dev]" && python -m pytest -q
 
 Each remaining SDK under `sdks/` carries its own suite; run the one you touch.
 
-Opening a pull request also runs these same checks on GitHub — see
-`.github/workflows/publish-npm.yml`. They are advisory, not required checks.
+Opening a pull request runs these checks on GitHub for the **JavaScript and
+Python** SDKs only (`publish-npm.yml`, `publish-pypi.yml`), and only when the
+PR touches `sdks/js/**`, `sdks/python/**`, `spec/**` or `conformance/**`. A
+change to any other SDK is verified by you locally and by review — nothing on
+GitHub will catch it, so run its suite before you open the PR. The checks that
+do run are advisory, not required status checks.
 
 ## Pull Requests
 

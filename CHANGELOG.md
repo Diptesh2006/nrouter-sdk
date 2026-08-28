@@ -51,8 +51,14 @@ to correct a release, only appended to.
 ⚠️ `nemoroutersdk` 0.1.0 on PyPI (2026-03-31) predates a rebrand, is **not**
 maintained, and is not this project.
 
+## Java — Maven Central `ai.nrouter:nrouter-sdk`
+
+### 1.0.0 — 2026-08-26
+- First release. Wraps `com.openai:openai-java`; transport and error handling
+  are the vendor's, so this SDK is checked for the connection contract only.
+
 ## Other SDKs
 
-`sdks/{java,kotlin,android,go,rust,swift,dart,r}` build from this repository and
+`sdks/{kotlin,android,go,rust,swift,dart,r}` build from this repository and
 are not yet published to a registry. They are covered by the same conformance
 gate as the published ones.

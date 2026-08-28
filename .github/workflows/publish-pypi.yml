@@ -18,11 +18,16 @@ name: pypi
 on:
   push:
     branches: [main]
-    paths:
+    paths: &paths
       - 'sdks/python/**'
       - 'spec/**'
       - 'conformance/**'
       - '.github/workflows/publish-pypi.yml'
+  # A pull request runs the tests and the conformance gate and PUBLISHES
+  # NOTHING — see IS_RELEASE below. Without this, a PR touching only the Python
+  # SDK ran zero checks and its first execution was the run that published it.
+  pull_request:
+    paths: *paths
   workflow_dispatch:
 
 permissions:
@@ -35,6 +40,12 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      # Every credential-bearing step is gated on this, not on the trigger
+      # shape alone. `workflow_dispatch` accepts an arbitrary --ref, so a
+      # branch dispatch is neither a pull request nor main, and excluding only
+      # pull requests would let it publish unreviewed code with the token.
+      IS_RELEASE: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     defaults:
       run:
         working-directory: sdks/python
@@ -91,20 +102,20 @@ jobs:
           esac
 
       - name: Build
-        if: steps.check.outputs.publish == 'true'
+        if: env.IS_RELEASE == 'true' && steps.check.outputs.publish == 'true'
         run: |
           python -m build
           python -m twine check dist/*
 
       - name: Publish
-        if: steps.check.outputs.publish == 'true'
+        if: env.IS_RELEASE == 'true' && steps.check.outputs.publish == 'true'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: python -m twine upload dist/*
 
       - name: Verify the registry serves it
-        if: steps.check.outputs.publish == 'true'
+        if: env.IS_RELEASE == 'true' && steps.check.outputs.publish == 'true'
         env:
           V: ${{ steps.check.outputs.version }}
         run: |

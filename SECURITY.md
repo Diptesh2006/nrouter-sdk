@@ -29,7 +29,7 @@ two languages — not a newer and an older release. Do not read across the rows.
 |---|---|---|---|
 | Python | PyPI | `nrouter-sdk` | 2.1.x |
 | JavaScript / TypeScript | npm | `@nrouter_ai/sdk` | 1.1.x |
-| Java | Maven Central | `ai.nrouter:nrouter-sdk` | latest published |
+| Java | Maven Central | `ai.nrouter:nrouter-sdk` | 1.0.x |
 
 Only the latest minor line of each package receives fixes. There is no
 long-term-support branch: because every SDK is pinned to one shared gateway

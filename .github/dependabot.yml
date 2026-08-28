@@ -51,6 +51,20 @@ updates:
       kotlin: { patterns: ['*'] }
     commit-message: { prefix: 'deps(kotlin)' }
 
+  - package-ecosystem: gradle
+    directory: /sdks/android
+    schedule: { interval: monthly }
+    groups:
+      android: { patterns: ['*'] }
+    commit-message: { prefix: 'deps(android)' }
+
+  - package-ecosystem: pub
+    directory: /sdks/dart
+    schedule: { interval: monthly }
+    groups:
+      dart: { patterns: ['*'] }
+    commit-message: { prefix: 'deps(dart)' }
+
   - package-ecosystem: gomod
     directory: /sdks/go
     schedule: { interval: monthly }

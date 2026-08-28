@@ -57,10 +57,14 @@ npm audit signatures
 
 ⚠️ **1.0.0 and 1.1.0 have NO attestation** — verified against the registry, not
 assumed. Both were uploaded by hand before CI held a working credential, and
-provenance can only be produced by a GitHub Actions run, so it cannot be added
-retroactively. Treat those two as unattested; 1.1.1 onward is the verifiable
-line. `PUBLISHING.md` still documents a local `npm publish` as an
-Actions-outage fallback, and anything released that way would be unattested
-too — prefer waiting for CI over taking that path.
+provenance is minted from the OIDC token of the run that built the tarball, so
+it cannot be added to a version after the fact. Treat those two as unattested;
+1.1.1 onward is the verifiable line.
+
+"1.1.1 onward" is a forward promise, so the way to keep it is structural rather
+than editorial: `PUBLISHING.md` no longer documents a manual `npm publish`
+fallback at all. CI is the only path that can publish this package, an Actions
+outage means waiting rather than reaching for a laptop, and the count of
+unattested versions therefore stays at two.
 
 [prov]: https://docs.npmjs.com/generating-provenance-statements

@@ -104,13 +104,22 @@ before Central can validate signatures.
 Only if Actions is unavailable. Same order the workflow uses: test, check,
 publish, verify at the registry.
 
-```bash
-cd sdks/js && npm ci && npm test
-python3 ../../conformance/check_conformance.py
-npm view @nrouter_ai/sdk@1.1.0 version    # expect nothing for a new release
-npm publish --access public
-npm view @nrouter_ai/sdk version
-```
+🛑 **npm has no manual fallback any more. Wait for Actions.**
+
+A local `npm publish` cannot produce a provenance attestation — provenance is
+minted from the GitHub OIDC token of the run that built the tarball, so there
+is no flag that adds it from a laptop. Using this path would put an unattested
+version into a line that SECURITY.md and the README both promise is attested
+from 1.1.1 onward, and nothing about the published package would announce it:
+the release looks identical until someone runs `npm audit signatures` and gets
+a failure they will blame on the registry.
+
+1.0.0 and 1.1.0 are the versions that went out this way, before CI held a
+working credential. They cannot be fixed — provenance is not addable after the
+fact. Keeping the count at two is the whole point of removing this step.
+
+An npm release is never urgent enough to spend the guarantee. If Actions is
+genuinely down for long enough to matter, say so to the operator and wait.
 
 ```bash
 cd sdks/python && python -m pytest -q

@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose a change to an SDK or to the shared gateway contract
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you hitting?
+      description: Describe the situation, not the solution — the best fix is often not the one first imagined.
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+    validations: { required: true }
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - One SDK only
+        - All SDKs (a change to spec/nrouter-sdk-spec.json)
+        - Not sure
+    validations: { required: true }
+  - type: markdown
+    attributes:
+      value: |
+        A change to the shared contract (headers, error codes, endpoints, base
+        URL, key rules) lands in `spec/nrouter-sdk-spec.json` and every one of
+        the ten SDKs follows it — the conformance gate refuses a spec and an
+        SDK that disagree. Expect that to be a larger conversation than a
+        single-SDK fix.

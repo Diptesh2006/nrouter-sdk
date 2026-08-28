@@ -250,3 +250,18 @@ nrouter-sdk/
 ```
 
 This is the **single reference** for all SDK/examples. The playground code generation and docs site pull from these examples.
+
+## Contributing, security, and support
+
+| | |
+|---|---|
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to build and test each SDK, and the PR checklist. **Read the version-field warning before you open a PR** — merging `main` publishes immutably. |
+| [SECURITY.md](SECURITY.md) | Report a vulnerability privately to `security@nrouter.ai`, never as an issue. Supported version lines per registry. |
+| [SUPPORT.md](SUPPORT.md) | SDK bugs go to issues; account, billing, and API-key questions go to `support@nrouter.ai`. |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Adapted from the Contributor Covenant 2.1. |
+| [CHANGELOG.md](CHANGELOG.md) | Per-registry release history. Each SDK versions independently — do not read across the sections. |
+| [PUBLISHING.md](PUBLISHING.md) | How a release actually ships, and which credential each registry needs. |
+
+Published npm builds carry [provenance attestations](https://docs.npmjs.com/generating-provenance-statements)
+tying the tarball to the exact commit and workflow that produced it. Verify any
+install with `npm audit signatures`.

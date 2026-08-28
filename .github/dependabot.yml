@@ -1,0 +1,59 @@
+# Dependency updates for a public repo with ten SDK toolchains.
+#
+# Grouped and monthly on purpose: ungrouped weekly updates across this many
+# ecosystems produce more pull requests than anyone reads, and a review queue
+# nobody reads is how a malicious update gets waved through. Security updates
+# are NOT subject to this schedule — Dependabot raises those immediately.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      actions: { patterns: ['*'] }
+    commit-message: { prefix: 'ci' }
+
+  - package-ecosystem: npm
+    directory: /sdks/js
+    schedule: { interval: monthly }
+    groups:
+      js: { patterns: ['*'] }
+    commit-message: { prefix: 'deps(js)' }
+    # A version bump on main PUBLISHES. Dependabot must never touch the
+    # version field, and it does not — but this is where someone would add a
+    # "versioning-strategy" that made it, so: do not.
+
+  - package-ecosystem: pip
+    directory: /sdks/python
+    schedule: { interval: monthly }
+    groups:
+      python: { patterns: ['*'] }
+    commit-message: { prefix: 'deps(py)' }
+
+  - package-ecosystem: cargo
+    directory: /sdks/rust
+    schedule: { interval: monthly }
+    groups:
+      rust: { patterns: ['*'] }
+    commit-message: { prefix: 'deps(rust)' }
+
+  - package-ecosystem: maven
+    directory: /sdks/java
+    schedule: { interval: monthly }
+    groups:
+      java: { patterns: ['*'] }
+    commit-message: { prefix: 'deps(java)' }
+
+  - package-ecosystem: gradle
+    directory: /sdks/kotlin
+    schedule: { interval: monthly }
+    groups:
+      kotlin: { patterns: ['*'] }
+    commit-message: { prefix: 'deps(kotlin)' }
+
+  - package-ecosystem: gomod
+    directory: /sdks/go
+    schedule: { interval: monthly }
+    groups:
+      go: { patterns: ['*'] }
+    commit-message: { prefix: 'deps(go)' }

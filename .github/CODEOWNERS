@@ -1,0 +1,15 @@
+# Review routing for a PUBLIC repository that takes outside contributions.
+# GitHub requests these reviewers automatically on every pull request.
+
+*                       @rama6636
+
+# The release surface. A change here can publish an immutable package version
+# or alter which credential does it, so it is called out separately from
+# ordinary code rather than relying on the catch-all above.
+/.github/workflows/     @rama6636
+/PUBLISHING.md          @rama6636
+
+# The cross-SDK contract. Every SDK is checked against this one file, so an
+# edit here is a change to all ten at once.
+/spec/                  @rama6636
+/conformance/           @rama6636

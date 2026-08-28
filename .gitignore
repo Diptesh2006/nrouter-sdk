@@ -45,3 +45,8 @@ sdks/dart/pubspec.lock
 sdks/nrouter.Rcheck/
 sdks/nrouter_*.tar.gz
 sdks/r/..Rcheck/
+
+# Virtualenvs — CONTRIBUTING.md tells contributors to create sdks/python/.venv;
+# without this line the first one to follow that advice commits it.
+.venv/
+venv/

@@ -43,6 +43,11 @@ to correct a release, only appended to.
 
 ## Python — PyPI `nrouter-sdk`
 
+### 2.1.3 — 2026-08-29
+- README now links the gateway-side capability docs (guardrails, budgets,
+  routing, observability). PyPI renders this README, so the links only reach
+  the package page on a release. No library behaviour changed.
+
 ### 2.1.2 — 2026-08-28
 - README refresh. No library behaviour changed.
 

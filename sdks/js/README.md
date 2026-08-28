@@ -105,3 +105,20 @@ npm test
 The test suite runs TypeScript test files directly through Node's built-in test
 runner, so use Node `22.18.0` or newer. Older Node 22 builds fail before the
 tests execute because they cannot strip TypeScript syntax from `.ts` test files.
+
+## How guardrails, budgets and routing work
+
+They are enforced at the **gateway**, not in this package — so they apply to
+every request on the key, they behave the same from every nRouter SDK, and this
+client cannot turn them off:
+
+- [Guardrails](https://nrouter.ai/docs/guides/guardrails) — PII redaction and
+  injection protection, pre-call and post-call.
+- [Budget controls](https://nrouter.ai/docs/guides/budget-controls) — spend
+  limits per key, team and organization.
+- [Routing and fallbacks](https://nrouter.ai/docs/guides/router-settings) —
+  failover chains across providers.
+- [Observability](https://nrouter.ai/docs/guides/observability) — per-request
+  cost and usage.
+- [Node.js / TypeScript quickstart](https://nrouter.ai/docs/sdks/nodejs) and the
+  [API reference](https://nrouter.ai/docs/api-reference).

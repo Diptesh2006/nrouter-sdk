@@ -251,6 +251,45 @@ nrouter-sdk/
 
 This is the **single reference** for all SDK/examples. The playground code generation and docs site pull from these examples.
 
+## Documentation
+
+Every link below was checked live before it was written here; none is derived
+from the sitemap alone, because a URL can sit in a sitemap and still 404.
+
+**How each capability works**, and where it is enforced — all of these are
+gateway-side, so they behave identically from every SDK in this repository:
+
+| Capability | Guide | Product page |
+|---|---|---|
+| Guardrails — PII redaction, injection protection, pre- and post-call | [docs/guides/guardrails](https://nrouter.ai/docs/guides/guardrails) | [product/guardrails](https://nrouter.ai/product/guardrails) |
+| Budgets and spend limits, per key / team / org | [docs/guides/budget-controls](https://nrouter.ai/docs/guides/budget-controls) | [product/budgets](https://nrouter.ai/product/budgets) |
+| Routing, fallback chains, failover | [docs/guides/router-settings](https://nrouter.ai/docs/guides/router-settings) | [product/routing](https://nrouter.ai/product/routing) |
+| Observability and cost tracking | [docs/guides/observability](https://nrouter.ai/docs/guides/observability) | [product/observability](https://nrouter.ai/product/observability) |
+| Prompt templates and versioning | [docs/guides/prompts](https://nrouter.ai/docs/guides/prompts) | — |
+| API keys — creation, rotation, scope | [docs/guides/api-key-management](https://nrouter.ai/docs/guides/api-key-management) | — |
+
+**None of this lives in the SDK.** Guardrails, budgets, routing and cost
+accounting are enforced at the gateway, on the request path, so they apply to a
+raw `curl` exactly as they do to a branded SDK — and an SDK cannot turn them
+off. That is the reason a thin client is the right shape here.
+
+**Per-language quickstarts:**
+[Python](https://nrouter.ai/docs/sdks/python) ·
+[Node.js / TypeScript](https://nrouter.ai/docs/sdks/nodejs) ·
+[Go](https://nrouter.ai/docs/sdks/go) ·
+[Java](https://nrouter.ai/docs/sdks/java) ·
+[PHP](https://nrouter.ai/docs/sdks/php) ·
+[Ruby](https://nrouter.ai/docs/sdks/ruby) ·
+[curl](https://nrouter.ai/docs/sdks/curl) ·
+[OpenAI SDK against nRouter](https://nrouter.ai/docs/sdks/python-openai)
+
+**Reference:**
+[Quick start](https://nrouter.ai/docs/getting-started/quick-start) ·
+[API reference](https://nrouter.ai/docs/api-reference) ·
+[Live model catalogue](https://nrouter.ai/models) ·
+[Pricing](https://nrouter.ai/pricing) ·
+[Changelog](https://nrouter.ai/changelog)
+
 ## Contributing, security, and support
 
 | | |

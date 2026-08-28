@@ -31,11 +31,16 @@ them and the second `cd` resolves inside the first SDK's directory and fails.
 # package.)
 (cd sdks/js && npm ci && npm test)
 
-# Python — `.[dev]` is required, not optional: the suite imports httpx and
-# needs pytest-asyncio for `asyncio_mode = auto`. A bare `pip install pytest`
-# gives you neither. Use a virtualenv unless you want these in your system
-# site-packages.
-(cd sdks/python && python3 -m pip install -e ".[dev]" && python3 -m pytest -q)
+# Python — USE A VIRTUALENV. Not for tidiness: an incompatible pytest already
+# on your PATH makes the run die with
+# `INTERNALERROR> AttributeError: 'Package' object has no attribute 'obj'`
+# and "no tests ran" — which reads like a broken suite and is not.
+# `.[dev]` is required, not optional: the suite imports httpx and needs
+# pytest-asyncio for `asyncio_mode = auto`, and a bare `pip install pytest`
+# gives you neither.
+(cd sdks/python \
+  && python3 -m venv .venv && . .venv/bin/activate \
+  && python3 -m pip install -e ".[dev]" && python3 -m pytest -q)
 ```
 
 Each remaining SDK under `sdks/` carries its own suite; run the one you touch.

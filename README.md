@@ -268,16 +268,24 @@ gateway-side, so they behave identically from every SDK in this repository:
 | Prompt templates and versioning | [docs/guides/prompts](https://nrouter.ai/docs/guides/prompts) | — |
 | API keys — creation, rotation, scope | [docs/guides/api-key-management](https://nrouter.ai/docs/guides/api-key-management) | — |
 
-**None of this lives in the SDK.** It is enforced at the gateway, on the
-request path, so it applies to a raw `curl` exactly as it does to a branded SDK
-— and no client can switch it off. That is the reason a thin client is the
-right shape here.
+**None of this lives in the SDK.** It is configured in the dashboard and
+enforced at the gateway on the request path, so whatever you have enabled
+applies to a raw `curl` exactly as it does to a branded SDK, and no client can
+bypass it. That is the reason a thin client is the right shape here.
 
-⚠️ **Routing is the exception, and it is opt-in by what you put in `model`.**
-Name a Smart Router alias and you get its strategy and fallback chain; name a
-concrete model and it is never re-routed and inherits no hidden platform
-fallback. Guardrails, budgets and cost accounting are unconditional; failover
-is something you enable.
+⚠️ **Two things are conditional, and assuming otherwise is how you rely on
+protection you do not have:**
+
+- **Guardrails follow the organization's guardrail switch.** Enabled, they run
+  on every request and cannot be opted out of per call. Disabled, the
+  configured PII and injection checks do not run at all.
+- **Routing is opt-in by what you put in `model`, and applies to text wires
+  only.** An alias gets its strategy and fallback chain; a concrete model is
+  never re-routed and inherits no hidden platform fallback. Audio, image and
+  video take a single-provider route and are not cross-provider Smart Router
+  wires.
+
+Cost accounting is the unconditional one: every request is accounted.
 
 **Per-language quickstarts:**
 [Python](https://nrouter.ai/docs/sdks/python) ·

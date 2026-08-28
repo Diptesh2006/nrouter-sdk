@@ -18,7 +18,10 @@ python3 conformance/check_conformance.py
 The `--self-test` run comes first on purpose: it proves the gate still goes RED
 on drift. A conformance check that cannot fail tells you nothing when it passes.
 
-Run the focused tests for any SDK you change:
+Run the focused tests for any SDK you change. Each line is wrapped in a
+subshell so the `cd` does not persist — run the block top to bottom without
+them and the second `cd` resolves inside the first SDK's directory and fails.
+
 
 ```bash
 # JavaScript / TypeScript — needs Node 22.18.0 or newer, because the test
@@ -26,12 +29,13 @@ Run the focused tests for any SDK you change:
 # stripping. On Node 20 the run dies on the first `as`, before a single test
 # executes. (This is the TEST floor, not the runtime floor for the published
 # package.)
-cd sdks/js && npm ci && npm test
+(cd sdks/js && npm ci && npm test)
 
 # Python — `.[dev]` is required, not optional: the suite imports httpx and
 # needs pytest-asyncio for `asyncio_mode = auto`. A bare `pip install pytest`
-# gives you neither.
-cd sdks/python && python -m pip install -e ".[dev]" && python -m pytest -q
+# gives you neither. Use a virtualenv unless you want these in your system
+# site-packages.
+(cd sdks/python && python3 -m pip install -e ".[dev]" && python3 -m pytest -q)
 ```
 
 Each remaining SDK under `sdks/` carries its own suite; run the one you touch.

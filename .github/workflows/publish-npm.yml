@@ -32,9 +32,24 @@ on:
       - 'spec/**'
       - 'conformance/**'
       - '.github/workflows/publish-npm.yml'
-  # A pull request runs `verify` and never `publish`. Without this trigger a PR
-  # ran ZERO checks: every gate lived in the merge-triggered job, so the first
-  # execution of a contributor's code was the run that published it.
+  # ⚠️ DELIBERATE EXCEPTION to the workspace's local-first CI policy
+  # (`gh-workflow` skill: "Never add per-commit or per-PR hosted CI ... without
+  # explicit operator direction"). Recorded here so the next reader does not
+  # delete it as drift, and so the reasoning can be argued with:
+  #
+  #   - This repository is PUBLIC and takes outside pull requests. A
+  #     contributor cannot run the workspace's local gates, and neither can a
+  #     maintainer before reading the PR. "Focused local checks" has no one to
+  #     run it.
+  #   - Without this trigger a PR ran ZERO checks: every gate lived in the
+  #     merge-triggered job, so the first execution of a contributor's code was
+  #     the run that PUBLISHED it to npm — immutably.
+  #   - The policy's stated cost, hosted minutes, is not incurred: GitHub
+  #     Actions is free for public repositories on standard runners.
+  #
+  # It stays advisory. This is NOT wired as a required status check, and it
+  # emits no release evidence — tag-only `release-validation` remains the sole
+  # authoritative full suite.
   pull_request:
     paths: *paths
   workflow_dispatch:

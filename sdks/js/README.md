@@ -1,7 +1,8 @@
 # @nrouter_ai/sdk (JS/TS)
 
-SDK for the [nRouter](https://nrouter.ai) LLM gateway — one API key for models across six provider clouds (Alibaba US, OpenAI, AWS Bedrock, Azure Foundry, Google Vertex AI, Anthropic). A thin wrapper
-around the official `openai` package — same API surface, pre-configured for nRouter.
+SDK for the [nRouter](https://nrouter.ai) LLM gateway: one API key for models
+across six provider clouds. It wraps the official `openai` package with the
+same API surface, pre-configured for nRouter.
 
 ## Install
 
@@ -29,10 +30,11 @@ const { nRouter } = require("@nrouter_ai/sdk");
 const client = new nRouter({ apiKey: process.env.NROUTER_API_KEY });
 ```
 
-`nRouter` extends the `OpenAI` class directly, so every resource the `openai` package
-supports (`chat.completions`, `embeddings`, `images`, streaming, ...) works unmodified.
+`nRouter` extends the `OpenAI` class directly, so every resource the `openai`
+package supports (`chat.completions`, `embeddings`, `images`, streaming, ...)
+works unmodified.
 
-## Model discovery
+## Model Discovery
 
 Use the nRouter helper for model listing:
 
@@ -41,16 +43,20 @@ const models = await client.nrouterModels.list();
 console.log(models.data[0].id);
 ```
 
-The raw nRouter `/models` response is valid JSON, but the current OpenAI JS SDK page
-parser exposes it with an empty `data` array. `nrouterModels.list()` bypasses that
-parser and returns the gateway response directly. It still travels the client's own
-request pipeline, so a configured `fetch`, `timeout`, `maxRetries`, `httpAgent` and
-default headers apply to it exactly as they do to every other call.
+The raw nRouter `/models` response is valid JSON, but the current OpenAI JS SDK
+page parser exposes it with an empty `data` array. `nrouterModels.list()`
+bypasses that parser and returns the gateway response directly. It still travels
+the client's own request pipeline, so a configured `fetch`, `timeout`,
+`maxRetries`, `httpAgent` and default headers apply to it exactly as they do to
+every other call.
 
-## Basic only, for now
+## Development
 
-This is a minimal wrapper: API key resolution/validation (`sk-nrouter-...`) and a
-default `baseURL` of `https://api.nrouter.ai/v1`. It doesn't yet have the typed errors,
-automatic cost-header capture, or `credits`/`guardrails`/`prompts` namespaces that
-[`sdks/python/`](../python/) has — see that package for the fuller pattern this one will
-grow into.
+```bash
+npm ci
+npm test
+```
+
+The test suite runs TypeScript test files directly through Node's built-in test
+runner, so use Node `22.18.0` or newer. Older Node 22 builds fail before the
+tests execute because they cannot strip TypeScript syntax from `.ts` test files.

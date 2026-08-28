@@ -115,12 +115,15 @@ included, and behaves identically from every nRouter SDK and from raw `curl`.
 
 - [Guardrails](https://nrouter.ai/docs/guides/guardrails) — PII redaction,
   injection protection, secret and keyword scanning, pre-call and post-call.
-  Gated by the organization's guardrail switch: enabled, they run on every
-  request on the key and no client can opt out.
+  Which ones run is resolved per request: the organization's guardrail switch
+  first, then the narrowest applicable assignment wins across
+  key > team > org > default, and a winner disabled at that scope does not run.
 - [Budget controls](https://nrouter.ai/docs/guides/budget-controls) — spend
   limits per key, team and organization.
-- [Observability](https://nrouter.ai/docs/guides/observability) — per-request
-  cost and usage. This one really is unconditional; every request is accounted.
+- [Observability](https://nrouter.ai/docs/guides/observability) — cost and usage
+  on billable calls. Free routes are genuinely free and carry no
+  `x-nr-request-cost`: `/v1/messages/count_tokens`, and video polling and
+  content retrieval.
 
 [Smart Router aliases and fallback chains](https://nrouter.ai/docs/guides/router-settings)
 carry two conditions worth knowing before you rely on failover you have not

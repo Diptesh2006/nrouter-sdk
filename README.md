@@ -276,16 +276,22 @@ bypass it. That is the reason a thin client is the right shape here.
 ⚠️ **Two things are conditional, and assuming otherwise is how you rely on
 protection you do not have:**
 
-- **Guardrails follow the organization's guardrail switch.** Enabled, they run
-  on every request and cannot be opted out of per call. Disabled, the
-  configured PII and injection checks do not run at all.
+- **Which guardrails run is resolved per request.** The organization's
+  guardrail switch gates everything; below it the narrowest applicable
+  assignment wins across key > team > org > default, and a winner disabled at
+  that scope does not run. A guardrail you configured is not necessarily a
+  guardrail this request gets — check the assignment, not just the switch.
 - **Routing is opt-in by what you put in `model`, and applies to text wires
   only.** An alias gets its strategy and fallback chain; a concrete model is
   never re-routed and inherits no hidden platform fallback. Audio, image and
   video take a single-provider route and are not cross-provider Smart Router
   wires.
 
-Cost accounting is the unconditional one: every request is accounted.
+Cost accounting covers every BILLABLE call. Some routes these SDKs expose are
+deliberately free and emit no `x-nr-request-cost` at all —
+`/v1/messages/count_tokens`, and video polling and content retrieval — because
+they generate no completion. Absent is not zero (Rule #28): a missing cost
+header means unpriced or free, never a $0 inference.
 
 **Per-language quickstarts:**
 [Python](https://nrouter.ai/docs/sdks/python) ·

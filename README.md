@@ -262,6 +262,8 @@ This is the **single reference** for all SDK/examples. The playground code gener
 | [CHANGELOG.md](CHANGELOG.md) | Per-registry release history. Each SDK versions independently — do not read across the sections. |
 | [PUBLISHING.md](PUBLISHING.md) | How a release actually ships, and which credential each registry needs. |
 
-Published npm builds carry [provenance attestations](https://docs.npmjs.com/generating-provenance-statements)
-tying the tarball to the exact commit and workflow that produced it. Verify any
-install with `npm audit signatures`.
+npm builds **1.1.1 and later** carry [provenance attestations](https://docs.npmjs.com/generating-provenance-statements)
+tying the tarball to the exact commit and workflow that produced it — verify
+with `npm audit signatures`. 1.0.0 and 1.1.0 were published by hand and have
+none; provenance cannot be added to a version after the fact. See
+[SECURITY.md](SECURITY.md#release-integrity).

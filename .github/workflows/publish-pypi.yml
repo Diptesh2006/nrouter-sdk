@@ -38,7 +38,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: pypi-publish
+  # Releases share one global lane so two can never race an upload. Pull
+  # requests key on their own ref: a shared group would let an outside
+  # contributor pushing to their PR repeatedly displace a QUEUED release run —
+  # `cancel-in-progress: false` protects a run that has started, not one still
+  # waiting behind it.
+  group: pypi-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
   cancel-in-progress: false   # never cancel a run that may be mid-upload
 
 jobs:

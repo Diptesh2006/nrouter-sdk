@@ -11,7 +11,7 @@ body:
         A key that has been posted must be rotated, not redacted.
 
         For a suspected **vulnerability**, do not open an issue at all — see
-        [SECURITY.md](../blob/main/SECURITY.md).
+        [SECURITY.md](https://github.com/nRouterAI/nrouter-sdk/blob/main/SECURITY.md).
   - type: dropdown
     id: sdk
     attributes:

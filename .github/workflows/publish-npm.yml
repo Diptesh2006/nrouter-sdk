@@ -13,31 +13,71 @@
 #
 # and a merge without a bump does nothing, quietly and green.
 #
-# Requires the NPM_TOKEN repo secret. Without it the tests still run and the
-# publish step fails as unauthenticated.
+# Requires the NPM_TOKEN repo secret, for now. The intended end state is npm
+# trusted publishing (OIDC) with NO secret at all; everything on this side is
+# ready and the remaining step is a registration only a human with 2FA can
+# perform. The Publish step carries the exact fields and the measured proof
+# that it is not yet done.
+#
+# It matters on a clock, not just on principle: the current credential is a
+# bypass-2FA granular token, npm withdraws direct publish from those in
+# January 2027 (github.blog changelog, 2026-07-31), and this one expires
+# 2026-11-26.
 name: npm
 
 on:
   push:
     branches: [main]
-    paths:
+    paths: &paths
       - 'sdks/js/**'
       - 'spec/**'
       - 'conformance/**'
       - '.github/workflows/publish-npm.yml'
+  # ⚠️ DELIBERATE EXCEPTION to the workspace's local-first CI policy
+  # (`gh-workflow` skill: "Never add per-commit or per-PR hosted CI ... without
+  # explicit operator direction"). Recorded here so the next reader does not
+  # delete it as drift, and so the reasoning can be argued with:
+  #
+  #   - This repository is PUBLIC and takes outside pull requests. A
+  #     contributor cannot run the workspace's local gates, and neither can a
+  #     maintainer before reading the PR. "Focused local checks" has no one to
+  #     run it.
+  #   - Without this trigger a PR ran ZERO checks: every gate lived in the
+  #     merge-triggered job, so the first execution of a contributor's code was
+  #     the run that PUBLISHED it to npm — immutably.
+  #   - The policy's stated cost, hosted minutes, is not incurred: GitHub
+  #     Actions is free for public repositories on standard runners.
+  #
+  # It stays advisory. This is NOT wired as a required status check, and it
+  # emits no release evidence — tag-only `release-validation` remains the sole
+  # authoritative full suite.
+  pull_request:
+    paths: *paths
   workflow_dispatch:
 
+# Default for the whole file. `id-token: write` is granted to the publish job
+# ALONE — see the note above that job.
 permissions:
   contents: read
-  id-token: write   # npm provenance
 
 concurrency:
-  group: npm-publish
+  # Publishes share one global lane so two can never race an upload. Pull
+  # requests key on their own ref, so one contributor's PR does not queue
+  # behind another's.
+  group: npm-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
   cancel-in-progress: false   # never cancel a run that may be mid-upload
 
 jobs:
-  publish:
+  # Runs the untrusted half: `npm ci` executes install scripts and `npm test`
+  # executes the dependency tree. This job is deliberately given NO
+  # `id-token` permission, so nothing it runs can mint an npm OIDC token.
+  verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      publish: ${{ steps.check.outputs.publish }}
     defaults:
       run:
         working-directory: sdks/js
@@ -53,25 +93,8 @@ jobs:
           # relies on native type stripping. On Node 20 the run dies on the
           # first `as`, before a single test executes.
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
           cache: npm
           cache-dependency-path: sdks/js/package-lock.json
-
-      # The runner's Node 22 bundles npm 10.9.8, and OIDC trusted publishing
-      # landed in npm 11.5.0 (2025-07-24, npm/cli#8336). Registering a trusted
-      # publisher on npmjs.com while the runner still shipped npm 10 would look
-      # like the registration had failed: npm would simply not attempt OIDC and
-      # would fall back to NODE_AUTH_TOKEN, publishing successfully by the old
-      # path with nothing saying so.
-      #
-      # This raises the floor NOW, before that switch, so the change that turns
-      # OIDC on is one line and not a debugging session. It alters nothing
-      # today — with a token present and no trusted publisher registered, npm
-      # 11 authenticates exactly as npm 10 did.
-      - name: npm >= 11.5.1, the floor for OIDC trusted publishing
-        run: |
-          npm install -g 'npm@^11.5.1'
-          npm --version
 
       - run: npm ci
 
@@ -139,16 +162,171 @@ jobs:
           fi
           echo "publish=true" >> "$GITHUB_OUTPUT"
 
-      - name: Publish
+      # The build output is the ONLY thing that crosses into the publish job.
+      # package.json, README and LICENSE come from that job's own clean
+      # checkout, so a compromised dependency cannot rewrite the manifest,
+      # rename the package, or widen `files` on the way through.
+      - name: Hand the built package to the publish job
         if: steps.check.outputs.publish == 'true'
-        run: npm publish --access public --provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: js-dist
+          path: sdks/js/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  # THE ONLY JOB THAT MAY MINT AN OIDC TOKEN, and it runs no repository
+  # dependency to do it: no `npm ci`, no `npm test`, no build. It restores the
+  # verified `dist/` and packs it.
+  #
+  # This split is the point of the whole file. `id-token: write` at workflow
+  # scope would have handed npm-audience token minting to every process
+  # `npm ci` and `npm test` start — a poisoned dependency or cache could then
+  # exchange one for publish rights and ship an arbitrary version, with no
+  # NODE_AUTH_TOKEN anywhere to steal. Scoping the permission to a job that
+  # executes only npm itself is what makes removing the token an improvement
+  # rather than a lateral move.
+  publish:
+    needs: verify
+    # MAIN ONLY, and `workflow_dispatch` is exactly why. Dispatch accepts an
+    # arbitrary --ref, so a collaborator could run this workflow from a branch
+    # and publish from it with the repository secret, without that branch ever
+    # reaching main or passing review. Excluding pull requests alone did not
+    # close that; the ref check does.
+    if: >-
+      github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+      && needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # npm trusted publishing + provenance
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No `cache:` here. A restored npm cache is attacker-controlled content
+      # entering the one job that holds the OIDC permission; this job installs
+      # no dependencies, so it has nothing to cache.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # OIDC trusted publishing landed in npm 11.5.0 (npm/cli#8336). The
+      # runner's bundled npm 10 does not attempt it at all — it would fall
+      # through to token auth and, with no token present, simply fail. This is
+      # a floor, not an upgrade.
+      - name: npm >= 11.5.1, the floor for OIDC trusted publishing
+        run: |
+          npm install -g 'npm@^11.5.1'
+          npm --version
+
+      - name: Restore the verified build output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: js-dist
+          path: sdks/js/dist
+
+      # NO CREDENTIAL. `id-token: write` above lets the runner mint a
+      # short-lived token that npm exchanges for publish rights, having matched
+      # this repository AND this workflow filename against the trusted
+      # publisher registered on the package.
+      #
+      # Deleting NODE_AUTH_TOKEN is load-bearing, not tidying. A token left in
+      # place is a working fallback that npm prefers silently — the run would
+      # go green without ever proving OIDC works, and the January 2027 removal
+      # of bypass-2FA publishing would land as a surprise outage. The proof
+      # this path ran is the provenance attestation on the published version
+      # naming this workflow.
+      # 🛑 STILL THE TOKEN PATH — trusted publishing is NOT yet registered.
+      # MEASURED, run 33205627773 (2026-08-28): with this env removed, npm
+      # signed a provenance statement and then failed
+      #
+      #     npm error code E404
+      #     404 Not Found - PUT https://registry.npmjs.org/@nrouter_ai%2fsdk
+      #     '@nrouter_ai/sdk@1.1.2' could not be found or you do not have
+      #     permission to access it
+      #
+      # which is npm's UNAUTHENTICATED response wearing a 404 — no credential
+      # was presented, because no trusted publisher matched. Read it as "the
+      # package is missing" and you will go looking in the wrong place; it is
+      # published and it is public.
+      #
+      # THE ONE REMAINING STEP IS A HUMAN AT npmjs.com, because editing
+      # trusted-publishing configuration is itself on npm's interactive-2FA
+      # list: @nrouter_ai/sdk > Settings > Trusted Publisher > GitHub Actions,
+      # organization `nRouterAI`, repository `nrouter-sdk`, workflow filename
+      # `publish-npm.yml`, environment EMPTY (this job declares none, and a
+      # name here would never match).
+      #
+      # Then DELETE these two lines and `gh secret delete NPM_TOKEN`. Both
+      # halves: a token left beside OIDC is a fallback npm prefers silently, so
+      # the run goes green without proving OIDC works — and bypass-2FA tokens
+      # lose direct publish in January 2027.
+      # The token is only as scoped as the registry it is SENT to. npm gives a
+      # project `.npmrc` precedence over the one setup-node writes, and
+      # `publishConfig.registry` overrides both for a publish — so a merged
+      # change under sdks/js could redirect this upload, and the long-lived
+      # credential, to a host the attacker controls. `--ignore-scripts` does
+      # not help: no script has to run for that.
+      #
+      # This runs BEFORE the token is ever in an environment. It is a
+      # token-arm control and can go away with the token.
+      - name: Refuse a repository-controlled npm config
+        run: |
+          set -euo pipefail
+          for f in ../../.npmrc ../.npmrc ./.npmrc; do
+            if [ -e "$f" ]; then
+              echo "::error::$f exists; a repository-controlled npm config can redirect the publish registry and with it the token"
+              exit 1
+            fi
+          done
+
+          # ALLOWLIST publishConfig, do not merely check `registry`. npm treats
+          # EVERY publishConfig key as runtime config, so checking the registry
+          # host alone leaves the transport open: `https-proxy` plus
+          # `strict-ssl: false` routes this publish through an attacker's TLS
+          # proxy while the hostname still reads registry.npmjs.org, and npm
+          # sends NODE_AUTH_TOKEN to it because the registry "matches".
+          # `access: public` is the only key this package needs.
+          node -e '
+            const pc = require("./package.json").publishConfig ?? {};
+            const allowed = { access: "public" };
+            const bad = Object.entries(pc).filter(([k, v]) => allowed[k] !== v);
+            if (bad.length) {
+              console.error("::error::package.json publishConfig may contain only {access:\"public\"}; refusing: " +
+                bad.map(([k, v]) => k + "=" + JSON.stringify(v)).join(", "));
+              process.exit(1);
+            }
+          '
+
+          eff="$(npm config get registry)"
+          if [ "$eff" != "https://registry.npmjs.org/" ]; then
+            echo "::error::effective npm registry is '$eff', not registry.npmjs.org"
+            exit 1
+          fi
+          echo "registry confirmed: $eff"
+
+      #
+      # --ignore-scripts is a CREDENTIAL control, not a build preference.
+      # `npm publish` runs prepack/prepublishOnly, and it runs them with
+      # NODE_AUTH_TOKEN in the environment — so a future commit adding one
+      # line to package.json's "scripts" could read the long-lived publish
+      # token straight out of env and exfiltrate it, entirely inside a normal
+      # code change. This package builds in the verify job and needs no
+      # publish lifecycle script, so there is nothing to lose by refusing to
+      # run them.
+      - name: Publish
+        run: npm publish --access public --provenance --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Verify the registry serves it
-        if: steps.check.outputs.publish == 'true'
         env:
-          V: ${{ steps.check.outputs.version }}
+          V: ${{ needs.verify.outputs.version }}
         run: |
           # `npm publish` exiting 0 is npm ACCEPTING the upload; this is the
           # registry SERVING it. Different events, seconds apart.

@@ -1,5 +1,9 @@
 # @nrouter_ai/sdk (JS/TS)
 
+[![npm](https://img.shields.io/npm/v/%40nrouter_ai%2Fsdk?logo=npm&label=npm)](https://www.npmjs.com/package/@nrouter_ai/sdk)
+[![Socket](https://badge.socket.dev/npm/package/@nrouter_ai/sdk/latest)](https://socket.dev/npm/package/@nrouter_ai/sdk)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/nRouterAI/nrouter-sdk/blob/main/LICENSE)
+
 SDK for the [nRouter](https://nrouter.ai) LLM gateway: one API key for models
 across six provider clouds. It wraps the official `openai` package with the
 same API surface, pre-configured for nRouter.

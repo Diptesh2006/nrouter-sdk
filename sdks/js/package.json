@@ -1,6 +1,6 @@
 {
   "name": "@nrouter_ai/sdk",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "nRouter SDK \u2014 one API key for models across six provider clouds. Native OpenAI and Anthropic wire formats, plus embeddings, audio, images and video.",
   "license": "MIT",
   "main": "dist/index.js",

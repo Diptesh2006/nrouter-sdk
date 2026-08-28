@@ -268,10 +268,16 @@ gateway-side, so they behave identically from every SDK in this repository:
 | Prompt templates and versioning | [docs/guides/prompts](https://nrouter.ai/docs/guides/prompts) | — |
 | API keys — creation, rotation, scope | [docs/guides/api-key-management](https://nrouter.ai/docs/guides/api-key-management) | — |
 
-**None of this lives in the SDK.** Guardrails, budgets, routing and cost
-accounting are enforced at the gateway, on the request path, so they apply to a
-raw `curl` exactly as they do to a branded SDK — and an SDK cannot turn them
-off. That is the reason a thin client is the right shape here.
+**None of this lives in the SDK.** It is enforced at the gateway, on the
+request path, so it applies to a raw `curl` exactly as it does to a branded SDK
+— and no client can switch it off. That is the reason a thin client is the
+right shape here.
+
+⚠️ **Routing is the exception, and it is opt-in by what you put in `model`.**
+Name a Smart Router alias and you get its strategy and fallback chain; name a
+concrete model and it is never re-routed and inherits no hidden platform
+fallback. Guardrails, budgets and cost accounting are unconditional; failover
+is something you enable.
 
 **Per-language quickstarts:**
 [Python](https://nrouter.ai/docs/sdks/python) ·

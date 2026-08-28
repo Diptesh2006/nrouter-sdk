@@ -108,17 +108,21 @@ tests execute because they cannot strip TypeScript syntax from `.ts` test files.
 
 ## How guardrails, budgets and routing work
 
-They are enforced at the **gateway**, not in this package — so they apply to
-every request on the key, they behave the same from every nRouter SDK, and this
-client cannot turn them off:
+They are enforced at the **gateway**, not in this package, so they behave the
+same from every nRouter SDK. Three of them are ALWAYS ON for every request on
+the key, and this client cannot switch them off:
 
 - [Guardrails](https://nrouter.ai/docs/guides/guardrails) — PII redaction and
   injection protection, pre-call and post-call.
 - [Budget controls](https://nrouter.ai/docs/guides/budget-controls) — spend
   limits per key, team and organization.
-- [Routing and fallbacks](https://nrouter.ai/docs/guides/router-settings) —
-  failover chains across providers.
 - [Observability](https://nrouter.ai/docs/guides/observability) — per-request
   cost and usage.
+
+[Routing and fallbacks](https://nrouter.ai/docs/guides/router-settings) are
+different: **opt-in, by what you put in `model`.** Name a Smart Router alias and
+you get the strategy and its fallback chain; name a concrete model and it is
+never re-routed and inherits no hidden platform fallback. Worth knowing before
+you rely on failover you have not actually enabled.
 - [Node.js / TypeScript quickstart](https://nrouter.ai/docs/sdks/nodejs) and the
   [API reference](https://nrouter.ai/docs/api-reference).

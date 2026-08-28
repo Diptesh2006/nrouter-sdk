@@ -59,9 +59,15 @@ do run are advisory, not required status checks.
 ## 🛑 Do not change a version field in a pull request
 
 `main` is the release branch and merging is the release action. A merge that
-changes `version` in `sdks/js/package.json` or `sdks/python/pyproject.toml`
-**publishes that version to npm or PyPI immediately**, and a published version
-is immutable — it cannot be unpublished, corrected, or reused.
+changes a version field **publishes immediately**, and a published version is
+immutable — it cannot be unpublished, corrected, or reused. There are three
+such files, one per registry:
+
+| file | publishes to |
+|---|---|
+| `sdks/js/package.json` | npm `@nrouter_ai/sdk` |
+| `sdks/python/pyproject.toml` | PyPI `nrouter-sdk` |
+| `sdks/java/pom.xml` | Maven Central `ai.nrouter:nrouter-sdk` |
 
 Leave every version field exactly as you found it. A maintainer bumps it in a
 separate commit when the change is ready to ship. If your change needs a

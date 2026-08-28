@@ -49,12 +49,6 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    env:
-      # Every credential-bearing step is gated on this, not on the trigger
-      # shape alone. `workflow_dispatch` accepts an arbitrary --ref, so a
-      # branch dispatch is neither a pull request nor main, and excluding only
-      # pull requests would let it publish unreviewed code with the token.
-      IS_RELEASE: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     defaults:
       run:
         working-directory: sdks/python
@@ -110,21 +104,39 @@ jobs:
             *)   echo "::error::PyPI answered $code; cannot tell whether $v exists"; exit 1 ;;
           esac
 
+      # Gated on the `github` context DIRECTLY, never on a job-level env var.
+      # An env var is writable: an earlier step — `pip install -e .[dev]` and
+      # `pytest`, which on a pull request run the contributor's own code — can
+      # echo IS_RELEASE=true into $GITHUB_ENV and every later step sees it.
+      # `github.event_name` and `github.ref` cannot be written by a step, so
+      # the guard has to read them.
+      #
+      # `workflow_dispatch` is why the ref check is here at all: dispatch takes
+      # an arbitrary --ref, so a branch run is neither a pull request nor main.
       - name: Build
-        if: env.IS_RELEASE == 'true' && steps.check.outputs.publish == 'true'
+        if: >-
+          github.event_name != 'pull_request'
+          && github.ref == 'refs/heads/main'
+          && steps.check.outputs.publish == 'true'
         run: |
           python -m build
           python -m twine check dist/*
 
       - name: Publish
-        if: env.IS_RELEASE == 'true' && steps.check.outputs.publish == 'true'
+        if: >-
+          github.event_name != 'pull_request'
+          && github.ref == 'refs/heads/main'
+          && steps.check.outputs.publish == 'true'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: python -m twine upload dist/*
 
       - name: Verify the registry serves it
-        if: env.IS_RELEASE == 'true' && steps.check.outputs.publish == 'true'
+        if: >-
+          github.event_name != 'pull_request'
+          && github.ref == 'refs/heads/main'
+          && steps.check.outputs.publish == 'true'
         env:
           V: ${{ steps.check.outputs.version }}
         run: |

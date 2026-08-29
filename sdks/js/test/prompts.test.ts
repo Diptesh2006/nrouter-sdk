@@ -276,3 +276,78 @@ test('systemVariableConflicts only reports OWN keys, never inherited ones', () =
   inherited.tone = 'terse';
   assert.deepEqual(systemVariableConflicts(inherited), []);
 });
+
+// ---------------------------------------------------------------------------
+// The id that is validated must be the id that is SENT
+// ---------------------------------------------------------------------------
+
+test('promptTemplate SENDS the trimmed id, not the padded string it validated', () => {
+  // The refusal above already calls `.trim()` to decide. Deciding on the
+  // trimmed value and then storing the RAW one is the inconsistency: the
+  // module judges a string it never transmits.
+  //
+  // It is not cosmetic on this wire. The gateway resolves the id with
+  // `WHERE t.id = $2::uuid` (`http/prompt_runtime.rs`), so a padded id is a
+  // UUID cast that cannot match the template the caller meant — a failed,
+  // billed round trip that this function already had the information to
+  // prevent one line earlier. Whitespace around a UUID is what a copy-paste,
+  // a CSV cell or an unstripped env var produces.
+  const padded = `  ${TEMPLATE}\n`;
+  assert.deepEqual(promptTemplate(padded), { templateId: TEMPLATE });
+  assert.deepEqual(promptExtraBody(promptTemplate(padded)), {
+    nrouter_prompt_template_id: TEMPLATE,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A variables map is untrusted input — it must not be a pollution gadget
+// ---------------------------------------------------------------------------
+
+test('a variables map cannot pollute Object.prototype through __proto__', () => {
+  // Variables are the most caller-controlled thing in this module: they come
+  // from a request, a form, a config file. `JSON.parse` makes `__proto__` an
+  // OWN key (an object literal does not), which is exactly what deserialising
+  // any of those produces.
+  //
+  // Object SPREAD is what keeps this safe — it creates a data property. The
+  // "equivalent" refactor to `Object.assign` is NOT equivalent: assign uses
+  // [[Set]], which hands `__proto__` to Object.prototype's accessor and
+  // pollutes every object in the process. This case is here so that refactor
+  // cannot land quietly.
+  const evil = JSON.parse('{"__proto__":{"polluted":"yes"},"tone":"terse"}');
+
+  for (const [what, produced] of [
+    ['promptVariables', promptVariables(evil).variables],
+    ['promptTemplate', promptTemplate(TEMPLATE, evil).variables],
+    ['withVariables', withVariables({ templateId: TEMPLATE }, evil).variables],
+    ['applyPrompt', applyPrompt({ model: 'gpt-4o' }, promptVariables(evil)).promptVariables],
+  ] as Array<[string, Record<string, unknown>]>) {
+    assert.equal(({} as any).polluted, undefined, `${what} polluted Object.prototype`);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(produced, '__proto__'),
+      true,
+      `${what} lost the __proto__ key instead of copying it as data`
+    );
+    assert.equal(produced.tone, 'terse');
+  }
+
+  // Belt and braces: the merged result is still an ordinary object, so nothing
+  // downstream inherits an attacker value.
+  assert.equal(Object.getPrototypeOf(promptVariables(evil).variables), Object.prototype);
+});
+
+test('a variable NAMED hasOwnProperty does not break conflict detection', () => {
+  // `variables.hasOwnProperty(name)` would call the CALLER'S string here and
+  // throw. `Object.prototype.hasOwnProperty.call` is why it does not — pinned
+  // so the shorter spelling cannot come back.
+  const vars = JSON.parse('{"hasOwnProperty":"not a function","model":"mine"}');
+  assert.deepEqual(systemVariableConflicts(vars), ['model']);
+});
+
+test('systemVariableConflicts survives a non-object without inventing a conflict', () => {
+  // It is exported, so a plain-JS caller reaches it with whatever they have.
+  for (const value of ['a string', 42, [], true]) {
+    assert.deepEqual(systemVariableConflicts(value as any), [], `${JSON.stringify(value)} confused it`);
+  }
+  assert.deepEqual(systemVariableConflicts(null), []);
+});

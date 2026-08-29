@@ -123,7 +123,7 @@ export function promptTemplate(
     );
   }
 
-  const selection: PromptSelection = { templateId };
+  const selection: PromptSelection = { templateId: templateId.trim() };
   // Omitted rather than defaulted to `{}`: the mapping already drops an empty
   // map, so a default would be invisible on the wire and misleading in a log.
   if (variables) selection.variables = copyVariables(variables);

@@ -422,3 +422,105 @@ test('a bare sk- key (not ours) is redacted too', () => {
   const err = createError(`rejected ${foreign}`, { status: 401 });
   assert.ok(!err.message.includes(foreign), `a foreign key leaked: ${err.message}`);
 });
+
+// ---------------------------------------------------------------------------
+// Case 17 — a NESTED abort is still an abort (gate 8: a retry is a second bill).
+// ---------------------------------------------------------------------------
+
+test('a NESTED abort cause defeats retryability, not only a top-level one', () => {
+  // The realistic shape, and the one the depth-8 walk in `wasAborted` exists
+  // for: Node's fetch/undici reports a cancelled request as
+  // `TypeError: fetch failed` whose `.cause` is the DOMException named
+  // AbortError, and the vendor client wraps that again as an
+  // APIConnectionError. `isAbortLike` only inspects the TOP of that chain, so
+  // the chain walk is the only thing that can see the cancellation.
+  //
+  // If the constructor's cause sanitizer flattens the chain to one node, the
+  // walk has nothing to walk: a cancelled POST — which may already have been
+  // billed — is reported RETRYABLE and a `while (isRetryable(e))` loop resends
+  // it.
+  const abort = new Error('This operation was aborted');
+  abort.name = 'AbortError';
+  const fetchFailed = new Error('fetch failed');
+  fetchFailed.name = 'TypeError';
+  (fetchFailed as Error & { cause?: unknown }).cause = abort;
+  const vendor = new Error('Connection error.');
+  vendor.name = 'APIConnectionError';
+  (vendor as Error & { cause?: unknown }).cause = fetchFailed;
+
+  const depth2 = new errors.nRouterTransportError('cancelled mid-flight', { cause: fetchFailed });
+  assert.equal(isRetryable(depth2), false, 'an abort one level down must defeat retryability');
+
+  const depth3 = new errors.nRouterTransportError('cancelled mid-flight', { cause: vendor });
+  assert.equal(isRetryable(depth3), false, 'an abort two levels down must defeat retryability');
+});
+
+test('sanitizing a cause chain still carries no key at any depth', () => {
+  // The chain must survive for the abort walk, but sanitization is what keeps
+  // the Authorization header out of `util.inspect` — both properties, one fix.
+  const inner = new Error(`upstream rejected ${SECRET}`);
+  inner.name = 'AbortError';
+  (inner as Error & { request?: unknown }).request = {
+    headers: { authorization: `Bearer ${SECRET}` },
+  };
+  const outer = new Error('fetch failed');
+  (outer as Error & { cause?: unknown }).cause = inner;
+
+  const err = new errors.nRouterTransportError('cancelled', { cause: outer });
+  assert.equal(isRetryable(err), false, 'the nested abort must still be visible');
+
+  const util = require('node:util');
+  const rendered = `${util.inspect(err, { depth: 12 })}${JSON.stringify(err.toJSON())}${err.stack}`;
+  assert.ok(!rendered.includes(SECRET), `a key leaked through the cause chain: ${rendered}`);
+  assert.ok(
+    !rendered.includes('authorization'),
+    'the originating Request must never survive sanitization'
+  );
+});
+
+test('a cause CYCLE cannot hang the sanitizer', () => {
+  const a = new Error('a');
+  const b = new Error('b');
+  (a as Error & { cause?: unknown }).cause = b;
+  (b as Error & { cause?: unknown }).cause = a;
+  const err = new errors.nRouterTransportError('looping', { cause: a });
+  assert.equal(isRetryable(err), true, 'a non-abort cycle is still an ordinary transport failure');
+});
+
+// ---------------------------------------------------------------------------
+// Case 18 — an ABSURD Retry-After is a hot retry in JavaScript, not a long wait.
+// ---------------------------------------------------------------------------
+
+test('an absurd Retry-After is capped, because setTimeout turns it into a HOT retry', () => {
+  // THIS IS A JAVASCRIPT-SPECIFIC HAZARD and the reason this SDK caps where the
+  // Go port does not. `setTimeout` stores its delay in a 32-bit signed int:
+  // any delay over 2147483647 ms overflows and the timer fires on the NEXT
+  // TICK. So the natural caller —
+  //   `await new Promise(r => setTimeout(r, err.retryAfter * 1000))`
+  // — sleeps ~1 ms for a Retry-After of ten years and hammers a limit that
+  // just refused it. Sleeping in Go for the same value is a real ten-year
+  // sleep, so the port inherited a bound it did not need and lost one it did.
+  const { MAX_RETRY_AFTER_SECONDS } = errors;
+  assert.equal(typeof MAX_RETRY_AFTER_SECONDS, 'number');
+  assert.ok(
+    MAX_RETRY_AFTER_SECONDS * 1000 <= 2 ** 31 - 1,
+    'the cap must keep retryAfter * 1000 inside setTimeout\'s 32-bit delay'
+  );
+
+  const now = Date.parse('Thu, 27 Aug 2026 12:00:00 GMT');
+  const tenYears = 10 * 365 * 24 * 3600;
+  assert.equal(parseRetryAfter(String(tenYears), now), MAX_RETRY_AFTER_SECONDS,
+    'a ten-year delta-seconds must be capped, not passed through');
+  assert.equal(parseRetryAfter('99999999999999999999', now), MAX_RETRY_AFTER_SECONDS,
+    'a value past 2^53 must be capped, not handed over as a rounded float');
+  assert.equal(
+    parseRetryAfter(new Date(now + tenYears * 1000).toUTCString(), now),
+    MAX_RETRY_AFTER_SECONDS,
+    'the HTTP-date form must be capped by the same ceiling as delta-seconds'
+  );
+
+  // The cap must not disturb any realistic value.
+  assert.equal(parseRetryAfter('30', now), 30);
+  assert.equal(parseRetryAfter('0', now), 0);
+  assert.equal(parseRetryAfter(String(MAX_RETRY_AFTER_SECONDS), now), MAX_RETRY_AFTER_SECONDS);
+});

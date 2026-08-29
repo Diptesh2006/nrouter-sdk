@@ -42,6 +42,11 @@
 //    silently appended turns would make the billed token count depend on
 //    hidden state — and token count is money (gateway rules §4f gates 1-3).
 //
+// 3. HISTORY GROWS WITHOUT BOUND. Every turn in `messages()` is passed whole
+//    to the provider, so turn N re-sends and will re-bill turns 1..N-1 on every
+//    request. Token count is money, so pruning turns or applying a summary is
+//    an application concern.
+//
 // Every method returns a Promise even though the default store is synchronous.
 // That is deliberate: a caller who later swaps in Redis changes ONE line (the
 // store) instead of every call site, and an API that were sync-by-default
@@ -236,9 +241,13 @@ function validateMessage(message: unknown, where: string): ChatMessage {
     throw configurationError(`${where}: a message must be an object, got ${describe(message)}.`);
   }
 
-  const record = message as Record<string, unknown>;
+  // Clone into plain own data properties FIRST. This freezes getter evaluations
+  // so a dynamic getter cannot return valid data during validation and flip
+  // afterwards, and prevents __proto__ setters from executing.
+  const cloned = cloneMessage(message as ChatMessage);
+  const record = cloned as unknown as Record<string, unknown>;
 
-  for (const key of Object.keys(record)) {
+  for (const key of Object.getOwnPropertyNames(record)) {
     if (TENANCY_KEYS.has(normalizeKey(key))) {
       throw configurationError(
         `${where}: a message must not carry the tenancy field "${key}". ` +
@@ -262,7 +271,7 @@ function validateMessage(message: unknown, where: string): ChatMessage {
     );
   }
 
-  return cloneMessage(record as unknown as ChatMessage);
+  return cloned;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +301,14 @@ function cloneValue(value: unknown): unknown {
     // message is JSON on the wire, so anything that does not survive
     // serialization would not have reached the provider either.
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = cloneValue(v);
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      Object.defineProperty(out, k, {
+        value: cloneValue(v),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
     return out;
   }
   return value;

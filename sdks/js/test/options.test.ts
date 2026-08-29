@@ -360,3 +360,167 @@ test('nr.chat({ images }) enforces the same image contract as the media surface'
   const msgs = buildMessages({ model: 'm', prompt: 'hi', images: ['https://example.com/a.png'] });
   assert.ok(JSON.stringify(msgs).includes('image_url'));
 });
+
+// ---------------------------------------------------------------------------
+// SWEEP LANE D — defects found 2026-08-28, each pinned by the test above it.
+// ---------------------------------------------------------------------------
+
+test('buildMessages keeps EVERY field of a turn, not just role and content', () => {
+  // The defect: `out.push({ role, content })` rebuilt each turn from two
+  // properties and silently discarded the rest. A tool-calling conversation
+  // lost `tool_calls` off the assistant turn and `tool_call_id` off the tool
+  // turn — the exact two fields this SDK's own Anthropic translator reads
+  // (src/chat.ts, `role === 'tool'` and `assistant && tool_calls`), which made
+  // that translator unreachable and every replayed tool conversation a billed
+  // provider 400.
+  const messages = [
+    { role: 'user', content: 'weather in SF?' },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        { id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '{}' } },
+      ],
+    },
+    { role: 'tool', tool_call_id: 'call_1', name: 'get_weather', content: '72F' },
+  ];
+  const out = buildMessages({ model: 'gpt-4o', messages });
+
+  assert.deepEqual(
+    out[1].tool_calls,
+    messages[1].tool_calls,
+    'the assistant turn lost its tool_calls — the model is asked to answer a call it never made',
+  );
+  assert.equal(
+    out[2].tool_call_id,
+    'call_1',
+    'the tool result lost the id binding it to its call',
+  );
+  assert.equal(out[2].name, 'get_weather', 'the tool result lost its function name');
+  assert.deepEqual(out, messages, 'every turn must survive intact');
+});
+
+test('a preserved turn is still a COPY — the caller may reuse the array', () => {
+  const original = [
+    { role: 'assistant', content: 'x', tool_calls: [{ id: 'c1' }] },
+    { role: 'user', content: 'hi' },
+  ];
+  const snapshot = JSON.stringify(original);
+  const out = buildMessages({ model: 'm', messages: original, images: ['https://x/y.png'] });
+  assert.equal(JSON.stringify(original), snapshot, 'the caller array was mutated');
+  assert.notEqual(out[0], original[0], 'a turn must be copied, not aliased');
+});
+
+test('a tenancy identifier CANNOT be smuggled onto the wire through extra', () => {
+  // Gateway rules §4f GATE 5: tenancy is resolved from the authenticated caller
+  // ALONE. `src/memory.ts` already refuses these keys on a message and its
+  // comment claims "test/options.test.ts already pins this for the body
+  // builders" — it did not. The body builder was the laxer of the two surfaces,
+  // which is the inverse of what that comment asserts.
+  //
+  // Normalized, exactly as memory.ts normalizes: `organizationId` and
+  // `ORGANIZATION_ID` are the same key as `organization_id`.
+  for (const key of [
+    'organization_id',
+    'organizationId',
+    'ORG_ID',
+    'team_id',
+    'teamId',
+    'user_id',
+    'nrouter_org',
+  ]) {
+    assert.throws(
+      () => buildChatBody({ model: 'm', prompt: 'hi', extra: { [key]: 'org-victim' } }, {}),
+      (err: unknown) => {
+        const e = err as { kind?: string; message?: string };
+        // CONFIGURATION: permanent, never retried.
+        assert.equal(e.kind, 'configuration', `${key} must be refused as a configuration error`);
+        assert.match(String(e.message), new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+        return true;
+      },
+      `extra.${key} reached the request body`,
+    );
+  }
+});
+
+test('the tenancy guard keys on FIELD NAMES, never on message text', () => {
+  // The old test greped the serialized body for the substring "team_id", which
+  // would have refused a caller legitimately asking the model about a database
+  // column. A prompt is content, not a field.
+  const body = buildChatBody(
+    {
+      model: 'm',
+      prompt: 'write SQL selecting organization_id, team_id and user_id from the audit table',
+      systemPrompt: 'you know about org_id columns',
+    },
+    {},
+  );
+  assert.ok(JSON.stringify(body.messages).includes('organization_id'), 'content must pass through');
+  for (const key of Object.keys(body)) {
+    assert.equal(
+      /^(organization_?id|org_?id|team_?id|user_?id|nrouter_?org)$/i.test(key),
+      false,
+      `the BODY carries a tenancy field: ${key}`,
+    );
+  }
+});
+
+test('a prompt-template VARIABLE named like a tenancy field is not a tenancy field', () => {
+  // `nrouter_prompt_variables` is a Jinja namespace the gateway renders into a
+  // prompt; a variable spelled `organization_id` is a string in a template, not
+  // a body-level tenancy claim. Pinned so the guard above is never "fixed"
+  // into refusing it.
+  const body = buildChatBody(
+    { model: 'm', prompt: 'hi', promptTemplateId: 't', promptVariables: { organization_id: 'x' } },
+    {},
+  );
+  assert.deepEqual(body.nrouter_prompt_variables, { organization_id: 'x' });
+});
+
+test('a __proto__ key in extra is REFUSED, not silently swallowed', () => {
+  // `Object.assign` invokes the `__proto__` setter, so a JSON-parsed escape
+  // hatch carrying it (a) never reaches the wire and (b) replaces the body
+  // object's prototype. Measured: `extra: JSON.parse('{"__proto__":{"stream":
+  // true}}')` makes chat() throw "remove `stream: true` from `extra`" at a
+  // caller who never set stream.
+  const evil = JSON.parse('{"__proto__":{"stream":true}}');
+  assert.throws(
+    () => buildChatBody({ model: 'm', prompt: 'hi', extra: evil }, {}),
+    (err: unknown) => {
+      assert.equal((err as { kind?: string }).kind, 'configuration');
+      assert.match(String((err as { message?: string }).message), /__proto__/);
+      return true;
+    },
+  );
+});
+
+test('maxTokens must be a positive integer, never coerced', () => {
+  // `max_tokens: NaN` serializes as JSON `null` — a value the caller never
+  // chose, on a field that decides what the request costs.
+  for (const bad of [NaN, Infinity, -Infinity, 0, -5, 1.5]) {
+    assert.throws(
+      () => buildChatBody({ model: 'm', prompt: 'hi', maxTokens: bad }, {}),
+      (err: unknown) => (err as { kind?: string }).kind === 'configuration',
+      `maxTokens ${String(bad)} reached the wire`,
+    );
+  }
+  assert.equal(buildChatBody({ model: 'm', prompt: 'hi', maxTokens: 1 }, {}).max_tokens, 1);
+  assert.equal(buildChatBody({ model: 'm', prompt: 'hi', maxTokens: 4096 }, {}).max_tokens, 4096);
+});
+
+test('a body with ZERO messages is refused before it is billed', () => {
+  // This file already reasons that "a request carrying zero messages is a
+  // guaranteed provider 400" — and then emitted exactly that when neither
+  // `prompt` nor `messages` was supplied.
+  assert.throws(
+    () => buildChatBody({ model: 'm' }, {}),
+    (err: unknown) => {
+      assert.equal((err as { kind?: string }).kind, 'configuration');
+      return true;
+    },
+  );
+  assert.throws(() => buildChatBody({ model: 'm', messages: [] }, {}), (err: unknown) =>
+    (err as { kind?: string }).kind === 'configuration');
+  // A system turn alone is still a real request; only the empty list is refused.
+  assert.equal(buildChatBody({ model: 'm', systemPrompt: 's' }, {}).messages.length, 1);
+});

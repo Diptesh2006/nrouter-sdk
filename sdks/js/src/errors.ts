@@ -451,7 +451,7 @@ export function isAbortLike(err: unknown): boolean {
 /** Walk a cause chain looking for an abort, bounded so a cycle cannot hang the caller. */
 function wasAborted(err: unknown): boolean {
   let current: unknown = err;
-  for (let depth = 0; depth < 8 && current !== null && current !== undefined; depth += 1) {
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && current !== null && current !== undefined; depth += 1) {
     if (typeof current === 'object') {
       if (isAbortLike(current)) return true;
       const name = (current as { name?: unknown }).name;
@@ -525,6 +525,25 @@ export function parseErrorBody(body: unknown): { code: string | null; message: s
 }
 
 /**
+ * The largest `Retry-After` this SDK will report: 24 hours.
+ *
+ * A ceiling is not tidiness, it is the JavaScript half of a bug the Go port
+ * does not have. `setTimeout` keeps its delay in a 32-BIT SIGNED INT, so the
+ * obvious caller —
+ *   `await new Promise(r => setTimeout(r, err.retryAfter * 1000))`
+ * — overflows for anything past ~24.8 days and fires on the NEXT TICK. A
+ * `Retry-After: 315360000` (ten years), from a broken upstream or a hostile
+ * one, therefore becomes an IMMEDIATE retry against a limit that just refused
+ * us: the same hot-loop outcome the HTTP-date clamp below exists to prevent,
+ * reached from the other end of the range. Sleeping the same number in Go is a
+ * real ten-year sleep, which is why the port inherited no bound here.
+ *
+ * 24 hours is far beyond any backoff the gateway issues and far inside the
+ * overflow, so a capped value is still a real wait rather than a fake one.
+ */
+export const MAX_RETRY_AFTER_SECONDS = 86400;
+
+/**
  * `Retry-After` in whole seconds, or null when absent or unparseable.
  *
  * Both RFC 9110 forms are accepted: delta-seconds, and an HTTP-date, which
@@ -542,7 +561,8 @@ export function parseRetryAfter(
 
   if (/^\d+$/.test(trimmed)) {
     const seconds = Number(trimmed);
-    return Number.isFinite(seconds) ? seconds : null;
+    if (!Number.isFinite(seconds)) return null;
+    return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
   }
 
   // Date.parse is FAR more lenient than an HTTP-date parser, and the
@@ -567,7 +587,8 @@ export function parseRetryAfter(
   }
   const at = Date.parse(trimmed);
   if (Number.isNaN(at)) return null;
-  return Math.max(0, Math.ceil((at - now) / 1000));
+  const seconds = Math.max(0, Math.ceil((at - now) / 1000));
+  return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
 }
 
 /**
@@ -657,22 +678,62 @@ export function errorEnvelopeOnSuccess(
 }
 
 /**
- * A cause that is safe to print.
+ * The furthest a cause chain is walked, sanitizing or reading it.
+ *
+ * Shared with `wasAborted` on purpose: the walk can only see what the
+ * sanitizer kept, so two different bounds would make the shallower one the
+ * real one and the other a comment.
+ */
+const MAX_CAUSE_DEPTH = 8;
+
+/**
+ * A cause that is safe to print, WITH ITS CHAIN.
  *
  * Keeps the name (the abort walk reads it) and a redacted message, and drops
  * every other property — which is where a fetch failure keeps the originating
  * Request and therefore the Authorization header.
+ *
+ * THE CHAIN IS REBUILT, not truncated, and that is a money property rather
+ * than a nicety. A cancelled request reaches this SDK as a chain — undici
+ * throws `TypeError: fetch failed` whose `cause` is the `AbortError`, and the
+ * vendor client wraps that again — so the cancellation is NEVER at the top.
+ * Flattening to a single node left `wasAborted`\'s depth-8 walk with nothing to
+ * walk, `isRetryable` answered TRUE for a cancelled POST that may already have
+ * been billed, and a `while (isRetryable(e))` loop resent it (gate 8).
+ *
+ * Bounded by depth AND by an identity set, so a cause cycle — which undici and
+ * several HTTP clients do produce — cannot spin here.
  */
-function sanitizeCause(cause: unknown): unknown {
-  if (cause instanceof Error) {
-    const safe = new Error(redactKeys(cause.message));
-    safe.name = cause.name;
-    // No `stack` copy: a stack can quote a URL that carries a token.
-    safe.stack = `${cause.name}: ${redactKeys(cause.message)}`;
-    return safe;
-  }
+function sanitizeCause(cause: unknown, depth = 0, seen: Set<unknown> = new Set()): unknown {
+  if (depth >= MAX_CAUSE_DEPTH) return undefined;
   if (typeof cause === 'string') return redactKeys(cause);
-  // An arbitrary object may hold anything at all. Its shape is not worth the
-  // risk; the message above already says what happened.
-  return undefined;
+  if (typeof cause !== 'object' || cause === null) return undefined;
+  if (seen.has(cause)) return undefined;
+  seen.add(cause);
+
+  const source = cause as { name?: unknown; message?: unknown; cause?: unknown };
+  // Only these two strings are copied off the original. Everything else an
+  // Error (or an arbitrary object) carries is dropped unread.
+  const name = typeof source.name === 'string' ? source.name : cause instanceof Error ? 'Error' : null;
+  const message = typeof source.message === 'string' ? redactKeys(source.message) : '';
+  const nested = sanitizeCause(source.cause, depth + 1, seen);
+
+  if (name === null && message === '' && nested === undefined) return undefined;
+
+  const safe = new Error(message);
+  safe.name = name ?? 'Error';
+  // No `stack` copy: a stack can quote a URL that carries a token.
+  safe.stack = `${safe.name}: ${message}`;
+  if (nested !== undefined) {
+    // Non-enumerable so it does not widen `JSON.stringify` or a shallow
+    // property sweep, but still reachable by the abort walk and by
+    // `util.inspect`, which prints a `cause` it can see.
+    Object.defineProperty(safe, 'cause', {
+      value: nested,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return safe;
 }

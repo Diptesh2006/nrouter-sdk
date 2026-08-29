@@ -41,6 +41,8 @@
  * an omitted param falls back to the provider's own default, which is exactly
  * what rule 1 above is protecting.
  */
+import { configurationError } from './errors';
+
 export interface SamplingInput {
   /** Advanced sampling explicitly enabled by the caller. When false, NOTHING is sent. */
   advanced: boolean;
@@ -107,11 +109,52 @@ export function isClaudeModel(model: string, provider?: string | null): boolean 
  * is nothing to send, and inventing a number here would reintroduce rule 1's
  * silent override.
  */
+/**
+ * Refuse a number that cannot survive serialization or that no provider accepts.
+ *
+ * REFUSED, never clamped or coerced. `JSON.stringify(NaN)` is the string
+ * `null`, so a `NaN` reaching this policy left the wire carrying a value the
+ * caller never chose on a field that decides what the answer costs — and
+ * `NaN` is what `parseFloat('')` returns, so an empty form field produced it.
+ * Clamping would be worse than refusing: it silently answers a different
+ * question than the one that was asked, and bills for the answer.
+ *
+ * The RANGE arm is deliberately asymmetric. `top_p` is a probability mass and
+ * is [0, 1] on every provider; temperature is never negative anywhere. But the
+ * temperature UPPER bound is provider-specific — 2 on OpenAI, 1 on Anthropic —
+ * so it is left alone: refusing 1.5 would block a request that works.
+ */
+function requireUsable(name: string, value: number, max?: number): void {
+  if (!Number.isFinite(value)) {
+    throw configurationError(
+      `${name} must be a finite number, got ${String(value)}. Sent as-is it ` +
+        'serializes to JSON `null` — a value you did not choose, on a billed request.',
+    );
+  }
+  if (value < 0 || (max !== undefined && value > max)) {
+    const range = max === undefined ? '0 or greater' : `between 0 and ${max}`;
+    throw configurationError(
+      `${name} must be ${range}, got ${value}. No provider accepts this value, and ` +
+        'clamping it here would silently answer a different question than the one asked.',
+    );
+  }
+}
+
 export function buildSamplingParams(input: SamplingInput): SamplingParams {
   // Rule 1: default mode is a hard "send nothing", checked before anything else.
+  // Validation comes AFTER it on purpose: with advanced off these values are
+  // ignored entirely, so refusing them would break a request that works.
   if (!input.advanced) return {};
 
   const { temperature, topP } = input;
+
+  // Rule 5: a non-finite or impossible value is refused BEFORE the neutral-value
+  // sentinel below reads it. `NaN !== NEUTRAL_TOP_P` is true, so an unvalidated
+  // `NaN` top_p set `topPSet` — which on Claude SUPPRESSED the temperature the
+  // caller did choose and then emitted `top_p: null`. The caller asked for one
+  // knob and the provider saw neither.
+  if (temperature !== undefined) requireUsable('temperature', temperature);
+  if (topP !== undefined) requireUsable('top_p', topP, 1);
 
   // Rule 3: neutral or absent top_p is not a value the caller chose. The
   // `!== undefined` half is what narrows `topP` to `number` below.

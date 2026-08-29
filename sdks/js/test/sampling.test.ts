@@ -103,3 +103,65 @@ test('Claude never receives temperature and top_p together', () => {
     assert.deepEqual(params, { top_p: topP }, 'on Claude a chosen top_p WINS');
   }
 });
+
+// ---------------------------------------------------------------------------
+// SWEEP LANE D — non-finite and out-of-range sampling values.
+// ---------------------------------------------------------------------------
+
+test('a NaN top_p must not silently steal a Claude temperature', () => {
+  // The sharpest case. `NaN !== 1` passed the neutral-value sentinel, so
+  // `topPSet` went true: on Claude that SUPPRESSED the temperature the caller
+  // did choose, and emitted `top_p` — which JSON.stringify writes as `null`.
+  // The caller asked for temperature 0.3 and the provider saw neither knob.
+  assert.throws(
+    () => buildSamplingParams({ advanced: true, model: 'claude-sonnet-4-5', temperature: 0.3, topP: NaN }),
+    (err: unknown) => (err as { kind?: string }).kind === 'configuration',
+  );
+});
+
+test('non-finite sampling values are refused, never serialized as null', () => {
+  for (const bad of [NaN, Infinity, -Infinity]) {
+    assert.throws(
+      () => buildSamplingParams({ advanced: true, model: 'gpt-4o', temperature: bad }),
+      (err: unknown) => (err as { kind?: string }).kind === 'configuration',
+      `temperature ${String(bad)} reached the wire`,
+    );
+    assert.throws(
+      () => buildSamplingParams({ advanced: true, model: 'gpt-4o', topP: bad }),
+      (err: unknown) => (err as { kind?: string }).kind === 'configuration',
+      `top_p ${String(bad)} reached the wire`,
+    );
+  }
+});
+
+test('a top_p outside [0, 1] and a negative temperature are refused', () => {
+  // top_p is a probability mass on every provider; temperature is never
+  // negative anywhere. The UPPER temperature bound is provider-specific (2 on
+  // OpenAI, 1 on Anthropic) and is deliberately NOT enforced here — clamping
+  // or refusing it would change or block what a caller legitimately asked for.
+  for (const bad of [-0.1, 1.1, 2]) {
+    assert.throws(
+      () => buildSamplingParams({ advanced: true, model: 'gpt-4o', topP: bad }),
+      (err: unknown) => (err as { kind?: string }).kind === 'configuration',
+      `top_p ${bad} reached the wire`,
+    );
+  }
+  assert.throws(
+    () => buildSamplingParams({ advanced: true, model: 'gpt-4o', temperature: -0.5 }),
+    (err: unknown) => (err as { kind?: string }).kind === 'configuration',
+  );
+  // Legitimate values still pass, so the guard is not merely strict.
+  assert.deepEqual(buildSamplingParams({ advanced: true, model: 'gpt-4o', temperature: 1.5 }), {
+    temperature: 1.5,
+  });
+  assert.deepEqual(buildSamplingParams({ advanced: true, model: 'gpt-4o', topP: 0 }), { top_p: 0 });
+});
+
+test('default mode still sends nothing and refuses nothing', () => {
+  // Rule 1 is checked FIRST and stays first: with advanced off the values are
+  // ignored entirely, so validating them would refuse a request that works.
+  assert.deepEqual(
+    buildSamplingParams({ advanced: false, model: 'claude-sonnet-4-5', temperature: NaN, topP: NaN }),
+    {},
+  );
+});

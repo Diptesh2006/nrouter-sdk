@@ -121,6 +121,66 @@ export function buildExtraBody(opts: NRouterFeatureOptions): NRouterExtraBody {
   return extra;
 }
 
+/**
+ * Keys that would place a tenancy identifier in a request body.
+ *
+ * Gateway rules §4f GATE 5: tenancy is resolved from the authenticated caller
+ * ALONE — never a header, body or query param — because a body-supplied org or
+ * team id is the spend-attribution spoof, one tenant's usage billed to another.
+ *
+ * This set MIRRORS the one in `src/memory.ts`, whose comment already claimed
+ * "test/options.test.ts already pins this for the body builders". It did not:
+ * memory refused `{ role, content, organization_id }` while `opts.extra` walked
+ * the same identifier straight onto the wire. The stricter gate was on the
+ * quieter path. The two sets must stay in step.
+ *
+ * Compared NORMALIZED (lowercased, underscores dropped), so `organization_id`,
+ * `organizationId` and `ORGANIZATION_ID` are one entry.
+ */
+const TENANCY_KEYS = new Set(['organizationid', 'orgid', 'teamid', 'userid', 'nrouterorg']);
+
+const normalizeKey = (key: string): string => key.toLowerCase().replace(/_/g, '');
+
+/**
+ * Vet the caller's escape hatch before it is merged into the body.
+ *
+ * `extra` exists so a gateway or provider field this SDK does not model yet is
+ * never a blocker, and that stays true — this refuses exactly two shapes, both
+ * of which are broken rather than unmodelled:
+ *
+ *   * a TENANCY key. It is ignored by the gateway (gate 5) and then forwarded
+ *     verbatim to the provider, which rejects it as an unrecognized argument.
+ *     REFUSED rather than stripped, for the reason memory.ts already gives:
+ *     stripping leaves the caller believing they attributed spend somewhere,
+ *     and that belief is wrong forever and silently.
+ *
+ *   * `__proto__`. `Object.assign` invokes the setter rather than defining a
+ *     property, so a JSON-parsed hatch carrying it never reaches the wire AND
+ *     replaces the body object's prototype. Measured 2026-08-28:
+ *     `extra: JSON.parse('{"__proto__":{"stream":true}}')` makes `chat()` throw
+ *     "remove `stream: true` from `extra`" at a caller who never set stream,
+ *     while the field they did set vanishes.
+ */
+function vetExtra(extra: Record<string, unknown>): void {
+  for (const key of Object.keys(extra)) {
+    if (TENANCY_KEYS.has(normalizeKey(key))) {
+      throw configurationError(
+        `extra must not carry the tenancy field "${key}". The gateway resolves the ` +
+          'organization, team and user from the authenticated API key alone; a ' +
+          'body-supplied identifier attributes no spend, and reaches the provider as ' +
+          'an unrecognized argument that fails the request.',
+      );
+    }
+    if (key === '__proto__') {
+      throw configurationError(
+        'extra must not carry a "__proto__" key: it is never serialized onto the wire ' +
+          "and instead replaces the request body's prototype, which makes unrelated " +
+          'fields appear to be set. Remove it.',
+      );
+    }
+  }
+}
+
 export function buildFeatureBody(
   body: Record<string, unknown>,
   opts: NRouterFeatureOptions = {},
@@ -155,16 +215,21 @@ function imageParts(images: readonly string[]): ChatContentPart[] {
  * string is not something the caller asked to send.
  */
 function withImages(message: ChatMessage, images: readonly string[]): ChatMessage {
-  const parts: ChatContentPart[] =
-    typeof message.content === 'string'
-      ? message.content
-        ? [{ type: 'text', text: message.content }]
-        : []
-      : // Copy rather than push into the caller's array — `buildMessages` must
-        // never mutate the `messages` a caller may reuse for a second call.
-        [...message.content];
+  const content: unknown = message.content;
+  const parts: ChatContentPart[] = Array.isArray(content)
+    ? // Copy rather than push into the caller's array — `buildMessages` must
+      // never mutate the `messages` a caller may reuse for a second call.
+      [...(content as ChatContentPart[])]
+    : typeof content === 'string' && content
+      ? [{ type: 'text', text: content }]
+      : // `null` is what OpenAI puts on an assistant turn that only made tool
+        // calls, and spreading it threw a TypeError naming nothing useful.
+        [];
 
-  return { role: message.role, content: [...parts, ...imageParts(images)] };
+  // SPREAD the turn rather than rebuilding it from two fields: `tool_calls`,
+  // `tool_call_id` and `name` live alongside `role` and `content`, and a turn
+  // rebuilt from a two-property literal drops them silently.
+  return { ...message, content: [...parts, ...imageParts(images)] };
 }
 
 /**
@@ -190,10 +255,18 @@ export function buildMessages(opts: NRouterCallOptions): ChatMessage[] {
   }
 
   if (opts.messages && opts.messages.length > 0) {
-    // Shallow-copy each turn: the images fold below replaces one of them, and a
-    // caller reusing this array for a follow-up call must not see our edit.
+    // Shallow-copy each turn WHOLE. `{ role, content }` was the defect: it
+    // rebuilt every turn from two properties and discarded the rest, so an
+    // assistant turn lost its `tool_calls` and a tool result lost the
+    // `tool_call_id` binding it to that call — the two fields this SDK's own
+    // Anthropic translator reads (`chat.ts`, `role === 'tool'` and
+    // `assistant && tool_calls`), which made that translator unreachable and
+    // every replayed tool conversation a billed provider rejection.
+    //
+    // Still a COPY, for the original reason: the images fold below replaces one
+    // of these entries and a caller reusing the array must not see our edit.
     for (const message of opts.messages) {
-      out.push({ role: message.role, content: message.content });
+      out.push({ ...message });
     }
   } else if (opts.prompt !== undefined) {
     // An empty array of `messages` falls through to `prompt` on purpose: a
@@ -257,12 +330,38 @@ export function buildChatBody(
   opts: NRouterCallOptions,
   sampling: { temperature?: number; top_p?: number },
 ): Record<string, unknown> {
+  const messages = buildMessages(opts);
+  if (messages.length === 0) {
+    // This file's own reasoning, applied to itself: "a request carrying zero
+    // messages is a guaranteed provider 400". It was emitted anyway whenever
+    // neither `prompt` nor `messages` was supplied — an uninitialised caller
+    // state became an opaque upstream rejection instead of a sentence naming
+    // the missing option.
+    throw configurationError(
+      'a chat request needs at least one message: set `prompt` for a single turn, ' +
+        'or `messages` for a conversation. A body with an empty message list is ' +
+        'rejected by every provider.',
+    );
+  }
+
   const body: Record<string, unknown> = {
     model: opts.model,
-    messages: buildMessages(opts),
+    messages,
   };
 
   if (opts.maxTokens !== undefined) {
+    // REFUSED, never rounded or clamped. `max_tokens: NaN` serializes to JSON
+    // `null` — a value the caller never chose, on the field that bounds what
+    // the request costs — and `NaN` is exactly what `parseInt('')` returns from
+    // an empty form field. A fraction or a zero is rejected by every provider,
+    // so refusing locally is free and refusing upstream is not.
+    if (!Number.isInteger(opts.maxTokens) || opts.maxTokens < 1) {
+      throw configurationError(
+        `maxTokens must be a whole number of at least 1, got ${String(opts.maxTokens)}. ` +
+          'It is not rounded or clamped here: silently changing the token ceiling ' +
+          'changes what the request costs.',
+      );
+    }
     body.max_tokens = opts.maxTokens;
   }
 
@@ -280,6 +379,7 @@ export function buildChatBody(
   Object.assign(body, buildExtraBody(opts));
 
   if (opts.extra) {
+    vetExtra(opts.extra);
     Object.assign(body, opts.extra);
   }
 

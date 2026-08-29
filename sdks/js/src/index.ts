@@ -58,6 +58,7 @@ export {
   isRetryable,
   parseErrorBody,
   parseRetryAfter,
+  MAX_RETRY_AFTER_SECONDS,
   withResponse,
   ERROR_CLASS_BY_CODE,
   ERROR_STATUS_BY_CODE,

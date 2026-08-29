@@ -433,3 +433,158 @@ test('the module documents itself as CLIENT-SIDE ONLY', async () => {
   assert.match(src, /CLIENT-SIDE ONLY/);
   assert.match(src, /gateway (stores|remembers) nothing/i);
 });
+
+// ---------------------------------------------------------------------------
+// Case 8 — the copy is a SNAPSHOT: validation and storage see the same bytes
+// ---------------------------------------------------------------------------
+//
+// Every case here is the same defect pointed at a different key: the guard read
+// one object and the memory kept a DIFFERENT one, so the guard was decoration.
+// A store is caller-supplied — a shared Redis key, a file another process
+// writes, a row parsed with `JSON.parse` — so "the store is hostile" is the
+// ordinary case, not the exotic one.
+
+test('an own __proto__ key cannot put a tenancy field on a message the caller reads', async () => {
+  // `JSON.parse` creates `__proto__` as an OWN data key (an object literal
+  // would not), so this is exactly the shape a Redis row or a request body
+  // deserialises into. A copy loop doing `out[k] = v` then hands that key to
+  // Object.prototype's accessor and sets the CLONE'S PROTOTYPE — the key
+  // vanishes from the copy and its contents become INHERITED properties.
+  //
+  // That walks straight past the tenancy refusal, which enumerates OWN keys
+  // only, and lands on a message the caller reads back: `'team_id' in msg` is
+  // true and `for...in` enumerates it. Gateway rules §4f gate 5 — a message
+  // must not carry a tenancy identifier by any route, including this one.
+  const raw = JSON.parse('{"role":"user","content":"hi","__proto__":{"team_id":"other-team"}}');
+  const mem = createMemory({ store: { load: () => [raw], save: () => {} } });
+
+  const out = (await mem.messages())[0];
+
+  assert.equal(out.team_id, undefined, 'a tenancy field reached the caller through the prototype');
+  assert.equal('team_id' in out, false, 'the prototype chain still answers for a tenancy key');
+
+  const enumerated: string[] = [];
+  for (const key in out) enumerated.push(key);
+  assert.deepEqual(
+    enumerated.sort(),
+    ['__proto__', 'content', 'role'],
+    'for...in saw a key that is not an own key of the message'
+  );
+
+  // And nothing global was touched — the clone must not be a pollution gadget.
+  assert.equal(({} as Record<string, unknown>).team_id, undefined, 'Object.prototype was polluted');
+});
+
+test('a role GETTER cannot answer the check one way and the copy another', async () => {
+  // Validating the raw object and then copying it reads the source TWICE. A
+  // store can put a getter (or a Proxy) on `role` that returns a legal value
+  // to the check and an illegal one to the copy — so the memory keeps a role
+  // this SDK's own union forbids and its body builders cannot emit.
+  const bad: Record<string, unknown> = { content: 'hi' };
+  let reads = 0;
+  Object.defineProperty(bad, 'role', {
+    enumerable: true,
+    get: () => (reads++ === 0 ? 'user' : 'root'),
+  });
+
+  const mem = createMemory({ store: { load: () => [bad], save: () => {} } });
+  const out = (await mem.messages())[0];
+
+  assert.equal(out.role, 'user', `validation passed on 'user' but the memory kept '${out.role}'`);
+});
+
+test('a content GETTER cannot smuggle a non-message body past the shape check', async () => {
+  // Same defect, the field that carries the prompt. Measured before the fix:
+  // `content` validated as a string and was stored as `{smuggled: ...}` — a
+  // shape neither the gateway nor any provider accepts, produced by the one
+  // function whose job is to refuse exactly that.
+  const bad: Record<string, unknown> = { role: 'user' };
+  let reads = 0;
+  Object.defineProperty(bad, 'content', {
+    enumerable: true,
+    get: () => (reads++ === 0 ? 'hi' : { smuggled: true }),
+  });
+
+  const mem = createMemory({ store: { load: () => [bad], save: () => {} } });
+  const out = (await mem.messages())[0];
+
+  assert.equal(
+    typeof out.content === 'string' || Array.isArray(out.content),
+    true,
+    `content was validated as a string and stored as ${JSON.stringify(out.content)}`
+  );
+});
+
+test('a store returning an ARRAY OF NON-MESSAGES is refused item by item', async () => {
+  // An array is not enough. `[]` passes the Array.isArray check and every
+  // element still has to be a message, or the memory hands a provider a body
+  // it will reject after the request is billed.
+  for (const rows of [[null], ['just a string'], [42], [[]], [{ role: 'user' }], [{ content: 'x' }]]) {
+    const mem = createMemory({ store: { load: () => rows as any, save: () => {} } });
+    await assert.rejects(
+      () => mem.messages(),
+      nRouterConfigurationError,
+      `a store row ${JSON.stringify(rows)} was accepted as a message`
+    );
+  }
+});
+
+test('createArrayStore copies DEEPLY in both directions, not just at the top level', async () => {
+  // The existing seed case only mutates a top-level `content` string. A
+  // multimodal turn is an array of part OBJECTS, and a shallow `{...m}` copy
+  // shares every one of them — so a caller editing `part.image_url.url` after
+  // save() rewrites a message the store already recorded.
+  const store = createArrayStore();
+  const part = { type: 'image_url', image_url: { url: 'https://good.test/a.png' } };
+
+  store.save([{ role: 'user', content: [part] }] as any);
+  part.image_url.url = 'https://attacker.test/b.png';
+  assert.equal(
+    (store.load()[0].content as any)[0].image_url.url,
+    'https://good.test/a.png',
+    'save() aliased the caller nested part'
+  );
+
+  const got = store.load();
+  (got[0].content as any)[0].image_url.url = 'https://attacker.test/c.png';
+  assert.equal(
+    (store.load()[0].content as any)[0].image_url.url,
+    'https://good.test/a.png',
+    'load() handed out a nested part that aliases the store'
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Case 9 — the two scope limits, stated so they stay DELIBERATE
+// ---------------------------------------------------------------------------
+
+test('a tenancy key NESTED in a caller field is NOT refused — the guard is top-level BY DESIGN', async () => {
+  // Pinned as a boundary, not celebrated as a feature. Recursing would refuse
+  // working requests: `user_id` inside an application's own metadata bag is a
+  // legitimate application field, and the gateway ignores it either way
+  // because tenancy comes from the authenticated key alone. The refusal exists
+  // so a caller is never told a TOP-LEVEL tenancy field was honoured; it has
+  // never claimed to sanitise arbitrary nested caller data.
+  const mem = createMemory();
+  await mem.add({ role: 'user', content: 'hi', metadata: { user_id: 'app-user-7' } } as any);
+  assert.deepEqual(await mem.messages(), [
+    { role: 'user', content: 'hi', metadata: { user_id: 'app-user-7' } },
+  ]);
+});
+
+test('memory documents that history GROWS UNBOUNDED and is re-billed every turn', async () => {
+  // Nothing caps the history and nothing should: silently dropping a turn is
+  // worse than a large bill, because the model answers as if it forgot. But
+  // the cost is real and non-obvious — `messages()` is passed whole to every
+  // call, so turn N re-sends and re-bills turns 1..N-1, and prompt tokens are
+  // money (gateway rules §4f gates 1-3). A caller who is never told builds a
+  // long-running agent whose per-call cost grows without them changing a line.
+  //
+  // The same shape as the CLIENT-SIDE ONLY assertion above: the sentence is a
+  // deliverable, so a test is what stops it being deleted as noise.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'memory.ts'), 'utf8');
+  assert.match(src, /GROWS WITHOUT BOUND/);
+  assert.match(src, /re-?bill/i);
+});

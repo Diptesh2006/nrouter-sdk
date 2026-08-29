@@ -26,14 +26,6 @@ on:
       # below READ them: test_sdk_contract.py walks examples/**/*.sh, and a
       # change to the gate itself must re-run the gate.
       - 'tests/**'
-      # The catalog guard `git grep`s every tracked file and asserts README.md
-      # names the live-catalogue URL, so a prose-only change must run it —
-      # otherwise a hardcoded model count (Rule #28) lands unchecked.
-      # `*.md` is ROOT-ONLY in GitHub path filters, which would have missed all
-      # ten `sdks/*/README.md` — the exact files a hardcoded catalogue-size
-      # claim goes into.
-      - '*.md'
-      - '**/*.md'
       - 'examples/**'
       - '.github/workflows/publish-pypi.yml'
   # A pull request runs the tests and the conformance gate and PUBLISHES
@@ -48,14 +40,6 @@ on:
       # below READ them: test_sdk_contract.py walks examples/**/*.sh, and a
       # change to the gate itself must re-run the gate.
       - 'tests/**'
-      # The catalog guard `git grep`s every tracked file and asserts README.md
-      # names the live-catalogue URL, so a prose-only change must run it —
-      # otherwise a hardcoded model count (Rule #28) lands unchecked.
-      # `*.md` is ROOT-ONLY in GitHub path filters, which would have missed all
-      # ten `sdks/*/README.md` — the exact files a hardcoded catalogue-size
-      # claim goes into.
-      - '*.md'
-      - '**/*.md'
       - 'examples/**'
       - '.github/workflows/publish-pypi.yml'
   workflow_dispatch:
@@ -120,7 +104,6 @@ jobs:
         working-directory: .
         run: |
           python -m unittest tests/test_sdk_contract.py
-          bash tests/sdk-static-catalog-count.test.sh
 
       - name: Cross-SDK conformance
         working-directory: .

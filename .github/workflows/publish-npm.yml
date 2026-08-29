@@ -32,14 +32,6 @@ on:
       - 'spec/**'
       - 'conformance/**'
       - 'tests/**'
-      # The catalog guard `git grep`s every tracked file and asserts README.md
-      # names the live-catalogue URL, so a prose-only change must run it —
-      # otherwise a hardcoded model count (Rule #28) lands unchecked.
-      # `*.md` is ROOT-ONLY in GitHub path filters, which would have missed all
-      # ten `sdks/*/README.md` — the exact files a hardcoded catalogue-size
-      # claim goes into.
-      - '*.md'
-      - '**/*.md'
       - '.github/workflows/publish-npm.yml'
   # ⚠️ DELIBERATE EXCEPTION to the workspace's local-first CI policy
   # (`gh-workflow` skill: "Never add per-commit or per-PR hosted CI ... without
@@ -65,14 +57,6 @@ on:
       - 'spec/**'
       - 'conformance/**'
       - 'tests/**'
-      # The catalog guard `git grep`s every tracked file and asserts README.md
-      # names the live-catalogue URL, so a prose-only change must run it —
-      # otherwise a hardcoded model count (Rule #28) lands unchecked.
-      # `*.md` is ROOT-ONLY in GitHub path filters, which would have missed all
-      # ten `sdks/*/README.md` — the exact files a hardcoded catalogue-size
-      # claim goes into.
-      - '*.md'
-      - '**/*.md'
       - '.github/workflows/publish-npm.yml'
   workflow_dispatch:
 
@@ -122,14 +106,6 @@ jobs:
       # The tests and the cross-SDK contract gate. Nothing publishes if either
       # is red — which is the whole reason they live in this file.
       - run: npm test
-
-      # Needs no toolchain — a `git grep` over the whole repo — so it runs on
-      # both release paths rather than only the Python one. The version-
-      # coupling gate next to it does need the Python package and lives in
-      # publish-pypi.yml.
-      - name: SDK static catalog-count guard
-        working-directory: .
-        run: bash tests/sdk-static-catalog-count.test.sh
 
       - name: Cross-SDK conformance
         working-directory: .

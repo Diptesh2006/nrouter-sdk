@@ -1,0 +1,50 @@
+# Repository-wide guards. NO PATH FILTER, deliberately.
+#
+# `sdk-static-catalog-count.test.sh` runs `git grep -- .` over every tracked
+# file, so any path filter under-covers it — and the gap is not theoretical:
+# `*.md` in a GitHub filter is root-only, which left all ten `sdks/*/README.md`
+# unguarded, and a count added to `sdks/go/client.go` would still be scanned and
+# still not trigger. Rather than chase filters that can only approximate "every
+# tracked file", this workflow declares none.
+#
+# It is affordable BECAUSE it is trivial: one checkout and one `git grep`, no
+# toolchain, no dependencies, no network. That is the whole reason the guard
+# lives here rather than inside the release workflows, where it inherited their
+# filters and their build costs.
+#
+# ⚠️ It is ADVISORY, not a required status check, and it emits no release
+# evidence — the same standing as the per-PR triggers on the publish workflows.
+# Tag-only release-validation remains the authoritative suite.
+#
+# What it protects: Rule #28. A hardcoded catalogue size on a public surface is
+# stale the day a model is added, and this repository is world-readable, so the
+# stale number is what a customer reads. README.md must instead name the live
+# catalogue at nrouter.ai/api/public/models.
+name: guards
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guards-${{ github.ref }}
+  cancel-in-progress: true   # safe here: this workflow publishes nothing
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      # `fetch-depth: 0` is required. The guard uses `git grep`, which needs a
+      # real work tree and index; a shallow clone still provides both, but the
+      # full history keeps the check identical to a local run.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: SDK static catalog-count guard
+        run: bash tests/sdk-static-catalog-count.test.sh

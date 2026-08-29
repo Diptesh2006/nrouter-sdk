@@ -1,117 +1,40 @@
-// nRouter — Vercel AI SDK (Next.js / React)
-// Guardrails + prompt templates + cost tracking in your Next.js app.
+// nRouter with the Vercel AI SDK.
 //
-// npm install ai @ai-sdk/openai
+// npm install ai @ai-sdk/openai zod
+// npx tsx examples/vercel_ai.ts
+//
+// This example uses the Vercel AI OpenAI provider, so it needs a model that
+// your nRouter key can use on /v1/chat/completions. If your key currently sees
+// only Claude/Anthropic models, use examples/node.ts or @nrouter_ai/sdk
+// instead; the nRouter SDK translates Claude calls to /v1/messages.
 
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateText, streamText, tool } from "ai";
-import { z } from "zod";
+import { generateText } from "ai";
 
-const nrouterRouter = createOpenAI({
-  apiKey: process.env.NROUTER_API_KEY!,
-  baseURL: "https://api.nrouter.ai/v1",
-});
+async function main() {
+  const model = process.env.NROUTER_OPENAI_WIRE_MODEL;
+  if (!model) {
+    console.log(
+      "Set NROUTER_OPENAI_WIRE_MODEL to a model available on /v1/chat/completions. " +
+        "For Claude-only keys, use examples/node.ts with @nrouter_ai/sdk.",
+    );
+    return;
+  }
 
-// ━━━ 1. CHECK GUARDRAILS + PROMPTS + BALANCE ━━━━━━━━━━━━━━
+  const nrouter = createOpenAI({
+    apiKey: process.env.NROUTER_API_KEY,
+    baseURL: "https://api.nrouter.ai/v1",
+  });
 
-const nrouterBase = "https://api.nrouter.ai";
-const headers = { Authorization: `Bearer ${process.env.NROUTER_API_KEY}` };
+  const { text } = await generateText({
+    model: nrouter(model),
+    prompt: "Reply with one short sentence saying hello from nRouter.",
+  });
 
-// Guardrails, prompt templates, rate limits and budgets are configured in the
-// dashboard and enforced server-side on every request. There is deliberately no
-// endpoint to list or override them: a request cannot opt out of its org policy.
-// Balances and spend history live at https://app.nrouter.ai — org billing data,
-// not inference. Per-request cost arrives on the x-nr-request-cost header.
-// ━━━ 2. GENERATE (org defaults auto-apply) ━━━━━━━━━━━━━━━━
-// Cache, guardrails, and rate limits auto-apply from org config.
-
-const { text } = await generateText({
-  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
-  prompt: "What is quantum computing?",
-});
-console.log(text);
-// Guardrails checked the prompt before the model saw it.
-
-// ━━━ 3. STREAMING WITH GUARDRAILS ━━━━━━━━━━━━━━━━━━━━━━━━━
-
-const stream = await streamText({
-  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
-  prompt: "Write a haiku about API security",
-});
-for await (const chunk of stream.textStream) {
-  process.stdout.write(chunk);
+  console.log(text);
 }
 
-// ━━━ 4. WITH PROMPT TEMPLATE + VARIABLES ━━━━━━━━━━━━━━━━━━━
-
-const { text: summarized } = await generateText({
-  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
-  prompt: "Q1 revenue was $4.2M, up 23% YoY with strong enterprise growth...",
-  // nRouter-specific: inject a server-side prompt template with Jinja2 variables
-  body: {
-    nrouter_prompt_template_id: "your-summarizer-id",
-    nrouter_prompt_variables: { language: "Spanish", max_length: "100" },
-  },
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
 });
-console.log(`\nSummarized: ${summarized}`);
-
-// Guardrails are assigned per key, team or org in the dashboard and apply
-// automatically — the narrowest assignment wins. There is no per-request
-// override to pass here.
-
-// Disable cache for a single request
-// Cache is enabled by default. Pass nrouter_cache: false for a fresh response.
-const { text: fresh } = await generateText({
-  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
-  prompt: "What's the latest news?",
-  body: {
-    nrouter_cache: false,
-  },
-});
-
-// ━━━ 5. TOOL CALLING WITH GUARDRAILS ━━━━━━━━━━━━━━━━━━━━━━
-
-const { text: weatherResult } = await generateText({
-  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
-  prompt: "What's the weather in Tokyo?",
-  tools: {
-    getWeather: tool({
-      description: "Get weather for a city",
-      parameters: z.object({ city: z.string() }),
-      execute: async ({ city }) => `72°F and sunny in ${city}`,
-    }),
-  },
-});
-// Input checked by guardrails BEFORE tool execution.
-// Prompt injection attempts are caught before tools run.
-
-// ━━━ 6. NEXT.JS API ROUTE (production pattern) ━━━━━━━━━━━━
-
-// app/api/chat/route.ts
-//
-// import { createOpenAI } from "@ai-sdk/openai";
-// import { streamText } from "ai";
-//
-// const nrouter = createOpenAI({
-//   apiKey: process.env.NROUTER_API_KEY!,
-//   baseURL: "https://api.nrouter.ai/v1",
-// });
-//
-// export async function POST(req: Request) {
-//   const { messages } = await req.json();
-//
-//   // Guardrails protect every message automatically.
-//   // Prompt templates injected server-side.
-//   // Cost tracked per-request.
-//   const result = streamText({
-//     model: nrouter("anthropic/claude-sonnet-4-5-20250929"),
-//     messages,
-//     body: {
-//       nrouter_prompt_template_id: "customer-support-template",
-//       nrouter_prompt_variables: { product: "nRouter", tone: "friendly" },
-//     },
-//   });
-//
-//   return result.toDataStreamResponse();
-// }
-

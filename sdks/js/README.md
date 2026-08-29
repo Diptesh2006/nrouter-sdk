@@ -25,11 +25,12 @@ import { nRouter } from "@nrouter_ai/sdk";
 
 const client = new nRouter(); // reads NROUTER_API_KEY from env
 
-const response = await client.chat.completions.create({
-  model: "anthropic/claude-sonnet-4-5-20250929",
-  messages: [{ role: "user", content: "Hello!" }],
+const response = await client.nr.chat({
+  model: "claude-sonnet-4-5-20250929",
+  prompt: "Hello!",
+  maxTokens: 32,
 });
-console.log(response.choices[0].message.content);
+console.log(client.nr.text(response));
 ```
 
 ```javascript
@@ -49,7 +50,7 @@ one call:
 
 ```typescript
 const result = await client.nr.chat({
-  model: "anthropic/claude-sonnet-4-5-20250929",
+  model: "claude-sonnet-4-5-20250929",
   prompt: "Summarize this ticket.",
   systemPrompt: "Be concise.",
   promptTemplateId: "<prompt-template-id>",

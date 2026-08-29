@@ -319,19 +319,65 @@ test('a body-read failure keeps the status and request id', async () => {
   );
 });
 
-// MEASURED: `__binaryRequest` landed in openai 4.50.0 (absent in 4.49.0). The
-// declared range was `^4.0.0`, so a consumer could resolve 4.44 — a client
-// that ignores the flag and JSON.stringify's our Uint8Array bodies into
-// {"0":82,…}. Every nr call would send corrupt data while THIS suite stayed
-// green, because the lockfile pins 4.104.0. A test, not a comment, because a
-// comment does not stop the range widening back.
-test('the openai dependency floor keeps byte request bodies working', () => {
+// Byte bodies must reach the wire as bytes. HISTORY, because the shape of this
+// test changed with the dependency and the reason did not: under openai 4 the
+// client JSON-stringified a Uint8Array into {"0":82,"1":73,…} unless
+// `__binaryRequest: true` was passed, that flag landed in 4.50.0, and a
+// declared `^4.0.0` let a consumer resolve 4.44 and send corrupt data on every
+// nr call while this suite stayed green on a pinned lockfile.
+//
+// openai 7 removed the flag and made the behaviour the default — `buildBody`
+// passes anything `ArrayBuffer.isView` verbatim. So the version assertion is
+// no longer the property worth pinning; the BEHAVIOUR is. This sends real
+// bytes through the real client and reads what `fetch` was handed, which
+// cannot pass while a future release quietly re-encodes them.
+test('a byte request body reaches fetch as bytes, not re-encoded JSON', async () => {
+  let seen: unknown = null;
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async (_url: unknown, init: any) => {
+      seen = init?.body;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  // `speech` is a byte path: the SDK encodes the request itself and hands the
+  // transport a Uint8Array.
+  await client.nr.media
+    .speech({ model: 'tts-1', input: 'hi', voice: 'alloy' })
+    .catch(() => undefined);
+
+  assert.ok(seen !== null, 'nothing reached fetch');
+  const isBytes = ArrayBuffer.isView(seen) || seen instanceof ArrayBuffer;
+  assert.ok(
+    isBytes,
+    `fetch received ${Object.prototype.toString.call(seen)}; a re-encoded body corrupts every byte request`,
+  );
+  const view = seen as ArrayBufferView;
+  const text = new TextDecoder().decode(
+    new Uint8Array(view.buffer, view.byteOffset, view.byteLength),
+  );
+  // Proves it is OUR encoding that survived, not an object stringified into
+  // something that merely happens to be bytes.
+  assert.match(text, /"model"\s*:\s*"tts-1"/, 'the encoded body did not survive intact');
+  assert.doesNotMatch(text, /^\s*\{\s*"0"\s*:/, 'the body was re-encoded index-by-index');
+});
+
+// The declared floor still matters — it is what a CONSUMER resolves, and this
+// suite runs against a pinned lockfile that would hide a bad resolution.
+test('the declared openai range cannot resolve below the byte-body behaviour', () => {
   const pkg = require('../package.json');
   const range: string = pkg.dependencies.openai;
   const floor = range.replace(/^[^0-9]*/, '');
-  const [maj, min] = floor.split('.').map(Number);
-  assert.equal(maj, 4, `unexpected major in ${range}`);
-  assert.ok(min >= 50, `openai floor ${floor} predates __binaryRequest (4.50.0); byte bodies would be corrupted`);
+  const [maj] = floor.split('.').map(Number);
+  assert.ok(
+    maj >= 7,
+    `openai floor ${floor}: majors below 7 need __binaryRequest, which this SDK no longer passes, so byte bodies would be re-encoded`,
+  );
 });
 
 // A BigInt or a circular reference in `extra` throws before anything is sent.

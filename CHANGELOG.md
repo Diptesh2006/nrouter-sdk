@@ -12,6 +12,31 @@ to correct a release, only appended to.
 
 ## JavaScript / TypeScript — npm `@nrouter_ai/sdk`
 
+### 2.0.0 — 2026-08-29
+
+**BREAKING, and both breaks are deliberate.**
+
+- **Node 22 or newer is now required**, declared in `engines`. `openai` 7 sets
+  that floor and this package inherits it. Previously nothing declared a floor
+  at all, so an unsupported runtime failed somewhere further in.
+- **`apiKey` must be a string.** openai 7 also accepts a function that returns a
+  key; this SDK refuses it, because its job is to check the `sk-nrouter-`
+  prefix before a request and a function cannot be checked until the request is
+  already in flight.
+
+**Why the upgrade: the dependency tree goes from 37 packages to zero.**
+`openai` 4 pulled `node-fetch`, `form-data`, `agentkeepalive` and 34 others;
+7 has no dependencies. Every supply-chain alert on this package's dependency
+tab came from that set — `Uses eval`, `Unmaintained (>5 years)`, `Deprecated`,
+`Network access` — and none of it was ever this SDK's code. Nothing else buys
+that reduction.
+
+- The byte-request path no longer passes `__binaryRequest`, which openai 7
+  removed: passing typed arrays through verbatim is now the default. The test
+  that pinned the old version floor is replaced by one that sends real bytes
+  and reads what `fetch` was handed, so a future release that re-encodes them
+  goes red instead of a version number changing.
+
 ### 1.2.1 — 2026-08-29
 - First release published with **no credential at all** — npm trusted
   publishing (OIDC). The `NPM_TOKEN` secret is gone. No library code changed;

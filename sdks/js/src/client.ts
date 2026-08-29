@@ -33,7 +33,21 @@ export const KEY_PREFIX = 'sk-nrouter-';
  * Validation happens before any request, so a malformed key fails locally
  * rather than as a 401 that looks like a revoked credential.
  */
-function resolveApiKey(apiKey?: string): string {
+function resolveApiKey(apiKey?: unknown): string {
+  // `unknown`, not `string`, because openai 7 widened its own `apiKey` option
+  // to `string | ApiKeySetter | null | undefined` and NRouterOptions inherits
+  // that shape. REFUSE the setter form rather than passing it through: this
+  // function's whole job is the `sk-nrouter-` prefix check below, and a
+  // function is unverifiable until the request is already in flight — so
+  // accepting one would forward an arbitrary credential to the gateway with
+  // the guard silently skipped.
+  if (apiKey != null && typeof apiKey !== 'string') {
+    throw configurationError(
+      'apiKey must be a string. The openai client also accepts a function that ' +
+        'returns a key, but this SDK validates the nRouter key prefix up front ' +
+        'and cannot check a value that does not exist yet.',
+    );
+  }
   const resolved = apiKey || process.env[ENV_KEY];
   if (!resolved) {
     throw configurationError(
@@ -181,7 +195,16 @@ export class nRouter extends OpenAI {
     // one, and spelling it out here breaks on an upstream release for no gain.
     const [status, error, message, headers] = args;
     const redacted = redactDeep(error);
-    const err = super.makeStatusError(status, redacted, redactKeys(message ?? ''), headers);
+    // A CAST, not a `?? {}` default, and the difference is measurable. openai 7
+    // types this parameter `Object` while the vendor itself passes `undefined`
+    // for a non-JSON error body — measured against 7.8.0. `APIError.generate`
+    // uses `message` only when `error` is absent: hand it an empty object and
+    // it stops using the message and produces a generic "nRouter request
+    // failed", so a `text/plain` 502 saying "the upstream response was too
+    // large to process" reaches the caller with its wording gone and nothing
+    // to act on. Satisfying the type with `{}` looked harmless and silently
+    // deleted the only useful part of that error.
+    const err = super.makeStatusError(status, redacted as Object, redactKeys(message ?? ''), headers);
     // KEEP THE PARSED BODY. `APIError.generate` populates `err.error` from a
     // NESTED `{"error":{…}}` envelope and DISCARDS a bare `{code,message}` one
     // — which a proxy in front of the gateway does produce. Without this a bare

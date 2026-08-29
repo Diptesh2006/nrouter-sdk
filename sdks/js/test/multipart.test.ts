@@ -49,6 +49,15 @@ async function readBody(body: unknown): Promise<string> {
     return new TextDecoder().decode(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
   }
   if (body instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(body));
+  // openai 7 hands `fetch` a NATIVE FormData for its own multipart resources
+  // (v4 handed over an encodable stream), and `String(formData)` is
+  // "[object FormData]" — which would make every hostile-input assertion below
+  // pass VACUOUSLY, since a substring search over that constant finds nothing.
+  // The benign inverse guard is what caught it. Encode it the way the platform
+  // will, so the assertions inspect a real wire again.
+  if (typeof FormData !== 'undefined' && body instanceof FormData) {
+    return await new Response(body as FormData).text();
+  }
   if (typeof (body as any)[Symbol.asyncIterator] === 'function') {
     let out = '';
     for await (const part of body as AsyncIterable<Uint8Array>) {

@@ -95,11 +95,20 @@ function nrouterHeaders(
   source: unknown,
   apiKey: string,
 ): Record<string, string | null> {
-  const out: Record<string, string | null> = {};
+  // `Object.create(null)` — NOT `{}`. This object is keyed by header names
+  // that come from an environment variable, and `'toString' in {}` is true, so
+  // a plain object would report inherited members as already-present. See the
+  // env loop below, where that read decides whether a header is stripped.
+  const out = Object.create(null) as Record<string, string | null>;
+  // Explicit caller names, lowercased. Header names are case-insensitive, so
+  // an environment `AUTHORIZATION` must not be treated as a different header
+  // from a caller's `Authorization` — in either direction.
+  const fromCaller = new Set<string>();
   // `null` is PRESERVED, not dropped: it is the vendor's documented way to
   // remove a header it would otherwise generate, so
   // `defaultHeaders: { 'User-Agent': null }` must survive normalization.
   const add = (k: string, v: unknown) => {
+    fromCaller.add(k.toLowerCase());
     out[k] = v === null || v === undefined ? null : String(v);
   };
   if (source instanceof Headers) {
@@ -112,7 +121,7 @@ function nrouterHeaders(
       bag.values.forEach((v, k) => add(k, v));
       // The branded bag carries removals separately; losing them would
       // resurrect a header the caller had already removed.
-      if (bag.nulls instanceof Set) for (const k of bag.nulls as Set<string>) out[k] = null;
+      if (bag.nulls instanceof Set) for (const k of bag.nulls as Set<string>) add(k, null);
     } else {
       for (const [k, v] of Object.entries(source as Record<string, unknown>)) add(k, v);
     }
@@ -131,7 +140,7 @@ function nrouterHeaders(
       const colon = line.indexOf(':');
       if (colon < 0) continue;
       const name = line.slice(0, colon).trim();
-      if (name && !(name in out)) out[name] = null;
+      if (name && !fromCaller.has(name.toLowerCase())) out[name] = null;
     }
   }
   // These two are option-shaped as well as header-shaped (OPENAI_ORG_ID,

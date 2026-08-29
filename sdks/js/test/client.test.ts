@@ -568,3 +568,34 @@ test('an env custom header under any name is stripped; the caller keeps theirs',
     else process.env.OPENAI_CUSTOM_HEADERS = saved;
   }
 });
+
+// `'toString' in {}` is TRUE. A plain object keyed by environment-supplied
+// header names reports inherited members as already-present, so a credential
+// smuggled as `toString: …` looked like one the caller had set and was
+// forwarded. Header names are also case-insensitive, so an env `AUTHORIZATION`
+// must not read as a different header from a caller's `Authorization`.
+test('a prototype-named or differently-cased env header is still stripped', async () => {
+  const saved = process.env.OPENAI_CUSTOM_HEADERS;
+  process.env.OPENAI_CUSTOM_HEADERS =
+    'toString: sk-openai-LEAKED\nconstructor: LEAKED\nhasOwnProperty: LEAKED\nAUTHORIZATION: Bearer sk-openai-LEAKED';
+  try {
+    let seen: Record<string, string> = {};
+    const client = new nRouter({
+      apiKey: TEST_KEY,
+      maxRetries: 0,
+      fetch: async (_url: unknown, init: any) => {
+        seen = Object.fromEntries(new Headers(init.headers).entries());
+        return new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+    assert.doesNotMatch(JSON.stringify(seen), /LEAKED/, 'no env-supplied value may reach the gateway');
+    assert.equal(seen.authorization, `Bearer ${TEST_KEY}`);
+  } finally {
+    if (saved === undefined) delete process.env.OPENAI_CUSTOM_HEADERS;
+    else process.env.OPENAI_CUSTOM_HEADERS = saved;
+  }
+});

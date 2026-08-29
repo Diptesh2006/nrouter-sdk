@@ -3,7 +3,18 @@
     "target": "ES2020",
     "module": "CommonJS",
     "moduleResolution": "node",
-    "lib": ["ES2020"],
+    // DOM for the web-platform globals this SDK uses directly — `Headers`,
+    // `Response`, `RequestInit`, `fetch`. They exist in Node 18+ and in every
+    // browser, and naming them here types them with NO dependency, which
+    // matters because the runtime dependency tree is deliberately just openai.
+    "lib": ["ES2020", "DOM"],
+    // EMPTY, and load-bearing. TypeScript otherwise walks UP from this
+    // directory collecting `node_modules/@types`, so a stray package anywhere
+    // above — measured: `~/node_modules/@types/node` on the author's machine —
+    // silently supplies globals a clean checkout does not have. That is how a
+    // build passed locally and failed on CI with `Cannot find name 'Headers'`.
+    // With `types: []`, a local build sees exactly what the runner sees.
+    "types": [],
     "declaration": true,
     "outDir": "dist",
     "strict": true,

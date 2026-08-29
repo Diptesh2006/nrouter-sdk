@@ -28,7 +28,9 @@ to correct a release, only appended to.
   under `fetchOptions` is the undici equivalent. This SDK's docs promised
   `httpAgent` applied to every call, and that promise is withdrawn rather than
   quietly left to fail.
-- **`provider`, `workloadIdentity` and `dataResidency` are not accepted.** They
+- **`provider`, `workloadIdentity`, `dataResidency`, `credential` and
+  `x509Transport` are not accepted**, in the constructor or in
+  `withOptions()`. They
   are mutually exclusive with the `apiKey` and `baseURL` this constructor always
   injects, so they could never work; they are now removed from the type instead
   of failing inside the vendor.

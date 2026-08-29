@@ -84,7 +84,15 @@ type NRouterOptions = Omit<
   // both. Leaving them in the public type lets a call compile and then fail
   // inside the vendor with a mutually-exclusive-option error that names
   // nothing the caller wrote.
-  'apiKey' | 'provider' | 'workloadIdentity' | 'dataResidency'
+  // `credential` and `x509Transport` join them: an X.509 credential conflicts
+  // with the injected `apiKey`, and `x509Transport` requires the
+  // `workloadIdentity` omitted above, so neither can reach a working state.
+  | 'apiKey'
+  | 'provider'
+  | 'workloadIdentity'
+  | 'dataResidency'
+  | 'credential'
+  | 'x509Transport'
 > & {
   apiKey?: string;
 };
@@ -238,6 +246,23 @@ export class nRouter extends OpenAI {
     // remedies, confidently wrong.
     Object.defineProperty(err, ORIGINAL_BODY, { value: redacted, enumerable: false });
     return err;
+  }
+
+  /**
+   * Narrowed to the same contract as the constructor.
+   *
+   * openai 7 declares `withOptions(options: Partial<ClientOptions>)`, and
+   * inheriting it unchanged reopens every door the constructor type closes:
+   * `client.withOptions({ apiKey: async () => key })` compiles, then calls
+   * this class's constructor and throws. A type that is narrow in one entry
+   * point and wide in the other is not narrowed.
+   */
+  override withOptions(options: Partial<NRouterOptions>): this {
+    return super.withOptions(
+      // Same NonNullable reason as NRouterOptions: the vendor parameter is
+      // optional, so `Partial<...>` over it carries `undefined`.
+      options as Partial<NonNullable<ConstructorParameters<typeof OpenAI>[0]>>,
+    ) as this;
   }
 
   constructor(options: NRouterOptions = {}) {

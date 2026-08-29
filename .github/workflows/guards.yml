@@ -12,8 +12,19 @@
 # lives here rather than inside the release workflows, where it inherited their
 # filters and their build costs.
 #
-# ⚠️ It is ADVISORY, not a required status check, and it emits no release
-# evidence — the same standing as the per-PR triggers on the publish workflows.
+# ⚠️ PER-COMMIT AND PER-PR HOSTED CI, which the `gh-workflow` contract forbids
+# "without explicit operator direction". The direction is the operator's
+# standing instruction in this repository to inherit open-source project
+# standards on a PUBLIC repo that merges outside pull requests — recorded here
+# so it is auditable and can be revoked by deleting these triggers, rather than
+# left to be inferred from the file.
+#
+# The cost argument is NOT the authorization and does not substitute for it. It
+# only explains why the exception is cheap to grant: Actions is free for public
+# repositories on standard runners, and this job is one `git grep`.
+#
+# It is ADVISORY — not a required status check, and it emits no release
+# evidence, the same standing as the per-PR triggers on the publish workflows.
 # Tag-only release-validation remains the authoritative suite.
 #
 # What it protects: Rule #28. A hardcoded catalogue size on a public surface is

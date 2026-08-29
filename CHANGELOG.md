@@ -31,6 +31,10 @@ to correct a release, only appended to.
   `Authorization: Bearer sk-openai-…` to api.nrouter.ai. One process using both
   clients was enough. The constructor now nulls those channels and sets the
   nRouter bearer last, so the key on the wire is the one that was validated.
+  `withOptions({ apiKey })` is covered by the same path — it re-enters the
+  constructor with the vendor's branded header bag, and an earlier spread-based
+  fix left the OLD key on the wire, billing the wrong tenant on a call the
+  caller believed re-keyed.
 - **`httpAgent` is gone.** openai 7 removed it in favour of `fetchOptions`. If
   you passed an agent for a proxy or custom TLS, move it there — a `dispatcher`
   under `fetchOptions` is the undici equivalent. This SDK's docs promised

@@ -75,6 +75,57 @@ function resolveApiKey(apiKey?: unknown): string {
 // NonNullable first: the vendor's parameter is optional, and `Omit` over a
 // `X | undefined` union silently drops every property — which showed up as
 // "Property 'baseURL' does not exist", not as anything about apiKey.
+/**
+ * The caller's default headers, normalized to a record, with the nRouter
+ * bearer forced on and OpenAI's tenancy headers explicitly nulled.
+ *
+ * NORMALIZED, not spread. `defaultHeaders` is `HeadersLike`, which is four
+ * different shapes — a `Headers`, an array of pairs, a plain record, and the
+ * vendor's own BRANDED bag `{ values: Headers, nulls: Set }`. Object-spreading
+ * is correct for exactly one of them: a `Headers` spreads to nothing, pairs
+ * become numeric keys, and the branded bag spreads to its internals so an
+ * appended `Authorization` sits beside `values` where the vendor never reads
+ * it.
+ *
+ * That last case is not hypothetical. `withOptions({ apiKey })` passes the
+ * branded bag straight back in, so a spread would leave the OLD key on the
+ * wire — authenticating, and billing, the wrong tenant.
+ */
+function nrouterHeaders(
+  source: unknown,
+  apiKey: string,
+): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  const add = (k: string, v: unknown) => {
+    if (v !== null && v !== undefined) out[k] = String(v);
+  };
+  if (source instanceof Headers) {
+    source.forEach((v, k) => add(k, v));
+  } else if (Array.isArray(source)) {
+    for (const pair of source as unknown[][]) add(String(pair[0]), pair[1]);
+  } else if (source && typeof source === 'object') {
+    const branded = (source as { values?: unknown }).values;
+    if (branded instanceof Headers) {
+      branded.forEach((v, k) => add(k, v));
+    } else {
+      for (const [k, v] of Object.entries(source as Record<string, unknown>)) add(k, v);
+    }
+  }
+  // LAST, and unconditional: the key on the wire is the one resolveApiKey
+  // validated, whatever the environment or the caller put in first.
+  out['Authorization'] = `Bearer ${apiKey}`;
+  // A RECORD with explicit `null`s, not a `Headers`. Deleting a key from a
+  // `Headers` only removes it from OUR bag — the vendor merges
+  // `[envParsedHeaders, ourDefaultHeaders]`, so an OPENAI_ORG_ID value sitting
+  // in the first one survives an absence in the second. `null` is what the
+  // vendor's own merge reads as "remove this header", and `Headers` cannot
+  // hold one. Measured: with a `Headers` return, `openai-organization:
+  // org-leak` was still on the wire.
+  out['OpenAI-Organization'] = null;
+  out['OpenAI-Project'] = null;
+  return out;
+}
+
 type NRouterOptions = Omit<
   NonNullable<ConstructorParameters<typeof OpenAI>[0]>,
   // `apiKey` — narrowed to a string below.
@@ -93,6 +144,11 @@ type NRouterOptions = Omit<
   | 'dataResidency'
   | 'credential'
   | 'x509Transport'
+  // Always replaced with `null` below, so accepting them advertises an option
+  // that silently does nothing.
+  | 'adminAPIKey'
+  | 'organization'
+  | 'project'
 > & {
   apiKey?: string;
 };
@@ -293,12 +349,7 @@ export class nRouter extends OpenAI {
       organization: null,
       project: null,
       adminAPIKey: null,
-      defaultHeaders: {
-        ...(options.defaultHeaders as Record<string, string | null> | undefined),
-        Authorization: `Bearer ${apiKey}`,
-        'OpenAI-Organization': null,
-        'OpenAI-Project': null,
-      },
+      defaultHeaders: nrouterHeaders(options.defaultHeaders, apiKey),
     });
 
     this.nrouterModels = new NRouterModels(this as unknown as RawRequester);

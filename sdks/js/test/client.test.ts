@@ -500,3 +500,34 @@ test('an OpenAI env credential never reaches the nRouter gateway', async () => {
     restore('OPENAI_ADMIN_KEY', saved.a);
   }
 });
+
+// `withOptions()` re-enters the constructor with the vendor's OWN branded
+// header bag (`{ values: Headers, nulls: Set }`), not a plain object. Spreading
+// that appends `Authorization` beside `values`, where the vendor never reads
+// it — so the OLD key stays on the wire, authenticating and BILLING the wrong
+// tenant on a call the caller believes re-keyed.
+test('withOptions re-keys the wire, and the env cannot override it', async () => {
+  const saved = process.env.OPENAI_CUSTOM_HEADERS;
+  process.env.OPENAI_CUSTOM_HEADERS = 'Authorization: Bearer sk-openai-LEAKED';
+  const SECOND = 'sk-nrouter-second000000000000abcd';
+  try {
+    let seen: Record<string, string> = {};
+    const base = new nRouter({
+      apiKey: TEST_KEY,
+      maxRetries: 0,
+      fetch: async (_url: unknown, init: any) => {
+        seen = Object.fromEntries(new Headers(init.headers).entries());
+        return new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    await base.withOptions({ apiKey: SECOND }).nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+    assert.equal(seen.authorization, `Bearer ${SECOND}`, 'withOptions must actually re-key the request');
+    assert.doesNotMatch(JSON.stringify(seen), /LEAKED/);
+  } finally {
+    if (saved === undefined) delete process.env.OPENAI_CUSTOM_HEADERS;
+    else process.env.OPENAI_CUSTOM_HEADERS = saved;
+  }
+});

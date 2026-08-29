@@ -446,3 +446,57 @@ test('isAbortLike recognises the vendor abort class despite its name', () => {
   assert.equal(vendor.name, 'Error', 'precondition: the vendor does not set name');
   assert.equal(isAbortLike(vendor), true, 'must be recognised by constructor');
 });
+
+// CREDENTIAL DISCLOSURE TO THE WRONG SERVICE. openai 7 reads
+// OPENAI_CUSTOM_HEADERS, OPENAI_ORG_ID, OPENAI_PROJECT_ID and OPENAI_ADMIN_KEY
+// from the environment, and merges the parsed custom headers BEFORE
+// `defaultHeaders` — so they beat the auth header it derives from `apiKey`.
+//
+// MEASURED before the fix, with those variables set: `nr.chat()` sent
+// `authorization: Bearer sk-openai-LEAKED` and `openai-organization: org-leak`
+// to api.nrouter.ai. Nothing unusual is required to hit it — one process using
+// both clients, one env var meant for the other one.
+test('an OpenAI env credential never reaches the nRouter gateway', async () => {
+  const saved = {
+    h: process.env.OPENAI_CUSTOM_HEADERS,
+    o: process.env.OPENAI_ORG_ID,
+    p: process.env.OPENAI_PROJECT_ID,
+    a: process.env.OPENAI_ADMIN_KEY,
+  };
+  process.env.OPENAI_CUSTOM_HEADERS =
+    'Authorization: Bearer sk-openai-LEAKED\nOpenAI-Organization: org-leak';
+  process.env.OPENAI_ORG_ID = 'org-env';
+  process.env.OPENAI_PROJECT_ID = 'proj-env';
+  process.env.OPENAI_ADMIN_KEY = 'sk-admin-LEAKED';
+  try {
+    let seen: Record<string, string> = {};
+    const client = new nRouter({
+      apiKey: TEST_KEY,
+      maxRetries: 0,
+      fetch: async (_url: unknown, init: any) => {
+        seen = Object.fromEntries(new Headers(init.headers).entries());
+        return new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+
+    assert.equal(
+      seen.authorization,
+      `Bearer ${TEST_KEY}`,
+      'the key on the wire must be the nRouter key that was validated, not one from the environment',
+    );
+    assert.doesNotMatch(JSON.stringify(seen), /LEAKED/, 'no OpenAI credential may appear in any header');
+    assert.equal(seen['openai-organization'], undefined, 'OpenAI tenancy headers do not belong on a gateway call');
+    assert.equal(seen['openai-project'], undefined);
+  } finally {
+    const restore = (k: string, v: string | undefined) =>
+      v === undefined ? delete process.env[k] : (process.env[k] = v);
+    restore('OPENAI_CUSTOM_HEADERS', saved.h);
+    restore('OPENAI_ORG_ID', saved.o);
+    restore('OPENAI_PROJECT_ID', saved.p);
+    restore('OPENAI_ADMIN_KEY', saved.a);
+  }
+});

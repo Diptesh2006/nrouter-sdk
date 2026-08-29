@@ -23,6 +23,14 @@ to correct a release, only appended to.
   key; this SDK refuses it, in the types as well as at runtime, because its job
   is to check the `sk-nrouter-` prefix before a request and a function cannot be
   checked until the request is already in flight.
+- **SECURITY: OpenAI environment credentials can no longer reach the gateway.**
+  openai 7 reads `OPENAI_CUSTOM_HEADERS`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`
+  and `OPENAI_ADMIN_KEY` from the environment, and merges parsed custom headers
+  BEFORE `defaultHeaders` — so they beat the auth header derived from
+  `apiKey`. Measured: with those set, `nr.chat()` sent
+  `Authorization: Bearer sk-openai-…` to api.nrouter.ai. One process using both
+  clients was enough. The constructor now nulls those channels and sets the
+  nRouter bearer last, so the key on the wire is the one that was validated.
 - **`httpAgent` is gone.** openai 7 removed it in favour of `fetchOptions`. If
   you passed an agent for a proxy or custom TLS, move it there — a `dispatcher`
   under `fetchOptions` is the undici equivalent. This SDK's docs promised

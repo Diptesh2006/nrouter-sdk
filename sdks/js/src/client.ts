@@ -269,7 +269,37 @@ export class nRouter extends OpenAI {
     const apiKey = resolveApiKey(options?.apiKey);
     const baseURL = options?.baseURL || DEFAULT_BASE_URL;
 
-    super({ ...options, apiKey, baseURL });
+    // MEASURED against openai 7.8.0, with OPENAI_CUSTOM_HEADERS and
+    // OPENAI_ORG_ID set in the environment: `nr.chat()` sent
+    // `authorization: Bearer sk-openai-LEAKED` and `openai-organization:
+    // org-leak` TO api.nrouter.ai. The vendor reads OPENAI_CUSTOM_HEADERS,
+    // OPENAI_ORG_ID, OPENAI_PROJECT_ID and OPENAI_ADMIN_KEY from the
+    // environment and merges the parsed headers BEFORE `defaultHeaders`, so
+    // they beat the auth header it derives from `apiKey`.
+    //
+    // That is a credential disclosure to the wrong service — an OpenAI key
+    // handed to the nRouter gateway — and it needs nothing unusual to happen:
+    // one process using both clients, one env var meant for the other one.
+    //
+    // `null` closes the three option-shaped channels. `Authorization` is set
+    // explicitly LAST because ours is merged after the environment's and
+    // therefore wins; this is the one place the SDK touches the key itself,
+    // and it does so to guarantee the key on the wire is the one that was
+    // validated above.
+    super({
+      ...options,
+      apiKey,
+      baseURL,
+      organization: null,
+      project: null,
+      adminAPIKey: null,
+      defaultHeaders: {
+        ...(options.defaultHeaders as Record<string, string | null> | undefined),
+        Authorization: `Bearer ${apiKey}`,
+        'OpenAI-Organization': null,
+        'OpenAI-Project': null,
+      },
+    });
 
     this.nrouterModels = new NRouterModels(this as unknown as RawRequester);
     this.nrouter_models = this.nrouterModels;

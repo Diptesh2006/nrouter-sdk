@@ -12,6 +12,12 @@ to correct a release, only appended to.
 
 ## JavaScript / TypeScript — npm `@nrouter_ai/sdk`
 
+### 1.2.1 — 2026-08-29
+- First release published with **no credential at all** — npm trusted
+  publishing (OIDC). The `NPM_TOKEN` secret is gone. No library code changed;
+  the release exists because nothing short of a publish exercises the OIDC
+  exchange.
+
 ### 1.2.0 — 2026-08-29
 - `nrouter` JSON helpers (`sdks/js/src/json.ts`), contributed in #6. MINOR, not
   patch: this adds surface, and semver is the only warning a consumer gets.

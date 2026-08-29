@@ -115,13 +115,27 @@ function nrouterHeaders(
   //                 because `[['X-Tag','a'],['X-Tag','b']]` is two values of
   //                 one header, not a typo.
   const add = (k: string, v: unknown) => {
-    fromCaller.add(k.toLowerCase());
+    // `undefined` CONTRIBUTES NOTHING, and must not register the name as
+    // caller-set: doing so made `defaultHeaders: { 'api-key': undefined }`
+    // suppress the environment strip below, so an OPENAI_CUSTOM_HEADERS
+    // credential of the same name reached the gateway. Only a value or an
+    // explicit `null` removal is an expression of intent.
     if (v === undefined) return;
+    fromCaller.add(k.toLowerCase());
     if (v === null) {
       out[k] = null;
       return;
     }
-    const incoming = Array.isArray(v) ? v.map(String) : [String(v)];
+    // Inside an array the same three meanings apply per element: `undefined`
+    // is skipped, `null` removes the header outright, and `String()` on either
+    // would put the literal text "undefined" or "null" on the wire.
+    const values = Array.isArray(v) ? v : [v];
+    if (values.some((x) => x === null)) {
+      out[k] = null;
+      return;
+    }
+    const incoming = values.filter((x) => x !== undefined).map(String);
+    if (incoming.length === 0) return;
     const existing = out[k];
     out[k] =
       existing === undefined || existing === null

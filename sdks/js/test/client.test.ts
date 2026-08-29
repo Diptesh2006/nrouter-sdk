@@ -627,3 +627,34 @@ test('multi-value headers survive, and undefined is not treated as a removal', a
   assert.match(seen['x-tag'] ?? '', /b/, 'the second value of a repeated header was dropped');
   assert.equal(seen.authorization, `Bearer ${TEST_KEY}`);
 });
+
+// `undefined` is not an expression of intent. Registering it as caller-set
+// suppressed the environment strip, so `{ 'api-key': undefined }` next to
+// `OPENAI_CUSTOM_HEADERS=api-key: sk-openai-…` forwarded the credential.
+test('an undefined caller header does not shield an env credential of the same name', async () => {
+  const saved = process.env.OPENAI_CUSTOM_HEADERS;
+  process.env.OPENAI_CUSTOM_HEADERS = 'api-key: sk-openai-LEAKED';
+  try {
+    let seen: Record<string, string> = {};
+    const client = new nRouter({
+      apiKey: TEST_KEY,
+      maxRetries: 0,
+      defaultHeaders: { 'api-key': undefined, 'X-Arr': ['a', undefined, 'b'] } as never,
+      fetch: async (_url: unknown, init: any) => {
+        seen = Object.fromEntries(new Headers(init.headers).entries());
+        return new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+    assert.doesNotMatch(JSON.stringify(seen), /LEAKED/, 'the env credential must still be stripped');
+    assert.equal(seen['api-key'], undefined);
+    // And `undefined` inside an array is skipped, never stringified.
+    assert.doesNotMatch(seen['x-arr'] ?? '', /undefined/, 'literal "undefined" reached the wire');
+  } finally {
+    if (saved === undefined) delete process.env.OPENAI_CUSTOM_HEADERS;
+    else process.env.OPENAI_CUSTOM_HEADERS = saved;
+  }
+});

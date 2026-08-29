@@ -531,3 +531,40 @@ test('withOptions re-keys the wire, and the env cannot override it', async () =>
     else process.env.OPENAI_CUSTOM_HEADERS = saved;
   }
 });
+
+// OPENAI_CUSTOM_HEADERS is free-form: a credential can arrive under ANY name.
+// Nulling only Authorization / OpenAI-Organization / OpenAI-Project forwards
+// everything else to api.nrouter.ai (gateway gate 9: no provider credential in
+// a customer-visible header). A header the CALLER set stays — only the
+// environment's contribution is removed.
+test('an env custom header under any name is stripped; the caller keeps theirs', async () => {
+  const saved = process.env.OPENAI_CUSTOM_HEADERS;
+  process.env.OPENAI_CUSTOM_HEADERS =
+    'api-key: sk-openai-LEAKED\nX-Weird-Cred: LEAKED\nX-Kept: from-env';
+  try {
+    let seen: Record<string, string> = {};
+    const client = new nRouter({
+      apiKey: TEST_KEY,
+      maxRetries: 0,
+      // The caller names one of the same headers on purpose: their intent wins.
+      defaultHeaders: { 'X-Kept': 'from-caller', 'User-Agent': null } as never,
+      fetch: async (_url: unknown, init: any) => {
+        seen = Object.fromEntries(new Headers(init.headers).entries());
+        return new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+
+    assert.doesNotMatch(JSON.stringify(seen), /LEAKED/, 'no env-supplied credential may reach the gateway');
+    assert.equal(seen['api-key'], undefined);
+    assert.equal(seen['x-weird-cred'], undefined);
+    assert.equal(seen['x-kept'], 'from-caller', "the caller's own header must survive");
+    assert.equal(seen['user-agent'], undefined, 'a null header removal must survive normalization');
+  } finally {
+    if (saved === undefined) delete process.env.OPENAI_CUSTOM_HEADERS;
+    else process.env.OPENAI_CUSTOM_HEADERS = saved;
+  }
+});

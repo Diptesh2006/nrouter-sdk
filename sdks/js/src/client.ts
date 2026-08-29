@@ -96,33 +96,52 @@ function nrouterHeaders(
   apiKey: string,
 ): Record<string, string | null> {
   const out: Record<string, string | null> = {};
+  // `null` is PRESERVED, not dropped: it is the vendor's documented way to
+  // remove a header it would otherwise generate, so
+  // `defaultHeaders: { 'User-Agent': null }` must survive normalization.
   const add = (k: string, v: unknown) => {
-    if (v !== null && v !== undefined) out[k] = String(v);
+    out[k] = v === null || v === undefined ? null : String(v);
   };
   if (source instanceof Headers) {
     source.forEach((v, k) => add(k, v));
   } else if (Array.isArray(source)) {
     for (const pair of source as unknown[][]) add(String(pair[0]), pair[1]);
   } else if (source && typeof source === 'object') {
-    const branded = (source as { values?: unknown }).values;
-    if (branded instanceof Headers) {
-      branded.forEach((v, k) => add(k, v));
+    const bag = source as { values?: unknown; nulls?: unknown };
+    if (bag.values instanceof Headers) {
+      bag.values.forEach((v, k) => add(k, v));
+      // The branded bag carries removals separately; losing them would
+      // resurrect a header the caller had already removed.
+      if (bag.nulls instanceof Set) for (const k of bag.nulls as Set<string>) out[k] = null;
     } else {
       for (const [k, v] of Object.entries(source as Record<string, unknown>)) add(k, v);
     }
   }
+
+  // EVERY header the environment named, not just the ones we thought of.
+  // OPENAI_CUSTOM_HEADERS is free-form, so a credential can arrive under any
+  // name — `api-key:`, `x-api-key:`, anything — and an allowlist of
+  // Authorization plus the two tenancy headers would forward the rest to
+  // api.nrouter.ai. Gateway rules §4f gate 9: no provider credential in a
+  // customer-visible header. A header the CALLER set explicitly is kept; only
+  // the environment's contribution is removed.
+  const envHeaders = process.env['OPENAI_CUSTOM_HEADERS'];
+  if (envHeaders) {
+    for (const line of envHeaders.split('\n')) {
+      const colon = line.indexOf(':');
+      if (colon < 0) continue;
+      const name = line.slice(0, colon).trim();
+      if (name && !(name in out)) out[name] = null;
+    }
+  }
+  // These two are option-shaped as well as header-shaped (OPENAI_ORG_ID,
+  // OPENAI_PROJECT_ID), so they are nulled whatever the caller passed: they
+  // identify a different service's account and mean nothing to the gateway.
+  out['OpenAI-Organization'] = null;
+  out['OpenAI-Project'] = null;
   // LAST, and unconditional: the key on the wire is the one resolveApiKey
   // validated, whatever the environment or the caller put in first.
   out['Authorization'] = `Bearer ${apiKey}`;
-  // A RECORD with explicit `null`s, not a `Headers`. Deleting a key from a
-  // `Headers` only removes it from OUR bag — the vendor merges
-  // `[envParsedHeaders, ourDefaultHeaders]`, so an OPENAI_ORG_ID value sitting
-  // in the first one survives an absence in the second. `null` is what the
-  // vendor's own merge reads as "remove this header", and `Headers` cannot
-  // hold one. Measured: with a `Headers` return, `openai-organization:
-  // org-leak` was still on the wire.
-  out['OpenAI-Organization'] = null;
-  out['OpenAI-Project'] = null;
   return out;
 }
 

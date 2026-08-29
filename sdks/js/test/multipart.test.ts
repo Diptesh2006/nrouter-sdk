@@ -111,8 +111,21 @@ const HOSTILE: [string, string, Record<string, string>][] = [
  * one that is merely inside a value does not, and is not an injection.
  */
 function headerRegions(body: string): string[] {
-  return body
-    .split(/--form-data-boundary-[A-Za-z0-9]+/)
+  // DERIVE the boundary from the body; do NOT hardcode one. Two encoders reach
+  // this function and they use different delimiters: this SDK's own multipart
+  // writer emits `--form-data-boundary-…`, while openai 7 hands `fetch` a
+  // native FormData that undici serialises with `------formdata-undici-…`.
+  //
+  // A parser that knows only the first shape does not error on the second — it
+  // finds no boundary, returns the whole body as ONE region, and examines only
+  // the first Content-Disposition. A hostile field arriving in a LATER part is
+  // then never looked at, and the injection test passes while proving nothing.
+  // That is the same vacuum the `[object FormData]` bug created, one layer
+  // deeper, so the boundary is read off the wire instead of assumed.
+  const first = body.match(/^(--[^\r\n]+)\r\n/);
+  const delimiter = first?.[1];
+  const parts = delimiter ? body.split(delimiter) : [body];
+  return parts
     .map((part) => part.split('\r\n\r\n')[0] ?? '')
     .filter((head) => head.includes('Content-Disposition:'));
 }

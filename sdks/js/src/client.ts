@@ -62,7 +62,22 @@ function resolveApiKey(apiKey?: unknown): string {
   return resolved;
 }
 
-type NRouterOptions = ConstructorParameters<typeof OpenAI>[0];
+/**
+ * Vendor options, with `apiKey` NARROWED to a string.
+ *
+ * openai 7 widened its own `apiKey` to accept a function returning a key. This
+ * SDK refuses that at runtime — `resolveApiKey` must check the `sk-nrouter-`
+ * prefix before a request, and a function cannot be checked until the request
+ * is already in flight. Inheriting the wider type unchanged would let
+ * TypeScript accept `{ apiKey: async () => … }`, compile clean, and throw at
+ * construction: a contract advertised in the types and denied at runtime.
+ */
+// NonNullable first: the vendor's parameter is optional, and `Omit` over a
+// `X | undefined` union silently drops every property — which showed up as
+// "Property 'baseURL' does not exist", not as anything about apiKey.
+type NRouterOptions = Omit<NonNullable<ConstructorParameters<typeof OpenAI>[0]>, 'apiKey'> & {
+  apiKey?: string;
+};
 
 /** Where the untouched parsed error body is kept. Symbol-keyed and
  * non-enumerable so it can never surface in a log or a JSON.stringify. */

@@ -687,3 +687,68 @@ test('repeated header names accumulate across casings, and a value after null re
   assert.equal(seen['x-restored'], 'back', 'a value after a null must restore the header');
   assert.equal(seen.authorization, `Bearer ${TEST_KEY}`);
 });
+
+// This SDK supports the browser via `dangerouslyAllowBrowser`, and browsers,
+// workers and Deno have no `process`. An unguarded `process.env[...]` throws a
+// ReferenceError at CONSTRUCTION — before the caller's explicit key is even
+// looked at — so the whole client is unusable there.
+test('the client constructs in a runtime with no `process`', async () => {
+  const real = globalThis.process;
+  Object.defineProperty(globalThis, 'process', { value: undefined, configurable: true });
+  try {
+    const client = new nRouter({
+      apiKey: TEST_KEY,
+      dangerouslyAllowBrowser: true,
+      maxRetries: 0,
+      fetch: async () =>
+        new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    assert.ok(client, 'the constructor must not read process.env unguarded');
+
+    // And the NO-key path, which is the one that actually reaches the env
+    // lookup: it must refuse with this SDK's own configuration error, not a
+    // ReferenceError from touching `process`.
+    assert.throws(
+      () => new nRouter({ dangerouslyAllowBrowser: true }),
+      (err: unknown) => {
+        assert.ok(err instanceof nRouterError, `got ${(err as Error)?.constructor?.name}`);
+        assert.equal((err as { kind?: string }).kind, 'configuration');
+        return true;
+      },
+    );
+  } finally {
+    Object.defineProperty(globalThis, 'process', { value: real, configurable: true });
+  }
+});
+
+// An empty array, or one holding only `undefined`, contributes nothing. A slot
+// created for it would be `null` — REMOVING the vendor's own header — and
+// would register caller intent that suppresses the environment strip.
+test('an empty header array removes nothing and shields nothing', async () => {
+  const saved = process.env.OPENAI_CUSTOM_HEADERS;
+  process.env.OPENAI_CUSTOM_HEADERS = 'api-key: sk-openai-LEAKED';
+  try {
+    let seen: Record<string, string> = {};
+    const client = new nRouter({
+      apiKey: TEST_KEY,
+      maxRetries: 0,
+      defaultHeaders: { 'User-Agent': [], 'api-key': [undefined] } as never,
+      fetch: async (_url: unknown, init: any) => {
+        seen = Object.fromEntries(new Headers(init.headers).entries());
+        return new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+    assert.ok(seen['user-agent'], 'an empty array must not remove the vendor header');
+    assert.doesNotMatch(JSON.stringify(seen), /LEAKED/, 'and must not shield an env credential');
+  } finally {
+    if (saved === undefined) delete process.env.OPENAI_CUSTOM_HEADERS;
+    else process.env.OPENAI_CUSTOM_HEADERS = saved;
+  }
+});

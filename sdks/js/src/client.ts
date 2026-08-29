@@ -33,6 +33,20 @@ export const KEY_PREFIX = 'sk-nrouter-';
  * Validation happens before any request, so a malformed key fails locally
  * rather than as a 401 that looks like a revoked credential.
  */
+/**
+ * `process.env`, or nothing.
+ *
+ * This SDK supports the browser via `dangerouslyAllowBrowser`, and browsers,
+ * workers and Deno have no `process` — an unguarded `process.env[...]` throws
+ * a ReferenceError at construction, before the caller's explicit key is ever
+ * looked at. openai 7 guards its own environment reads for the same reason.
+ */
+function envValue(name: string): string | undefined {
+  return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[
+    name
+  ];
+}
+
 function resolveApiKey(apiKey?: unknown): string {
   // `unknown`, not `string`, because openai 7 widened its own `apiKey` option
   // to `string | ApiKeySetter | null | undefined` and NRouterOptions inherits
@@ -48,7 +62,7 @@ function resolveApiKey(apiKey?: unknown): string {
         'and cannot check a value that does not exist yet.',
     );
   }
-  const resolved = apiKey || process.env[ENV_KEY];
+  const resolved = apiKey || envValue(ENV_KEY);
   if (!resolved) {
     throw configurationError(
       `No nRouter API key: pass apiKey or set ${ENV_KEY}.`,
@@ -113,6 +127,12 @@ function nrouterHeaders(
     // credential of the same name reached the gateway. Only a value or an
     // explicit `null` removal is an expression of intent.
     if (v === undefined) return;
+    // An EMPTY array, or one holding only `undefined`, contributes nothing —
+    // the vendor's builder treats it that way too. Registering a slot for it
+    // would create a `null`, REMOVING the vendor's own header, and would
+    // register caller intent that suppresses the environment strip below.
+    const items = Array.isArray(v) ? v : [v];
+    if (!items.some((x) => x !== undefined)) return;
     const key = k.toLowerCase();
     fromCaller.add(key);
     const slot = slots.get(key) ?? { name: k, value: null };
@@ -121,7 +141,7 @@ function nrouterHeaders(
     // order, so `null` clears what came before and a value AFTER a null
     // restores the header. Short-circuiting on "an array contains a null"
     // would delete a header the caller had just re-set.
-    for (const item of Array.isArray(v) ? v : [v]) {
+    for (const item of items) {
       if (item === undefined) continue;
       if (item === null) {
         slot.value = null;
@@ -157,7 +177,7 @@ function nrouterHeaders(
   for (const { name, value } of slots.values()) {
     out[name] = value === null ? null : value.length === 1 ? value[0]! : value;
   }
-  const envHeaders = process.env['OPENAI_CUSTOM_HEADERS'];
+  const envHeaders = envValue('OPENAI_CUSTOM_HEADERS');
   if (envHeaders) {
     for (const line of envHeaders.split('\n')) {
       const colon = line.indexOf(':');

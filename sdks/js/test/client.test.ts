@@ -599,3 +599,31 @@ test('a prototype-named or differently-cased env header is still stripped', asyn
     else process.env.OPENAI_CUSTOM_HEADERS = saved;
   }
 });
+
+// `HeadersLike` carries three distinct meanings and one multi-value form.
+// Collapsing any of them loses something the vendor acts on: `undefined` is
+// OMITTED (leave the vendor's own header alone), `null` REMOVES it, and a
+// repeated name or an array value is several values of ONE header.
+test('multi-value headers survive, and undefined is not treated as a removal', async () => {
+  let seen: Record<string, string> = {};
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    defaultHeaders: [
+      ['X-Tag', 'a'],
+      ['X-Tag', 'b'],
+      ['X-Undef', undefined],
+    ] as never,
+    fetch: async (_url: unknown, init: any) => {
+      seen = Object.fromEntries(new Headers(init.headers).entries());
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+  assert.match(seen['x-tag'] ?? '', /a/, 'the first value of a repeated header was dropped');
+  assert.match(seen['x-tag'] ?? '', /b/, 'the second value of a repeated header was dropped');
+  assert.equal(seen.authorization, `Bearer ${TEST_KEY}`);
+});

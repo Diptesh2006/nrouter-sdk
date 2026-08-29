@@ -94,12 +94,12 @@ function resolveApiKey(apiKey?: unknown): string {
 function nrouterHeaders(
   source: unknown,
   apiKey: string,
-): Record<string, string | null> {
+): Record<string, string | string[] | null> {
   // `Object.create(null)` — NOT `{}`. This object is keyed by header names
   // that come from an environment variable, and `'toString' in {}` is true, so
   // a plain object would report inherited members as already-present. See the
   // env loop below, where that read decides whether a header is stripped.
-  const out = Object.create(null) as Record<string, string | null>;
+  const out = Object.create(null) as Record<string, string | string[] | null>;
   // Explicit caller names, lowercased. Header names are case-insensitive, so
   // an environment `AUTHORIZATION` must not be treated as a different header
   // from a caller's `Authorization` — in either direction.
@@ -107,9 +107,26 @@ function nrouterHeaders(
   // `null` is PRESERVED, not dropped: it is the vendor's documented way to
   // remove a header it would otherwise generate, so
   // `defaultHeaders: { 'User-Agent': null }` must survive normalization.
+  // Three distinct meanings, and collapsing any two of them loses information
+  // the vendor acts on:
+  //   `undefined` — OMITTED. Register the name, write nothing.
+  //   `null`      — REMOVE the header the vendor would have generated.
+  //   otherwise   — a value; REPEATED names accumulate rather than overwrite,
+  //                 because `[['X-Tag','a'],['X-Tag','b']]` is two values of
+  //                 one header, not a typo.
   const add = (k: string, v: unknown) => {
     fromCaller.add(k.toLowerCase());
-    out[k] = v === null || v === undefined ? null : String(v);
+    if (v === undefined) return;
+    if (v === null) {
+      out[k] = null;
+      return;
+    }
+    const incoming = Array.isArray(v) ? v.map(String) : [String(v)];
+    const existing = out[k];
+    out[k] =
+      existing === undefined || existing === null
+        ? (incoming.length === 1 ? incoming[0]! : incoming)
+        : ([] as string[]).concat(existing as string | string[], incoming);
   };
   if (source instanceof Headers) {
     source.forEach((v, k) => add(k, v));

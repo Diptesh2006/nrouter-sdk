@@ -468,9 +468,25 @@ export class nRouter extends OpenAI {
     ];
     const callerFetch =
       priorInner ?? options.fetch ?? ((globalThis as { fetch?: typeof fetch }).fetch as typeof fetch);
+    // LATE-BOUND, not the constructor-captured constant. `apiKey` is a public,
+    // writable field on the vendor client, and before this wrapper existed the
+    // vendor read it at dispatch — so `client.apiKey = nextKey` rotated the
+    // credential. A captured constant would keep authenticating, and BILLING,
+    // the previous tenant while the field says otherwise, and assigning `null`
+    // would fail to disable anything. Rule #36: multi-tenancy and zero credit
+    // leak.
+    const self: { client?: { apiKey?: unknown } } = {};
     const pinnedFetch = ((url: unknown, init?: RequestInit) => {
+      // Read, not validated. Validation happens in the `apiKey` SETTER
+      // installed after `super()`: throwing from inside `fetch` gets wrapped by
+      // the vendor into a RETRYABLE "Connection error.", so a caller's
+      // `while (isRetryable(e))` loop would spin forever on a permanent
+      // mistake in its own input — measured, and the exact anti-pattern this
+      // SDK fixes elsewhere. The setter throws at the assignment site instead,
+      // which is where the mistake was made.
+      const current = (self.client?.apiKey as string | undefined) ?? apiKey;
       const headers = new Headers(init?.headers as ConstructorParameters<typeof Headers>[0]);
-      headers.set('Authorization', `Bearer ${apiKey}`);
+      headers.set('Authorization', `Bearer ${current}`);
       headers.delete('OpenAI-Organization');
       headers.delete('OpenAI-Project');
       return callerFetch(url as never, { ...(init ?? {}), headers });
@@ -490,6 +506,25 @@ export class nRouter extends OpenAI {
       project: null,
       adminAPIKey: null,
       defaultHeaders: nrouterHeaders(options.defaultHeaders, apiKey),
+    });
+
+    // After `super()`, so the wrapper above can see the live field.
+    self.client = this as unknown as { apiKey?: unknown };
+
+    // `apiKey` is a public writable field on the vendor client, so a caller can
+    // rotate it — and must be able to, since the vendor read it at dispatch.
+    // The setter keeps that working AND keeps the prefix guarantee: an invalid
+    // rotation throws a permanent configuration error right here, rather than
+    // travelling to the gateway or surfacing later as a retryable transport
+    // failure.
+    let key = apiKey;
+    Object.defineProperty(this, 'apiKey', {
+      get: () => key,
+      set: (next: unknown) => {
+        key = resolveApiKey(next);
+      },
+      enumerable: true,
+      configurable: true,
     });
 
     this.nrouterModels = new NRouterModels(this as unknown as RawRequester);

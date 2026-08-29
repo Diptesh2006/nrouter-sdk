@@ -842,3 +842,62 @@ test('per-request fetchOptions.headers cannot re-key an inherited resource call'
   // environment, or overriding the key they DID choose.
   assert.equal(seen['x-caller-own'], 'kept');
 });
+
+// `apiKey` is a public, writable field on the vendor client, and the vendor
+// read it at dispatch — so `client.apiKey = next` rotated the credential. A
+// wrapper closed over the constructor-time key would keep authenticating, and
+// BILLING, the previous tenant while the field says otherwise. Rule #36:
+// multi-tenancy, zero credit leak.
+test('rotating client.apiKey changes the key on the wire', async () => {
+  const SECOND = 'sk-nrouter-rotated00000000000abcd';
+  const keys: string[] = [];
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async (_url: unknown, init: any) => {
+      keys.push(new Headers(init.headers).get('authorization') ?? '');
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+  (client as unknown as { apiKey: string }).apiKey = SECOND;
+  await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+
+  assert.deepEqual(keys, [`Bearer ${TEST_KEY}`, `Bearer ${SECOND}`], 'the rotation must reach the wire');
+});
+
+// And a BAD rotation must fail loudly. Assigning a non-nRouter key used to be
+// caught by resolveApiKey at construction; with a late-bound wrapper the field
+// can be set to anything at any time, so the check runs per request.
+test('rotating client.apiKey to a non-nRouter key refuses instead of sending it', async () => {
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async () =>
+      new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+  });
+  // AT THE ASSIGNMENT, not at the request. Throwing from inside the fetch
+  // wrapper got wrapped by the vendor into a RETRYABLE "Connection error." —
+  // measured — so a caller's `while (isRetryable(e))` loop would spin forever
+  // on a permanent mistake in its own input.
+  assert.throws(
+    () => {
+      (client as unknown as { apiKey: string }).apiKey = 'sk-openai-NOTOURS';
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof nRouterError, `got ${(err as Error)?.constructor?.name}`);
+      assert.equal((err as { kind?: string }).kind, 'configuration', 'permanent, not transport');
+      assert.equal(isRetryable(err), false);
+      assert.match((err as Error).message, /must start with/);
+      return true;
+    },
+  );
+  // ...and the good key is still in place, so the client stays usable.
+  assert.equal((client as unknown as { apiKey: string }).apiKey, TEST_KEY);
+});

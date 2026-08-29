@@ -79,6 +79,50 @@ export { buildChatBody, buildExtraBody, buildFeatureBody, buildMessages } from '
 
 export { NRouterModels, type NRouterModel, type NRouterModelList, type RawRequester } from './models';
 
+// The Anthropic Messages wire. Exported for the same reason `buildChatBody` is:
+// a caller assembling its own request needs to know which wire a model is
+// served on, because the gateway declares `chat_completions: None` for
+// Anthropic and answers 404 there. `MESSAGES_PATH` and the refusal helper stay
+// unexported — `stream.ts` reaches them internally and they are not a contract.
+export {
+  usesMessagesWire,
+  toAnthropicMessagesRequest,
+  toOpenAIChatCompletion,
+  isAnthropicMessageResponse,
+  type AnthropicRequestResult,
+} from './chat';
+
+// Conversation memory. CLIENT-SIDE ONLY — the gateway stores nothing between
+// requests, and `memory` appears nowhere in the wire spec. Every method is a
+// Promise so an async store (Redis, a file) is a one-line swap rather than a
+// change at every call site.
+export {
+  createMemory,
+  createArrayStore,
+  type Memory,
+  type MemoryStore,
+  type MemoryOptions,
+} from './memory';
+
+// Prompt templates. Ergonomics over the two wire fields that DO exist and are
+// consumed (`prompt_runtime.rs` removes each independently); no new field, and
+// a test pins that this module's key set equals `buildExtraBody`'s so the
+// omission rules cannot fork.
+export {
+  PROMPT_TEMPLATE_ID_FIELD,
+  PROMPT_VARIABLES_FIELD,
+  PROMPT_WIRE_FIELDS,
+  SYSTEM_VARIABLE_NAMES,
+  promptTemplate,
+  promptVariables,
+  withVariables,
+  promptExtraBody,
+  applyPrompt,
+  systemVariableConflicts,
+  type PromptSelection,
+  type SystemVariableName,
+} from './prompts';
+
 export { chatText, compareError, COMPARE_ERROR_KEY, type ChatRunner, type ChatRunnerResponse } from './chat';
 
 export {

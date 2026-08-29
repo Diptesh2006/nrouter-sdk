@@ -106,6 +106,18 @@ The test suite runs TypeScript test files directly through Node's built-in test
 runner, so use Node `22.18.0` or newer. Older Node 22 builds fail before the
 tests execute because they cannot strip TypeScript syntax from `.ts` test files.
 
+## Requirements
+
+**Node 22 or newer**, declared in `engines`. That is the RUNTIME floor for
+anyone installing this package, not just for running its tests: `openai` 7 sets
+it and this package inherits it. Before 2.0.0 nothing declared a floor at all,
+so an unsupported runtime failed somewhere further in with a worse message.
+
+The dependency tree is deliberately **one package**. `openai` 7 has no
+dependencies of its own, where `openai` 4 pulled in 36 transitive packages —
+which is where every supply-chain advisory against this package used to come
+from.
+
 ## How guardrails, budgets and routing work
 
 They are configured in the dashboard and enforced at the **gateway**, not in

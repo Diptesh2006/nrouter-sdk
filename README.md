@@ -9,6 +9,27 @@
 
 SDK and code examples for the [nRouter](https://nrouter.ai) LLM gateway.
 
+## Supported today: JavaScript/TypeScript, Python, Java
+
+**Owner scope decision, 2026-08-29 — reviewed monthly.** Three SDKs are
+published and supported; the other seven build from this repository, are held
+to the same conformance gate, and are **not yet released**.
+
+| SDK | Registry | Package | Version |
+|---|---|---|---|
+| JavaScript / TypeScript | npm | `@nrouter_ai/sdk` | 2.0.0 |
+| Python | PyPI | `nrouter-sdk` | 2.1.3 |
+| Java | Maven Central | `ai.nrouter:nrouter-sdk` | 1.0.0 |
+
+`sdks/{kotlin,android,go,rust,swift,dart,r}` are complete enough to pass the
+cross-SDK contract gate and are exercised on every change — they simply have no
+registry release, so no version number here can go stale. Treat them as
+buildable from source, not as something to `install`.
+
+Read those versions off the registries rather than this table if the difference
+would matter; the badges above are live and this text is not.
+
+
 One API key for models across six provider clouds — Alibaba US, OpenAI, AWS Bedrock, Azure Foundry, Google Vertex AI and Anthropic. nRouter serves the OpenAI wire format and Anthropic's Messages API natively, plus embeddings, audio, images and video.
 
 One key. One bill. The live multi-provider catalog. Guardrails, prompt templates, and cost

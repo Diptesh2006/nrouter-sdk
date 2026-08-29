@@ -4,6 +4,38 @@ Ten SDKs for the nRouter gateway, and the gate that keeps them speaking one
 contract. **The only PUBLIC repo in the workspace** — everything committed here
 is world-readable. Treat every file as published.
 
+## ⛔ SCOPE: npm, PyPI and Maven only — owner decision 2026-08-29, reviewed monthly
+
+**Ten SDKs exist here; THREE are released and supported.** Work that ships to a
+customer goes to `sdks/{js,python,java}`. The other seven —
+`{kotlin,android,go,rust,swift,dart,r}` — build from this repo and are held to
+the same conformance gate, but have **no registry release and no support
+commitment until this scope is revisited**.
+
+| supported | registry | package |
+|---|---|---|
+| `sdks/js` | npm | `@nrouter_ai/sdk` |
+| `sdks/python` | PyPI | `nrouter-sdk` |
+| `sdks/java` | Maven Central | `ai.nrouter:nrouter-sdk` |
+
+Derive the live versions; never quote one from prose:
+
+```bash
+curl -s https://registry.npmjs.org/@nrouter_ai%2Fsdk | python3 -c "import sys,json;print(json.load(sys.stdin)['dist-tags']['latest'])"
+curl -s https://pypi.org/pypi/nrouter-sdk/json  | python3 -c "import sys,json;print(json.load(sys.stdin)['info']['version'])"
+curl -s https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk/maven-metadata.xml | grep -oE '<release>[^<]+</release>'
+```
+
+**This narrows what ships, NOT what must stay correct.** The seven unreleased
+SDKs still run in `conformance/check_conformance.py`, and a contract change
+still has to land in all ten — a spec edit that leaves seven behind turns a
+green gate into a lie the day one of them is released. Fix them; just do not
+publish them.
+
+⚠️ Three published surfaces means THREE immutable version lines and three
+release workflows. A breaking change is breaking per registry: `guardrailIds`
+throwing is a JS major, and says nothing about Python's or Java's numbering.
+
 Independent repo, own remote, nested in `nrouter-brain`, gitignored by it.
 **Edit in place; commit and push here.** Rule #20: `git pull --ff-only` → edit →
 focused tests → review → push, never force.

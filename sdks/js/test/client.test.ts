@@ -901,3 +901,61 @@ test('rotating client.apiKey to a non-nRouter key refuses instead of sending it'
   // ...and the good key is still in place, so the client stays usable.
   assert.equal((client as unknown as { apiKey: string }).apiKey, TEST_KEY);
 });
+
+// A clone must inherit the CURRENT key. The vendor clones from
+// `_options.apiKey` — the constructor-time value — so after a rotation every
+// clone silently reverted to the original key and billed the original tenant.
+test('withOptions clones the rotated key, not the constructor-time one', async () => {
+  const ROTATED = 'sk-nrouter-rotated00000000000abcd';
+  let seen = '';
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async (_url: unknown, init: any) => {
+      seen = new Headers(init.headers).get('authorization') ?? '';
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  (client as unknown as { apiKey: string }).apiKey = ROTATED;
+  await client.withOptions({ timeout: 5000 }).nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+  assert.equal(seen, `Bearer ${ROTATED}`, 'a clone must not revert to the constructor-time key');
+});
+
+// Clearing the key must REFUSE, not fall back to the environment. The
+// constructor's fallback is right at construction and a tenancy hazard on a
+// rotation: it would silently move the client onto another tenant's key.
+test('clearing apiKey refuses instead of falling back to NROUTER_API_KEY', async () => {
+  const saved = process.env.NROUTER_API_KEY;
+  process.env.NROUTER_API_KEY = 'sk-nrouter-fromenv000000000abcd';
+  try {
+    const client = new nRouter({
+      apiKey: TEST_KEY,
+      maxRetries: 0,
+      fetch: async () =>
+        new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    for (const bad of ['', null, undefined]) {
+      assert.throws(
+        () => {
+          (client as unknown as { apiKey: unknown }).apiKey = bad;
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof nRouterError);
+          assert.equal((err as { kind?: string }).kind, 'configuration');
+          return true;
+        },
+        `clearing with ${JSON.stringify(bad)} must refuse`,
+      );
+    }
+    assert.equal((client as unknown as { apiKey: string }).apiKey, TEST_KEY, 'the good key survives');
+  } finally {
+    if (saved === undefined) delete process.env.NROUTER_API_KEY;
+    else process.env.NROUTER_API_KEY = saved;
+  }
+});

@@ -47,6 +47,29 @@ function envValue(name: string): string | undefined {
   ];
 }
 
+/**
+ * Validate a key WITHOUT the environment fallback.
+ *
+ * The fallback belongs to construction only. On a ROTATION it is a tenancy
+ * hazard: `client.apiKey = ''` or `null` would resolve to `NROUTER_API_KEY`
+ * and silently move the client to a different tenant's key, billing them,
+ * instead of rejecting an assignment that is plainly a mistake.
+ */
+function assertNRouterKey(value: unknown): string {
+  if (typeof value !== 'string' || value === '') {
+    throw configurationError(
+      'apiKey must be a non-empty string. Clearing it is not supported: build a ' +
+        'new client instead of leaving one in a state with no credential.',
+    );
+  }
+  if (!value.startsWith(KEY_PREFIX)) {
+    throw configurationError(
+      `nRouter API keys must start with ${KEY_PREFIX}; got one that does not.`,
+    );
+  }
+  return value;
+}
+
 function resolveApiKey(apiKey?: unknown): string {
   // `unknown`, not `string`, because openai 7 widened its own `apiKey` option
   // to `string | ApiKeySetter | null | undefined` and NRouterOptions inherits
@@ -405,10 +428,16 @@ export class nRouter extends OpenAI {
    * point and wide in the other is not narrowed.
    */
   override withOptions(options: Partial<NRouterOptions>): this {
+    // SEED FROM THE LIVE KEY. The vendor clones from `_options.apiKey`, which
+    // is the constructor-time value and which the `apiKey` setter never
+    // updates — so after a rotation every clone silently reverted to the
+    // ORIGINAL key and billed the original tenant. An explicit `apiKey` in
+    // `options` still wins, because it comes second.
+    const seeded = { apiKey: this.apiKey as string, ...options };
     return super.withOptions(
       // Same NonNullable reason as NRouterOptions: the vendor parameter is
       // optional, so `Partial<...>` over it carries `undefined`.
-      options as Partial<NonNullable<ConstructorParameters<typeof OpenAI>[0]>>,
+      seeded as Partial<NonNullable<ConstructorParameters<typeof OpenAI>[0]>>,
     ) as this;
   }
 
@@ -521,7 +550,7 @@ export class nRouter extends OpenAI {
     Object.defineProperty(this, 'apiKey', {
       get: () => key,
       set: (next: unknown) => {
-        key = resolveApiKey(next);
+        key = assertNRouterKey(next);
       },
       enumerable: true,
       configurable: true,

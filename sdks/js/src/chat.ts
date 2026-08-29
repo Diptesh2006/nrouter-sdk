@@ -36,6 +36,65 @@ import type { NRouterCallOptions, NRouterResponse, ResponseMeta } from './types'
 /** The gateway's buffered chat endpoint. Path only — the runner owns the base URL. */
 const CHAT_PATH = '/chat/completions';
 
+/**
+ * The gateway's Anthropic-native endpoint. Path only, same rule.
+ *
+ * NOT an alternative spelling of the endpoint above — it is the ONLY text wire
+ * a Claude or Bedrock model can be reached on. Measured in the gateway's own
+ * source: Anthropic declares `chat_completions: None`
+ * (`nrouter-rust-gateway/src/sdk/providers/anthropic/transformation.rs:55-57`)
+ * and Bedrock does the same (`bedrock/transformation.rs:862`), so `transform.rs`
+ * answers a 404 UnknownModel reading "is not available on
+ * /v1/chat/completions". Sending every model to one path made every id this
+ * package advertises in its own keywords — `claude`, `bedrock` — uncallable
+ * through `nr.chat()` and `nr.stream()`.
+ */
+export const MESSAGES_PATH = '/messages';
+
+/**
+ * Anthropic REQUIRES `max_tokens`; a body without it is refused outright.
+ *
+ * The same 1024 the hosted playground injects
+ * (`nrouter-app/src/app/api/nrouter-proxy/chat/route.ts:308-310`). Matching it
+ * matters more than the number does: a snippet copied out of the dashboard has
+ * to behave the same way from npm.
+ */
+const DEFAULT_ANTHROPIC_MAX_TOKENS = 1024;
+
+/** OpenAI allows 0–2; Anthropic 400s above 1. */
+const ANTHROPIC_MAX_TEMPERATURE = 1;
+
+/**
+ * OpenAI fields Anthropic's Messages wire has no equivalent for.
+ *
+ * Ported verbatim from the app's translator, reasons and all, because a drop
+ * list without reasons is how a MATERIAL field ends up on it later. Every entry
+ * here is a sampling nudge or a no-op — none of them changes what safety ran or
+ * what the model was asked. `n` is the exception and is not dropped: it is
+ * REFUSED, below, because answering an `n: 3` request with one choice is a fake
+ * success the caller pays for.
+ *
+ *   stream_options    Anthropic streams usage unconditionally and rejects the
+ *                     key: "stream_options: Extra inputs are not permitted".
+ *   frequency_penalty / presence_penalty / logit_bias / seed / logprobs /
+ *   top_logprobs      no Anthropic equivalent.
+ *   response_format   Anthropic has no JSON-mode switch on this wire.
+ *   user              never forwarded anyway — the gateway derives identity
+ *                     from the authenticated key (gateway rules §4b).
+ */
+const OPENAI_ONLY_FIELDS = [
+  'stream_options',
+  'frequency_penalty',
+  'presence_penalty',
+  'logit_bias',
+  'n',
+  'seed',
+  'logprobs',
+  'top_logprobs',
+  'response_format',
+  'user',
+] as const;
+
 /** Key under which a failed `compare` arm parks its error. See `compare`. */
 export const COMPARE_ERROR_KEY = 'nrouter_error';
 
@@ -106,7 +165,32 @@ export async function chat(
     );
   }
 
-  const res = await send(runner, body);
+  // THE WIRE, chosen from the model and before anything is sent.
+  //
+  // Picking the PATH is only half the job, and the other half is what the
+  // hosted playground learned the expensive way. That route selected
+  // `/v1/messages` for `claude*` while still sending the OpenAI request shape
+  // at it and handing the Anthropic response shape back to a client that reads
+  // `choices[0].delta.content`. Its comment records the measurement: "a 200 in
+  // ~14s that rendered an EMPTY BOX while the tokens were billed". A silent
+  // success delivering no product is worse than an error — nothing pages on it
+  // and the spend is real. So the request is TRANSLATED on the way out and the
+  // response is translated on the way back, or neither.
+  //
+  // This is a SHIM and its deletion condition is upstream, not here: when the
+  // gateway stops declaring `chat_completions: None` for Anthropic and serves
+  // `claude*` on `/v1/chat/completions`, every line of it goes, because
+  // `toOpenAIChatCompletion` already passes an OpenAI-shaped document through
+  // untouched and would degrade to a no-op on that day.
+  const messagesWire = usesMessagesWire(opts.model, opts.modelProvider);
+  if (messagesWire) {
+    refuseUnservableOnMessagesWire(body);
+  }
+  const res = await send(
+    runner,
+    messagesWire ? MESSAGES_PATH : CHAT_PATH,
+    messagesWire ? toAnthropicMessagesRequest(body).body : body,
+  );
   const meta = metaFromHeaders(res.headers);
 
   if (res.status < 200 || res.status >= 300) {
@@ -197,7 +281,451 @@ export async function chat(
     });
   }
 
-  return { body: decoded as Record<string, unknown>, meta };
+  // Translated only on the wire that needs it. `toOpenAIChatCompletion` is a
+  // pass-through for anything OpenAI-shaped, but running it on every response
+  // would put the buffered OpenAI path — by far the busiest — behind a shape
+  // heuristic it has no reason to be behind.
+  const decodedBody = messagesWire
+    ? (toOpenAIChatCompletion(decoded, {
+        requestedModel: opts.model,
+        requestId: meta.requestId,
+      }) as Record<string, unknown>)
+    : (decoded as Record<string, unknown>);
+
+  return { body: decodedBody, meta };
+}
+
+
+// ---------------------------------------------------------------------------
+// The Anthropic Messages wire
+//
+// A bounded translator, ported from the surface that already proved it in
+// production: nrouter-app `src/lib/nrouter-proxy/anthropic-translation.ts`.
+// Two rules it inherits and must keep:
+//
+//   * NEVER invent usage. A response with nothing countable carries NO usage
+//     block — never a zero. Rule #28 and gateway §4f gate 3: absent is
+//     `Unpriced`, and a confident `0` reads as a free request.
+//   * NEVER silently drop a material field. A field Anthropic cannot carry is
+//     listed in OPENAI_ONLY_FIELDS with its reason; `tools` are translated
+//     rather than dropped, because a dropped tool definition produces a
+//     normal-looking answer that ignored the caller's tools — the same fake
+//     success as the empty box, and billed the same.
+// ---------------------------------------------------------------------------
+
+/**
+ * True when this model must be called on `/messages` rather than
+ * `/chat/completions`.
+ *
+ * DELIBERATELY NOT `isClaudeModel` from ./sampling, even though the two overlap
+ * almost entirely. That predicate answers a different question — "does this
+ * model enforce temperature XOR top_p" — and widening it to cover the Bedrock
+ * ids that are NOT Claude (Nova, Titan, Llama) would change which sampling
+ * params get suppressed for models that never had the XOR rule. Two questions,
+ * two predicates.
+ *
+ * The id arms mirror the playground's
+ * (`nrouter-app/src/app/api/nrouter-proxy/chat/route.ts:298-307`) with one
+ * widening: `includes('claude')` rather than `startsWith`, because this SDK's
+ * own README calls models by their prefixed aliases
+ * (`anthropic/claude-sonnet-4-5-…`, `us.anthropic.claude-opus-4-1-v1:0`) which
+ * a prefix match sends to the path that 404s them.
+ *
+ * The `provider` arm covers a private alias that hides the family name. It uses
+ * the same attribution the caller already passes to the sampling policy, so it
+ * costs no new option. Both failure directions are LOUD — a wrong wire is a
+ * 404, never a wrong answer — which is why a heuristic is acceptable here at
+ * all.
+ */
+export function usesMessagesWire(model: string, provider?: string | null): boolean {
+  const id = (model ?? '').toLowerCase();
+  if (
+    id.includes('claude') ||
+    id.startsWith('bedrock-') ||
+    id.includes('haiku') ||
+    id.includes('sonnet') ||
+    id.includes('opus')
+  ) {
+    return true;
+  }
+  const attribution = (provider ?? '').toLowerCase();
+  return attribution.includes('anthropic') || attribution.includes('bedrock');
+}
+
+/**
+ * Refuse, before sending, what this wire cannot serve honestly.
+ *
+ * `n` is the only OpenAI field whose omission changes the ANSWER rather than
+ * the sampling. Anthropic returns exactly one message and has no `n`, so a
+ * dropped `n: 3` comes back as a single choice that reads like a success — and
+ * the customer paid for it. The playground refuses the same request for the
+ * same reason (route.ts:325-336).
+ *
+ * CONFIGURATION, so `isRetryable` says false: no retry turns a wire without
+ * `n` into one that has it, and a caller's generic retry loop must not spin on
+ * it. Raised BEFORE the runner, which is the one place a refusal costs nothing.
+ */
+export function refuseUnservableOnMessagesWire(body: Record<string, unknown>): void {
+  const n = body['n'];
+  if (typeof n === 'number' && n > 1) {
+    throw configurationError(
+      `this model answers on the Anthropic Messages wire, which returns exactly ` +
+        `one completion, so n=${n} cannot be served. Send n=1, or call an ` +
+        'OpenAI-wire model. Dropping the field would return one choice and ' +
+        'report success for a request that asked for more and was billed.',
+    );
+  }
+}
+
+/** The translated body, plus the fields this wire could not carry. */
+export interface AnthropicRequestResult {
+  body: Record<string, unknown>;
+  /** Dropped because Anthropic has no equivalent. Diagnostic only. */
+  dropped: string[];
+}
+
+/**
+ * Translate an OpenAI chat-completions body into an Anthropic Messages body.
+ *
+ * The three structural moves, each of which is a hard 400 if skipped:
+ *   1. `system` messages come OUT of `messages` and become the top-level
+ *      `system` field. Anthropic rejects `role: "system"` inside `messages`.
+ *   2. `max_tokens` is REQUIRED.
+ *   3. `stop` becomes `stop_sequences`, and must be an array.
+ */
+export function toAnthropicMessagesRequest(
+  openai: Record<string, unknown>,
+): AnthropicRequestResult {
+  const dropped: string[] = [];
+  const out: Record<string, unknown> = { model: openai['model'] };
+
+  const systemChunks: string[] = [];
+  const messages: Record<string, unknown>[] = [];
+  const input = Array.isArray(openai['messages']) ? (openai['messages'] as unknown[]) : [];
+
+  for (const raw of input) {
+    const turn = asObject(raw);
+    if (turn === null) continue;
+    const role = typeof turn['role'] === 'string' ? turn['role'] : '';
+
+    if (role === 'system' || role === 'developer') {
+      // Anthropic's `system` is a plain string; flatten whatever text is there.
+      const content = turn['content'];
+      if (typeof content === 'string') {
+        systemChunks.push(content);
+      } else if (Array.isArray(content)) {
+        for (const part of content) {
+          const p = asObject(part);
+          if (p?.['type'] === 'text' && typeof p['text'] === 'string') {
+            systemChunks.push(p['text']);
+          }
+        }
+      }
+      continue;
+    }
+
+    // Anthropic has no `tool` role: a result replays as a USER turn carrying a
+    // tool_result block. Dropping it makes the model answer as if the tool
+    // never ran, on a conversation the caller is paying to replay.
+    if (role === 'tool') {
+      const content = turn['content'];
+      messages.push({
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id:
+              typeof turn['tool_call_id'] === 'string' ? turn['tool_call_id'] : '',
+            content: typeof content === 'string' ? content : JSON.stringify(content ?? ''),
+          },
+        ],
+      });
+      continue;
+    }
+
+    if (role === 'assistant' && Array.isArray(turn['tool_calls'])) {
+      const blocks: Record<string, unknown>[] = [];
+      const text = typeof turn['content'] === 'string' ? turn['content'] : '';
+      if (text) blocks.push({ type: 'text', text });
+      for (const call of turn['tool_calls'] as unknown[]) {
+        const c = asObject(call);
+        const fn = asObject(c?.['function']);
+        let args: unknown = {};
+        try {
+          const serialized = fn?.['arguments'];
+          args = typeof serialized === 'string' && serialized ? JSON.parse(serialized) : {};
+        } catch {
+          // A malformed argument string from a PREVIOUS turn must not 400 the
+          // whole history. Replay it as an empty object and let the model see
+          // the call happened.
+          args = {};
+        }
+        blocks.push({
+          type: 'tool_use',
+          id: typeof c?.['id'] === 'string' ? c['id'] : '',
+          name: typeof fn?.['name'] === 'string' ? fn['name'] : '',
+          input: args,
+        });
+      }
+      messages.push({ role: 'assistant', content: blocks });
+      continue;
+    }
+
+    if (role !== 'user' && role !== 'assistant') continue;
+    messages.push({ role, content: contentToAnthropic(turn['content']) });
+  }
+
+  if (systemChunks.length > 0) out['system'] = systemChunks.join('\n\n');
+  out['messages'] = messages;
+
+  const maxTokens = finite(openai['max_tokens']);
+  out['max_tokens'] =
+    maxTokens !== null && maxTokens > 0 ? maxTokens : DEFAULT_ANTHROPIC_MAX_TOKENS;
+
+  const stop = openai['stop'];
+  if (typeof stop === 'string' && stop) {
+    out['stop_sequences'] = [stop];
+  } else if (Array.isArray(stop) && stop.length > 0) {
+    out['stop_sequences'] = stop.filter((s) => typeof s === 'string' && s.length > 0);
+  }
+
+  const temperature = finite(openai['temperature']);
+  if (temperature !== null) {
+    // CLAMPED, not refused. OpenAI's range is 0–2 and Anthropic's is 0–1, so
+    // anything above 1 is a hard 400 upstream. Clamping is lossy and
+    // deliberate: the alternative refuses a value our own dashboard slider
+    // offers, and the sampling policy above already let it through.
+    out['temperature'] = Math.min(Math.max(temperature, 0), ANTHROPIC_MAX_TEMPERATURE);
+  }
+  const topP = finite(openai['top_p']);
+  if (topP !== null) out['top_p'] = topP;
+
+  if (openai['stream'] === true) out['stream'] = true;
+
+  const tools = toolsToAnthropic(openai['tools']);
+  if (tools) {
+    out['tools'] = tools;
+    const choice = toolChoiceToAnthropic(openai['tool_choice']);
+    if (choice) out['tool_choice'] = choice;
+  } else if (openai['tools'] !== undefined) {
+    dropped.push('tools');
+  }
+
+  for (const field of OPENAI_ONLY_FIELDS) {
+    if (openai[field] !== undefined) dropped.push(field);
+  }
+
+  // Everything the gateway itself reads — the `nrouter_*` extra_body fields —
+  // is forwarded UNCHANGED. It is stripped at the gateway before the provider
+  // sees the body, so it belongs on this wire exactly as it does on the other;
+  // dropping it would silently disable prompt templates and the response cache
+  // for every Claude call.
+  for (const key of Object.keys(openai)) {
+    if (key.startsWith('nrouter_')) out[key] = openai[key];
+  }
+
+  return { body: out, dropped };
+}
+
+/**
+ * True when a decoded document is an Anthropic Messages response.
+ *
+ * An OpenAI document ALWAYS carries `choices`, so that test comes first and
+ * makes this a pass-through the day the gateway grows its own façade.
+ */
+export function isAnthropicMessageResponse(json: unknown): boolean {
+  const doc = asObject(json);
+  if (doc === null) return false;
+  if (Array.isArray(doc['choices'])) return false;
+  return doc['type'] === 'message' || Array.isArray(doc['content']);
+}
+
+/**
+ * Translate a buffered Anthropic Messages response into OpenAI's
+ * `chat.completion` shape — the half without which `chatText()` returns `''`
+ * on a real, billed answer.
+ *
+ * Anything that does not look Anthropic-shaped is returned UNTOUCHED, by
+ * identity, so this is a no-op on an OpenAI document.
+ */
+export function toOpenAIChatCompletion(
+  anthropic: unknown,
+  opts: { requestedModel?: string; requestId?: string | null } = {},
+): unknown {
+  if (!isAnthropicMessageResponse(anthropic)) return anthropic;
+  const doc = anthropic as Record<string, unknown>;
+
+  const blocks = Array.isArray(doc['content']) ? (doc['content'] as unknown[]) : [];
+  const textParts: string[] = [];
+  const toolCalls: Record<string, unknown>[] = [];
+
+  for (const block of blocks) {
+    const b = asObject(block);
+    if (b === null) continue;
+    if (b['type'] === 'text' && typeof b['text'] === 'string') {
+      textParts.push(b['text']);
+    } else if (b['type'] === 'tool_use') {
+      toolCalls.push({
+        id: typeof b['id'] === 'string' ? b['id'] : '',
+        type: 'function',
+        function: {
+          name: typeof b['name'] === 'string' ? b['name'] : '',
+          arguments: JSON.stringify(b['input'] ?? {}),
+        },
+      });
+    }
+    // `thinking` blocks are deliberately not surfaced: OpenAI's shape has no
+    // standard field for them, and inventing one puts model reasoning on a
+    // customer surface no SDK reads.
+  }
+
+  const text = textParts.join('');
+  const message: Record<string, unknown> = {
+    role: 'assistant',
+    // OpenAI's convention is `null` content on a pure tool call.
+    content: text.length > 0 ? text : toolCalls.length > 0 ? null : '',
+  };
+  if (toolCalls.length > 0) message['tool_calls'] = toolCalls;
+
+  const out: Record<string, unknown> = {
+    id: `chatcmpl-${(typeof doc['id'] === 'string' && doc['id']) || opts.requestId || 'nrouter'}`,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: (typeof doc['model'] === 'string' && doc['model']) || opts.requestedModel || '',
+    choices: [
+      {
+        index: 0,
+        message,
+        finish_reason: toFinishReason(doc['stop_reason']),
+      },
+    ],
+  };
+
+  // Absent usage means NO usage key — never a zero-filled block.
+  const usage = toOpenAIUsage(doc['usage']);
+  if (usage !== null) out['usage'] = usage;
+  return out;
+}
+
+/**
+ * Map Anthropic's `stop_reason` onto OpenAI's `finish_reason`.
+ *
+ * `max_tokens` → `length` is the load-bearing one: it is the ONLY thing that
+ * distinguishes a truncated answer from a genuinely short one, and a caller
+ * shown `stop` bills for a cut-off reply believing it complete. An unknown
+ * reason answers `stop` rather than the raw Anthropic token, because leaking a
+ * provider-specific string onto a customer-visible field is gateway §4f gate 9.
+ */
+function toFinishReason(stopReason: unknown): string {
+  if (stopReason === 'max_tokens') return 'length';
+  if (stopReason === 'tool_use') return 'tool_calls';
+  return 'stop';
+}
+
+/**
+ * Translate an Anthropic `usage` block into OpenAI's, or `null`.
+ *
+ * `prompt_tokens` SUMS `input_tokens` with the two cache counters when the
+ * provider reported them. That is arithmetic over numbers Anthropic returned,
+ * not an invention: cache-read and cache-creation tokens are prompt tokens the
+ * customer was charged for, and omitting them under-reports the input side.
+ * Cost itself still comes from the gateway's `x-nr-request-cost` header; this
+ * function computes no money.
+ */
+function toOpenAIUsage(
+  usage: unknown,
+): { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null {
+  const u = asObject(usage);
+  if (u === null) return null;
+
+  const input = finite(u['input_tokens']);
+  const cacheCreate = finite(u['cache_creation_input_tokens']);
+  const cacheRead = finite(u['cache_read_input_tokens']);
+  const output = finite(u['output_tokens']);
+
+  // Nothing countable at all → no usage block. Never zeros (Rule #28).
+  if (input === null && cacheCreate === null && cacheRead === null && output === null) {
+    return null;
+  }
+
+  const prompt = (input ?? 0) + (cacheCreate ?? 0) + (cacheRead ?? 0);
+  const completion = output ?? 0;
+  return { prompt_tokens: prompt, completion_tokens: completion, total_tokens: prompt + completion };
+}
+
+/** One OpenAI message's content → Anthropic content (string or block array). */
+function contentToAnthropic(content: unknown): unknown {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+
+  const blocks: Record<string, unknown>[] = [];
+  for (const raw of content) {
+    const part = asObject(raw);
+    if (part === null) continue;
+    if (part['type'] === 'text' && typeof part['text'] === 'string') {
+      blocks.push({ type: 'text', text: part['text'] });
+      continue;
+    }
+    if (part['type'] === 'image_url') {
+      const url = asObject(part['image_url'])?.['url'];
+      if (typeof url !== 'string' || !url) continue;
+      // A `data:` URI carries its own media type, so it must be SPLIT rather
+      // than handed over whole — passing the full URI as a URL is a 400.
+      const dataUri = /^data:([^;,]+);base64,([\s\S]*)$/.exec(url);
+      blocks.push(
+        dataUri
+          ? { type: 'image', source: { type: 'base64', media_type: dataUri[1], data: dataUri[2] } }
+          : { type: 'image', source: { type: 'url', url } },
+      );
+      continue;
+    }
+    // An unrecognised part is skipped rather than forwarded: an unknown key
+    // reaches Anthropic verbatim and 400s the whole turn.
+  }
+  return blocks;
+}
+
+/** OpenAI `tools` → Anthropic `tools`. Shape only; names and schemas pass through. */
+function toolsToAnthropic(tools: unknown): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(tools)) return undefined;
+  const out: Record<string, unknown>[] = [];
+  for (const tool of tools) {
+    const fn = asObject(asObject(tool)?.['function']);
+    if (fn === null || typeof fn['name'] !== 'string') continue;
+    const parameters = fn['parameters'];
+    out.push({
+      name: fn['name'],
+      ...(typeof fn['description'] === 'string' ? { description: fn['description'] } : {}),
+      // Anthropic requires an object schema; OpenAI's `parameters` is the same
+      // JSON Schema under a different key.
+      input_schema:
+        parameters !== null && typeof parameters === 'object'
+          ? parameters
+          : { type: 'object', properties: {} },
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** OpenAI `tool_choice` → Anthropic `tool_choice`. */
+function toolChoiceToAnthropic(choice: unknown): Record<string, unknown> | undefined {
+  if (choice === 'auto') return { type: 'auto' };
+  if (choice === 'required') return { type: 'any' };
+  // Anthropic expresses "none" by omitting tools, so there is nothing to send.
+  if (choice === 'none') return undefined;
+  const name = asObject(asObject(choice)?.['function'])?.['name'];
+  return typeof name === 'string' ? { type: 'tool', name } : undefined;
+}
+
+/** A finite number, or null. `NaN` and `Infinity` are not counts. */
+function finite(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** Narrow to a plain object; arrays and null are not one. */
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 
@@ -329,10 +857,11 @@ export function compareError(
  */
 async function send(
   runner: ChatRunner,
+  path: string,
   body: Record<string, unknown>,
 ): Promise<ChatRunnerResponse> {
   try {
-    return await runner.request(CHAT_PATH, body);
+    return await runner.request(path, body);
   } catch (cause) {
     throw normalize(cause);
   }

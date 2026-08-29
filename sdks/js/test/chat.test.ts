@@ -20,7 +20,16 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { chat, chatText, compare, compareError, COMPARE_ERROR_KEY } = require('../dist/chat');
+const {
+  chat,
+  chatText,
+  compare,
+  compareError,
+  COMPARE_ERROR_KEY,
+  usesMessagesWire,
+  toAnthropicMessagesRequest,
+  toOpenAIChatCompletion,
+} = require('../dist/chat');
 const { nRouterError, isRetryable } = require('../dist/errors');
 
 type RunnerResponse = {
@@ -81,19 +90,24 @@ async function rejection(promise: Promise<unknown>): Promise<any> {
 // ---------------------------------------------------------------------------
 
 test('a JSON 2xx resolves to the body paired with its metadata', async () => {
+  // Deliberately an OPENAI-wire model. This case used to name a `claude-*`
+  // model and assert `/chat/completions`, which pinned the defect rather than
+  // the contract: the gateway declares `chat_completions: None` for Anthropic,
+  // so that path 404s for every Claude id. The wire choice has its own cases
+  // below; this one is about the runner owning the base URL.
   const runner = fakeRunner({
     text: OK_BODY,
     headers: {
       'x-nr-request-id': 'nrouter-ok',
       'x-nr-request-cost': '0.00347',
       'x-nr-cost-status': 'exact',
-      'x-nr-model': 'claude-sonnet-4-5',
+      'x-nr-model': 'gpt-4o-mini',
     },
   });
-  const res = await chat(runner, { model: 'claude-sonnet-4-5', prompt: 'hi' });
+  const res = await chat(runner, { model: 'gpt-4o-mini', prompt: 'hi' });
 
   assert.equal(runner.seen.path, '/chat/completions', "the base URL is the runner's; the path is not");
-  assert.equal(runner.seen.body?.model, 'claude-sonnet-4-5');
+  assert.equal(runner.seen.body?.model, 'gpt-4o-mini');
   assert.equal(res.meta.requestId, 'nrouter-ok');
   assert.equal(res.meta.cost, 0.00347);
   assert.equal(chatText(res), 'hello');
@@ -385,4 +399,284 @@ test('a failed compare arm does not discard the sibling answers that were billed
   assert.equal(failure.name, 'nRouterNotFoundError');
   assert.equal(compareError(results[0]), null);
   assert.ok(COMPARE_ERROR_KEY, 'the sentinel key is exported so no caller string-matches it');
+});
+
+// ---------------------------------------------------------------------------
+// THE ANTHROPIC WIRE — the P0 that made every Claude and Bedrock model
+// unreachable from `nr.chat()`.
+//
+// MEASURED, in the gateway's own source: Anthropic declares
+// `chat_completions: None`
+// (`nrouter-rust-gateway/src/sdk/providers/anthropic/transformation.rs:55-57`)
+// and so does Bedrock (`bedrock/transformation.rs:862`), so `transform.rs`
+// answers a 404 UnknownModel reading "is not available on
+// /v1/chat/completions". This SDK sent every model to that one path. The
+// package advertises `claude` and `bedrock` in its own keywords, and not one
+// of those models could be called.
+//
+// The hosted playground already solved it and is the reference
+// (`nrouter-app/src/app/api/nrouter-proxy/chat/route.ts:298-336` +
+// `src/lib/nrouter-proxy/anthropic-translation.ts`). Picking the PATH is only
+// half the job: that route picked `/v1/messages` for a while and still sent
+// the OpenAI request shape at it, which produced — its comment records the
+// measurement — "a 200 in ~14s that rendered an EMPTY BOX while the tokens
+// were billed". A silent success delivering no product, for real money.
+// ---------------------------------------------------------------------------
+
+/** A buffered Anthropic Messages response, exactly as `/v1/messages` answers. */
+const ANTHROPIC_BODY = JSON.stringify({
+  id: 'msg_01ABC',
+  type: 'message',
+  role: 'assistant',
+  model: 'claude-sonnet-4-5',
+  content: [{ type: 'text', text: 'hello from claude' }],
+  stop_reason: 'end_turn',
+  usage: { input_tokens: 11, cache_read_input_tokens: 4, output_tokens: 3 },
+});
+
+test('the wire predicate covers every id shape the catalogue actually serves', () => {
+  for (const model of [
+    'claude-sonnet-4-5',
+    'claude-3-5-haiku-20241022',
+    'anthropic/claude-sonnet-4-5-20250929',
+    'us.anthropic.claude-opus-4-1-v1:0',
+    'bedrock-nova-pro',
+    'CLAUDE-SONNET-4-5',
+  ]) {
+    assert.equal(usesMessagesWire(model), true, `${model} must take /messages`);
+  }
+  for (const model of ['gpt-4o-mini', 'o3', 'gemini-2.5-pro', 'qwen-max', '']) {
+    assert.equal(usesMessagesWire(model), false, `${model} must stay on /chat/completions`);
+  }
+  // A private alias that hides the family name still routes correctly when the
+  // caller supplied the provider attribution it already passes to the sampling
+  // policy.
+  assert.equal(usesMessagesWire('house-model-v2'), false);
+  assert.equal(usesMessagesWire('house-model-v2', 'anthropic'), true);
+  assert.equal(usesMessagesWire('house-model-v2', 'bedrock'), true);
+});
+
+test('a Claude model is sent to /messages, not to the path that 404s it', async () => {
+  const runner = fakeRunner({ text: ANTHROPIC_BODY });
+  await chat(runner, { model: 'claude-sonnet-4-5', prompt: 'hi' });
+  assert.equal(runner.seen.path, '/messages');
+});
+
+test('an OpenAI model stays on /chat/completions', async () => {
+  const runner = fakeRunner({ text: OK_BODY });
+  await chat(runner, { model: 'gpt-4o-mini', prompt: 'hi' });
+  assert.equal(runner.seen.path, '/chat/completions');
+});
+
+test('the /messages body is TRANSLATED, not the OpenAI shape at a new path', async () => {
+  const runner = fakeRunner({ text: ANTHROPIC_BODY });
+  await chat(runner, {
+    model: 'claude-sonnet-4-5',
+    systemPrompt: 'be brief',
+    prompt: 'hi',
+  });
+  const body = runner.seen.body as Record<string, any>;
+
+  // 1. `system` comes OUT of `messages`. Anthropic rejects role:"system" there.
+  assert.equal(body.system, 'be brief');
+  assert.deepEqual(
+    body.messages.map((m: any) => m.role),
+    ['user'],
+    'no system turn may remain inside messages',
+  );
+  // 2. `max_tokens` is REQUIRED on this wire; absent is a hard 400.
+  assert.equal(body.max_tokens, 1024);
+  // 3. Nothing OpenAI-only survives.
+  assert.equal(body.stream_options, undefined);
+  assert.equal(body.n, undefined);
+});
+
+test('a caller max_tokens is never overwritten by the Anthropic default', async () => {
+  const runner = fakeRunner({ text: ANTHROPIC_BODY });
+  await chat(runner, { model: 'claude-sonnet-4-5', prompt: 'hi', maxTokens: 64 });
+  assert.equal((runner.seen.body as any).max_tokens, 64);
+});
+
+test('temperature is clamped to Anthropic\'s ceiling rather than 400ing', async () => {
+  const runner = fakeRunner({ text: ANTHROPIC_BODY });
+  await chat(runner, {
+    model: 'claude-sonnet-4-5',
+    prompt: 'hi',
+    advancedSampling: true,
+    temperature: 1.8,
+  });
+  // OpenAI's range is 0–2 and Anthropic's is 0–1; 1.8 is a hard 400 upstream.
+  assert.equal((runner.seen.body as any).temperature, 1);
+});
+
+test('n > 1 on the Anthropic wire is REFUSED, and nothing is sent', async () => {
+  // Anthropic returns exactly one message and has no `n`. Dropping the field
+  // answers an n:3 request with one choice and calls it success — the same
+  // fake-success class as the empty box, but here it also bills the call.
+  // Refusing BEFORE the runner is the only version that costs nothing.
+  const runner = fakeRunner({ text: ANTHROPIC_BODY });
+  const err = await rejection(
+    chat(runner, { model: 'claude-sonnet-4-5', prompt: 'hi', extra: { n: 3 } }),
+  );
+  assert.equal(err.name, 'nRouterConfigurationError');
+  assert.equal(isRetryable(err), false, 'a permanent request defect must not be retried');
+  assert.equal(runner.seen.path, undefined, 'the refusal must precede the billed call');
+});
+
+test('an Anthropic answer is translated, so chatText is not the EMPTY BOX', async () => {
+  const runner = fakeRunner({
+    text: ANTHROPIC_BODY,
+    headers: { 'x-nr-request-id': 'nrouter-anthropic' },
+  });
+  const res = await chat(runner, { model: 'claude-sonnet-4-5', prompt: 'hi' });
+
+  assert.equal(chatText(res), 'hello from claude');
+  assert.equal((res.body as any).object, 'chat.completion');
+  assert.equal((res.body as any).choices[0].message.role, 'assistant');
+  assert.equal((res.body as any).choices[0].finish_reason, 'stop');
+  assert.equal(res.meta.requestId, 'nrouter-anthropic', 'metadata survives translation');
+});
+
+test('usage is summed from the counts Anthropic reported, and never invented', () => {
+  const translated: any = toOpenAIChatCompletion(JSON.parse(ANTHROPIC_BODY));
+  // input + cache_read are both prompt tokens the customer paid for.
+  assert.equal(translated.usage.prompt_tokens, 15);
+  assert.equal(translated.usage.completion_tokens, 3);
+  assert.equal(translated.usage.total_tokens, 18);
+
+  // Nothing countable → NO usage key at all. A zero-filled block reads as a
+  // free request, which no enabled model is (Rule #28, gateway gate 3).
+  //
+  // BOTH shapes, because they fail at different guards and an earlier version
+  // of this case only exercised the first: a usage block that is ABSENT, and
+  // one that is PRESENT but holds no number we can read. The second is the one
+  // that matters — the provider answered, we could not parse its counts, and
+  // that is precisely when a confident `0` gets written.
+  for (const doc of [
+    { type: 'message', content: [{ type: 'text', text: 'x' }] },
+    { type: 'message', content: [{ type: 'text', text: 'x' }], usage: {} },
+    {
+      type: 'message',
+      content: [{ type: 'text', text: 'x' }],
+      usage: { input_tokens: null, output_tokens: 'many' },
+    },
+  ]) {
+    const translated: any = toOpenAIChatCompletion(doc);
+    assert.equal('usage' in translated, false, `${JSON.stringify(doc)} must carry no usage`);
+    assert.notEqual(translated.usage, 0);
+  }
+
+  // A count of literally zero output tokens IS countable and must survive —
+  // omitting it would be the mirror defect, hiding a real measurement.
+  const zeroOutput: any = toOpenAIChatCompletion({
+    type: 'message',
+    content: [],
+    usage: { input_tokens: 7, output_tokens: 0 },
+  });
+  assert.equal(zeroOutput.usage.completion_tokens, 0);
+  assert.equal(zeroOutput.usage.prompt_tokens, 7);
+});
+
+test('stop_reason max_tokens becomes finish_reason length, not a silent stop', () => {
+  const truncated: any = toOpenAIChatCompletion({
+    type: 'message',
+    content: [{ type: 'text', text: 'half an ans' }],
+    stop_reason: 'max_tokens',
+  });
+  // `length` is the only thing that distinguishes a truncated answer from a
+  // short one; reporting `stop` hides a cut-off reply the caller paid for.
+  assert.equal(truncated.choices[0].finish_reason, 'length');
+});
+
+test('an OpenAI-shaped document passes through the translator untouched', () => {
+  const openai = { id: 'chatcmpl-1', choices: [{ message: { content: 'hi' } }] };
+  assert.equal(toOpenAIChatCompletion(openai), openai);
+});
+
+test('tools are translated, never dropped into a normal-looking answer', async () => {
+  const runner = fakeRunner({
+    text: JSON.stringify({
+      type: 'message',
+      content: [
+        { type: 'tool_use', id: 'toolu_1', name: 'get_weather', input: { city: 'Paris' } },
+      ],
+      stop_reason: 'tool_use',
+    }),
+  });
+  const res = await chat(runner, {
+    model: 'claude-sonnet-4-5',
+    prompt: 'weather?',
+    extra: {
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'get_weather',
+            description: 'look it up',
+            parameters: { type: 'object', properties: { city: { type: 'string' } } },
+          },
+        },
+      ],
+      tool_choice: 'required',
+    },
+  });
+
+  const sent = runner.seen.body as any;
+  assert.equal(sent.tools[0].name, 'get_weather');
+  assert.deepEqual(sent.tools[0].input_schema.properties, { city: { type: 'string' } });
+  assert.deepEqual(sent.tool_choice, { type: 'any' });
+  assert.equal(sent.functions, undefined);
+
+  const call = (res.body as any).choices[0].message.tool_calls[0];
+  assert.equal(call.function.name, 'get_weather');
+  assert.equal(call.function.arguments, '{"city":"Paris"}');
+  assert.equal((res.body as any).choices[0].message.content, null);
+  assert.equal((res.body as any).choices[0].finish_reason, 'tool_calls');
+});
+
+test('an OpenAI tool result replays as an Anthropic tool_result turn', () => {
+  const { body } = toAnthropicMessagesRequest({
+    model: 'claude-sonnet-4-5',
+    messages: [
+      { role: 'user', content: 'weather?' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'toolu_1', type: 'function', function: { name: 'w', arguments: '{"c":"P"}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'toolu_1', content: '18C' },
+    ],
+  }) as any;
+
+  // Anthropic has no `tool` role; a dropped result makes the model answer as
+  // if the tool never ran.
+  assert.equal(body.messages[2].role, 'user');
+  assert.equal(body.messages[2].content[0].type, 'tool_result');
+  assert.equal(body.messages[2].content[0].tool_use_id, 'toolu_1');
+  // An empty assistant `content` contributes NO text block, so the tool_use is
+  // the first block — several providers reject a zero-length text block.
+  assert.equal(body.messages[1].content[0].type, 'tool_use');
+  assert.deepEqual(body.messages[1].content[0].input, { c: 'P' });
+});
+
+test('a data: image URI is split into an Anthropic base64 source', () => {
+  const { body } = toAnthropicMessagesRequest({
+    model: 'claude-sonnet-4-5',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is this' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+        ],
+      },
+    ],
+  }) as any;
+  // Handing the whole data URI over as a URL is a hard 400 upstream.
+  assert.deepEqual(body.messages[0].content[1], {
+    type: 'image',
+    source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+  });
 });

@@ -22,6 +22,12 @@ import {
 } from './errors';
 import { buildChatBody } from './options';
 import { buildSamplingParams } from './sampling';
+import {
+  MESSAGES_PATH,
+  refuseUnservableOnMessagesWire,
+  toAnthropicMessagesRequest,
+  usesMessagesWire,
+} from './chat';
 
 /**
  * The gateway's OpenAI-shaped streaming endpoint, relative to the base URL.
@@ -31,6 +37,27 @@ import { buildSamplingParams } from './sampling';
  * NOT be repeated here — `/api/v1/*` and `/v1/v1/*` both 404 at the gateway.
  */
 const CHAT_COMPLETIONS_PATH = '/chat/completions';
+
+/**
+ * The streamed-usage opt-in, sent on the OpenAI wire and only there.
+ *
+ * WHY IT IS SENT AT ALL. A streamed response carries no token counts unless the
+ * provider is asked for a final usage chunk. The gateway injects this itself
+ * for credit settlement, and the hosted playground still sends it anyway
+ * (`nrouter-app/src/hooks/api/use-chat-completions.ts:188-191`) with the reason
+ * written down: a client that DEPENDS on that injection shows `-` for every
+ * token count the day a rebuilt payload drops the usage chunk — a
+ * reconciliation gap on a money surface, from the caller's side of it. This SDK
+ * sent it nowhere, so every streaming caller silently got no counts. It is
+ * idempotent and OpenAI-canonical, so asking costs nothing.
+ *
+ * WHY IT MUST NOT REACH ANTHROPIC. That wire streams usage unconditionally on
+ * `message_start` / `message_delta` and REJECTS the key outright:
+ * "stream_options: Extra inputs are not permitted" is a live 400 the app
+ * recorded. The translator drops it with the rest of OPENAI_ONLY_FIELDS; it is
+ * never added on that branch in the first place.
+ */
+const STREAM_USAGE_OPT_IN = { include_usage: true } as const;
 
 /**
  * How much of an error body is carried into a thrown message.
@@ -86,7 +113,15 @@ export interface StreamChunk {
    * you want is text.
    */
   delta: string;
-  /** The frame's decoded JSON, untouched. */
+  /**
+   * The frame's decoded JSON, untouched — INCLUDING its native wire shape.
+   *
+   * On a Claude or Bedrock model these are Anthropic frames
+   * (`content_block_delta`, `message_delta`), not OpenAI chunks, because this
+   * SDK translates the REQUEST and reads the text out of either shape but does
+   * not rewrite the frames. `delta` is therefore the portable field; read
+   * `raw.choices[0]` only when you know you are on the OpenAI wire.
+   */
   raw: Record<string, unknown>;
 }
 
@@ -185,12 +220,37 @@ export async function streamChat(
   // `stream` is set here, not by the caller: this function's entire contract is
   // that the response is an event stream, and a body that says otherwise would
   // hand the SSE parser a single JSON document to mis-parse.
-  const requestBody: Record<string, unknown> = {
+  const openaiBody: Record<string, unknown> = {
     ...buildChatBody(opts, sampling),
     stream: true,
   };
 
-  const response = await runner.open(CHAT_COMPLETIONS_PATH, requestBody, signal);
+  // THE WIRE. Anthropic and Bedrock declare `chat_completions: None` in the
+  // gateway, so a Claude id sent to the path below is a 404 UnknownModel, not
+  // an answer — see ./chat for the measurement and the translator. Choosing the
+  // path without translating the body is the failure that produced the app's
+  // empty box, so the two happen together or not at all.
+  const messagesWire = usesMessagesWire(opts.model, opts.modelProvider);
+  let path: string;
+  let requestBody: Record<string, unknown>;
+
+  if (messagesWire) {
+    // Refused BEFORE the socket opens — the one place it costs nothing.
+    refuseUnservableOnMessagesWire(openaiBody);
+    path = MESSAGES_PATH;
+    requestBody = toAnthropicMessagesRequest(openaiBody).body;
+  } else {
+    path = CHAT_COMPLETIONS_PATH;
+    requestBody = openaiBody;
+    // Only when the caller did not set one. `extra` is this SDK's escape hatch
+    // to a field it does not model, and stamping a default over a caller's
+    // explicit value would make the hatch a lie.
+    if (requestBody['stream_options'] === undefined) {
+      requestBody['stream_options'] = { ...STREAM_USAGE_OPT_IN };
+    }
+  }
+
+  const response = await runner.open(path, requestBody, signal);
 
   // Read the headers ONCE, here, before anything consumes the body. A runner
   // may back its header bag with a live response object, and metadata that is
@@ -391,8 +451,8 @@ function interpret(
 ): FrameOutcome {
   const data = frame.data.trim();
 
-  // The terminator. It is not JSON and it is not a chunk; parsing it would
-  // count as a malformed frame and hide real ones.
+  // The OpenAI terminator. It is not JSON and it is not a chunk; parsing it
+  // would count as a malformed frame and hide real ones.
   if (data === '' || data === '[DONE]') {
     return data === '[DONE]' ? { kind: 'done' } : { kind: 'skip' };
   }
@@ -441,6 +501,18 @@ function interpret(
       kind: 'error',
       error: errorFromValue(raw, data, status, meta),
     };
+  }
+
+  // THE ANTHROPIC TERMINATOR. `/v1/messages` has no `[DONE]` sentinel — its
+  // stream ends on `message_stop`. Checked AFTER the error branch above, so a
+  // guardrail cut arriving ahead of it is never skipped past.
+  //
+  // Without this the truncation refusal below fires on every COMPLETE Claude
+  // stream: the reader falls off the end of a whole answer, reports it
+  // truncated and marks it retryable, so a caller's retry loop re-sends — and
+  // re-pays for — a request that already succeeded (gateway §4f gate 8).
+  if (raw.type === 'message_stop') {
+    return { kind: 'done' };
   }
 
   return { kind: 'chunk', chunk: { delta: extractDelta(raw), raw } };

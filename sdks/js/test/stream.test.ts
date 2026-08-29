@@ -500,3 +500,121 @@ test('isAbortError knows every name a runtime gives a cancellation', () => {
   other.name = 'TypeError';
   assert.equal(isAbortError(other), false, 'must not swallow a real failure');
 });
+
+// ---------------------------------------------------------------------------
+// THE ANTHROPIC WIRE, STREAMED — and the missing usage opt-in.
+//
+// Two defects, both measured, both silent:
+//
+//  1. `streamChat` hardcoded `/chat/completions`. The gateway declares
+//     `chat_completions: None` for Anthropic and Bedrock, so `nr.stream()`
+//     404'd on every Claude id in a package whose own keywords advertise them.
+//
+//  2. Anthropic's Messages stream has NO `data: [DONE]` sentinel — it ends on
+//     `event: message_stop`. Reaching the end of the body without `[DONE]` is
+//     this module's truncation refusal, so even once the path was right every
+//     COMPLETE Claude stream would end by throwing "the answer is truncated"
+//     over an answer that was whole.
+//
+//  3. (P1) The playground sends `stream_options: {include_usage: true}` on
+//     every OpenAI stream and writes down why: the gateway injects it for
+//     credit settlement, but a client that depends on that injection shows `-`
+//     for every token count the day a rebuilt payload drops the usage chunk.
+//     This SDK sent it nowhere. It must NOT go to Anthropic, which rejects the
+//     key outright — "stream_options: Extra inputs are not permitted" is a
+//     live 400 the app recorded.
+// ---------------------------------------------------------------------------
+
+/** The Anthropic Messages SSE sequence for a complete two-token answer. */
+const ANTHROPIC_STREAM = [
+  'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":9}}}\n\n',
+  'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}\n\n',
+  'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}}\n\n',
+  'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n',
+  'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+];
+
+test('a streamed Claude request opens /messages with a translated body', async () => {
+  const runner = chunkRunner(ANTHROPIC_STREAM);
+  const result = await streamChat(runner, {
+    model: 'claude-sonnet-4-5',
+    systemPrompt: 'be brief',
+    prompt: 'hi',
+  });
+  await result.text();
+
+  assert.equal(runner.seen.path, '/messages');
+  const body = runner.seen.body as any;
+  assert.equal(body.stream, true);
+  assert.equal(body.system, 'be brief', 'system must leave `messages`');
+  assert.equal(body.max_tokens, 1024, 'Anthropic requires max_tokens');
+  assert.equal(
+    body.stream_options,
+    undefined,
+    'Anthropic 400s on stream_options: "Extra inputs are not permitted"',
+  );
+});
+
+test('message_stop ends a Claude stream WITHOUT the truncation refusal', async () => {
+  const runner = chunkRunner(ANTHROPIC_STREAM);
+  const result = await streamChat(runner, { model: 'claude-sonnet-4-5', prompt: 'hi' });
+  // The empty-box case: tokens billed, nothing rendered.
+  assert.equal(await result.text(), 'Hello');
+});
+
+test('a Claude stream cut before message_stop is still reported as truncated', async () => {
+  // The refusal must narrow to Anthropic's real terminator, not disappear:
+  // a dropped upstream still hands back a partial answer that reads as whole.
+  const runner = chunkRunner(ANTHROPIC_STREAM.slice(0, 3));
+  const result = await streamChat(runner, { model: 'claude-sonnet-4-5', prompt: 'hi' });
+  const err = await rejection(result.text());
+  assert.ok(err instanceof nRouterError);
+  assert.match(err.message, /truncated/);
+  assert.equal(isRetryable(err), true);
+});
+
+test('an OpenAI stream asks for the usage chunk it would otherwise never get', async () => {
+  const runner = chunkRunner([frame('hi'), 'data: [DONE]\n\n']);
+  const result = await streamChat(runner, { model: 'gpt-4o-mini', prompt: 'hi' });
+  await result.text();
+
+  assert.equal(runner.seen.path, '/chat/completions');
+  assert.deepEqual((runner.seen.body as any).stream_options, { include_usage: true });
+});
+
+test('a caller-supplied stream_options is never overwritten', async () => {
+  // `extra` is the escape hatch for a gateway or provider field this SDK does
+  // not model. Stamping our default over it would make the hatch a lie.
+  const runner = chunkRunner([frame('hi'), 'data: [DONE]\n\n']);
+  const result = await streamChat(runner, {
+    model: 'gpt-4o-mini',
+    prompt: 'hi',
+    extra: { stream_options: { include_usage: false } },
+  });
+  await result.text();
+  assert.deepEqual((runner.seen.body as any).stream_options, { include_usage: false });
+});
+
+test('n > 1 on a streamed Claude request is refused before the socket opens', async () => {
+  const runner = chunkRunner(ANTHROPIC_STREAM);
+  const err = await rejection(
+    streamChat(runner, { model: 'claude-sonnet-4-5', prompt: 'hi', extra: { n: 3 } }),
+  );
+  assert.equal(err.name, 'nRouterConfigurationError');
+  assert.equal(isRetryable(err), false);
+  assert.equal(runner.seen.path, undefined, 'the refusal must precede the billed call');
+});
+
+test('an in-band Anthropic error frame still cuts the stream', async () => {
+  // `message_stop` must not be read so eagerly that the guardrail cut ahead of
+  // it is skipped — that frame is the only signal the answer was withheld.
+  const runner = chunkRunner([
+    ANTHROPIC_STREAM[0],
+    ANTHROPIC_STREAM[1],
+    'event: error\ndata: {"type":"error","error":{"type":"guardrail_blocked","message":"withheld"}}\n\n',
+    ANTHROPIC_STREAM[4],
+  ]);
+  const result = await streamChat(runner, { model: 'claude-sonnet-4-5', prompt: 'hi' });
+  const err = await rejection(result.text());
+  assert.equal(err.name, 'nRouterGuardrailBlockedError');
+});

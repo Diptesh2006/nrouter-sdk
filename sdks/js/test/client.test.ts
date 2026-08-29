@@ -752,3 +752,56 @@ test('an empty header array removes nothing and shields nothing', async () => {
     else process.env.OPENAI_CUSTOM_HEADERS = saved;
   }
 });
+
+// `fetchOptions` is spread onto the request AFTER the headers this SDK builds,
+// so `fetchOptions.headers` overwrote them wholesale — Authorization included.
+// Same credential disclosure and wrong-tenant billing as the env channel,
+// reached by a different door. Other transport settings there are kept.
+test('fetchOptions.headers cannot override the pinned Authorization', async () => {
+  let seen: Record<string, string> = {};
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetchOptions: {
+      headers: { Authorization: 'Bearer sk-openai-LEAKED', 'X-Sneak': 'LEAKED' },
+      keepalive: true,
+    } as never,
+    fetch: async (_url: unknown, init: any) => {
+      seen = Object.fromEntries(new Headers(init.headers).entries());
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+  assert.equal(seen.authorization, `Bearer ${TEST_KEY}`, 'fetchOptions must not re-key the request');
+  assert.doesNotMatch(JSON.stringify(seen), /LEAKED/);
+});
+
+// A RECORD property is a setter; a tuple entry is a list item. `{ 'X-Tag': 'a',
+// 'x-tag': 'b' }` is the same header written twice and ends as `b`, while
+// `[['X-Tag','a'],['x-tag','b']]` is two values and keeps both.
+test('record header properties overwrite, tuple entries accumulate', async () => {
+  const send = async (defaultHeaders: unknown) => {
+    let seen: Record<string, string> = {};
+    const client = new nRouter({
+      apiKey: TEST_KEY,
+      maxRetries: 0,
+      defaultHeaders: defaultHeaders as never,
+      fetch: async (_url: unknown, init: any) => {
+        seen = Object.fromEntries(new Headers(init.headers).entries());
+        return new Response(JSON.stringify({ choices: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+    return seen;
+  };
+  assert.equal((await send({ 'X-Tag': 'a', 'x-tag': 'b' }))['x-tag'], 'b', 'record properties are setters');
+  const tupled = (await send([['X-Tag', 'a'], ['x-tag', 'b']]))['x-tag'] ?? '';
+  assert.match(tupled, /a/, 'tuple entries are a list');
+  assert.match(tupled, /b/);
+});

@@ -34,7 +34,10 @@ to correct a release, only appended to.
   `withOptions({ apiKey })` is covered by the same path — it re-enters the
   constructor with the vendor's branded header bag, and an earlier spread-based
   fix left the OLD key on the wire, billing the wrong tenant on a call the
-  caller believed re-keyed.
+  caller believed re-keyed. `fetchOptions.headers` is dropped for the same
+  reason — it is spread onto the request AFTER these headers and overwrote them
+  wholesale; every other transport setting there is kept, and headers have a
+  supported home in `defaultHeaders`.
 - **`httpAgent` is gone.** openai 7 removed it in favour of `fetchOptions`. If
   you passed an agent for a proxy or custom TLS, move it there — a `dispatcher`
   under `fetchOptions` is the undici equivalent. This SDK's docs promised

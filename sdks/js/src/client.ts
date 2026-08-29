@@ -120,7 +120,7 @@ function nrouterHeaders(
   const slots = new Map<string, { name: string; value: string[] | null }>();
   // Explicit caller names, lowercased, for the environment strip below.
   const fromCaller = new Set<string>();
-  const add = (k: string, v: unknown) => {
+  const add = (k: string, v: unknown, mode: 'set' | 'append' = 'append') => {
     // `undefined` CONTRIBUTES NOTHING, and must not register the name as
     // caller-set: doing so made `defaultHeaders: { 'api-key': undefined }`
     // suppress the environment strip below, so an OPENAI_CUSTOM_HEADERS
@@ -137,6 +137,12 @@ function nrouterHeaders(
     fromCaller.add(key);
     const slot = slots.get(key) ?? { name: k, value: null };
     slots.set(key, slot);
+    // A RECORD property is a setter — `{ 'X-Tag': 'a', 'x-tag': 'b' }` ends as
+    // `b`, because the two are the same header written twice. Tuple entries
+    // are different: `[['X-Tag','a'],['x-tag','b']]` is a LIST, and both
+    // values belong on the wire. Same names, different containers, different
+    // meaning.
+    if (mode === 'set') slot.value = null;
     // SEQUENTIAL, matching the vendor's own builder: entries are applied in
     // order, so `null` clears what came before and a value AFTER a null
     // restores the header. Short-circuiting on "an array contains a null"
@@ -162,7 +168,7 @@ function nrouterHeaders(
       // resurrect a header the caller had already removed.
       if (bag.nulls instanceof Set) for (const k of bag.nulls as Set<string>) add(k, null);
     } else {
-      for (const [k, v] of Object.entries(source as Record<string, unknown>)) add(k, v);
+      for (const [k, v] of Object.entries(source as Record<string, unknown>)) add(k, v, 'set');
     }
   }
 
@@ -413,8 +419,23 @@ export class nRouter extends OpenAI {
     // therefore wins; this is the one place the SDK touches the key itself,
     // and it does so to guarantee the key on the wire is the one that was
     // validated above.
+    // `fetchOptions` is spread onto the request AFTER the headers built above,
+    // so `fetchOptions.headers` overwrites them wholesale — including the
+    // Authorization this constructor just pinned. Reproduced: an
+    // `Authorization: Bearer sk-openai-…` in there arrived at `fetch`
+    // unchanged, which is the same credential-disclosure and wrong-tenant
+    // billing the header normalization exists to prevent, reached by a
+    // different door.
+    //
+    // Dropped rather than merged: every other transport setting in
+    // `fetchOptions` is kept, and headers have a supported home in
+    // `defaultHeaders`, which IS normalized.
+    const { headers: _discardedFetchHeaders, ...fetchOptions } =
+      (options.fetchOptions ?? {}) as Record<string, unknown>;
+
     super({
       ...options,
+      ...(options.fetchOptions ? { fetchOptions: fetchOptions as never } : {}),
       apiKey,
       baseURL,
       organization: null,

@@ -131,7 +131,7 @@ function resolveApiKey(apiKey?: unknown): string {
 function nrouterHeaders(
   source: unknown,
   apiKey: string,
-): Record<string, string | string[] | null> {
+): Record<string, string | null> {
   // `Object.create(null)` — NOT `{}`. This object is keyed by header names
   // that come from an environment variable, and `'toString' in {}` is true, so
   // a plain object would report inherited members as already-present. See the
@@ -202,9 +202,9 @@ function nrouterHeaders(
   // api.nrouter.ai. Gateway rules §4f gate 9: no provider credential in a
   // customer-visible header. A header the CALLER set explicitly is kept; only
   // the environment's contribution is removed.
-  const out = Object.create(null) as Record<string, string | string[] | null>;
+  const out = Object.create(null) as Record<string, string | null>;
   for (const { name, value } of slots.values()) {
-    out[name] = value === null ? null : value.length === 1 ? value[0]! : value;
+    out[name] = value === null ? null : value.join(', ');
   }
   const envHeaders = envValue('OPENAI_CUSTOM_HEADERS');
   if (envHeaders) {
@@ -223,6 +223,33 @@ function nrouterHeaders(
   // LAST, and unconditional: the key on the wire is the one resolveApiKey
   // validated, whatever the environment or the caller put in first.
   out['Authorization'] = `Bearer ${apiKey}`;
+  return out;
+}
+
+function mergeHeaders(left: unknown, right: unknown): Record<string, string | null> {
+  const out = Object.create(null) as Record<string, string | null>;
+  const add = (k: string, v: unknown) => {
+    if (v === undefined) return;
+    if (v === null) {
+      out[k] = null;
+      return;
+    }
+    out[k] = Array.isArray(v)
+      ? v.filter((x) => x !== undefined && x !== null).map(String).join(', ')
+      : String(v);
+  };
+  const copy = (source: unknown) => {
+    if (!source) return;
+    if (source instanceof Headers) {
+      source.forEach((v, k) => add(k, v));
+    } else if (Array.isArray(source)) {
+      for (const pair of source as unknown[][]) add(String(pair[0]), pair[1]);
+    } else if (typeof source === 'object') {
+      for (const [k, v] of Object.entries(source as Record<string, unknown>)) add(k, v);
+    }
+  };
+  copy(left);
+  copy(right);
   return out;
 }
 
@@ -257,10 +284,7 @@ type NRouterOptions = Omit<
    * pins, so it would overwrite the Authorization. Set headers through
    * `defaultHeaders`, which is normalized.
    */
-  fetchOptions?: Omit<
-    NonNullable<NonNullable<ConstructorParameters<typeof OpenAI>[0]>['fetchOptions']>,
-    'headers'
-  >;
+  fetchOptions?: Omit<RequestInit, 'headers'>;
 };
 
 /** The caller's own `fetch`, kept on our wrapper so a nested construction can
@@ -350,6 +374,7 @@ export class nRouter extends OpenAI {
   readonly nrouter_models: NRouterModels;
   /** Everything the playground can do. */
   readonly nr: NRouterSurface;
+  private readonly nrouterOptions: NRouterOptions;
 
   /**
    * Node renders a plain object's fields on `console.log`, and the VENDOR base
@@ -390,7 +415,7 @@ export class nRouter extends OpenAI {
    * The vendor ERROR TYPE is preserved — callers catching `OpenAI.APIError`
    * around an inherited resource keep working. Only the text changes.
    */
-  protected override makeStatusError(
+  protected makeStatusError(
     ...args: Parameters<OpenAI['makeStatusError']>
   ): ReturnType<OpenAI['makeStatusError']> {
     // Positional and type-derived from the base signature rather than
@@ -435,18 +460,28 @@ export class nRouter extends OpenAI {
    * this class's constructor and throws. A type that is narrow in one entry
    * point and wide in the other is not narrowed.
    */
-  override withOptions(options: Partial<NRouterOptions>): this {
+  withOptions(options: Partial<NRouterOptions>): this {
     // SEED FROM THE LIVE KEY. The vendor clones from `_options.apiKey`, which
     // is the constructor-time value and which the `apiKey` setter never
     // updates — so after a rotation every clone silently reverted to the
     // ORIGINAL key and billed the original tenant. An explicit `apiKey` in
     // `options` still wins, because it comes second.
-    const seeded = { apiKey: this.apiKey as string, ...options };
-    return super.withOptions(
-      // Same NonNullable reason as NRouterOptions: the vendor parameter is
-      // optional, so `Partial<...>` over it carries `undefined`.
-      seeded as Partial<NonNullable<ConstructorParameters<typeof OpenAI>[0]>>,
-    ) as this;
+    return new (this.constructor as new (opts: NRouterOptions) => this)({
+      ...this.nrouterOptions,
+      apiKey: this.apiKey,
+      ...options,
+    });
+  }
+
+  protected async prepareOptions(options: Record<string, unknown>): Promise<void> {
+    const fetchOptions = options.fetchOptions as { headers?: unknown } | undefined;
+    if (fetchOptions?.headers) {
+      options.headers = mergeHeaders(options.headers, fetchOptions.headers);
+      delete fetchOptions.headers;
+    }
+    await (OpenAI.prototype as unknown as {
+      prepareOptions?: (options: Record<string, unknown>) => Promise<void>;
+    }).prepareOptions?.call(this, options);
   }
 
   constructor(options: NRouterOptions = {}) {
@@ -547,9 +582,9 @@ export class nRouter extends OpenAI {
       baseURL,
       organization: null,
       project: null,
-      adminAPIKey: null,
       defaultHeaders: nrouterHeaders(options.defaultHeaders, apiKey),
     });
+    this.nrouterOptions = { ...options, fetch: callerFetch };
 
     // After `super()`, so the wrapper above can see the live field.
     self.client = this as unknown as { apiKey?: unknown };

@@ -959,3 +959,22 @@ test('clearing apiKey refuses instead of falling back to NROUTER_API_KEY', async
     else process.env.NROUTER_API_KEY = saved;
   }
 });
+
+// `delete client.apiKey` removed the public credential; a fallback to the
+// constructor-captured key left the client authenticated and BILLABLE anyway.
+// The descriptor is non-configurable so the delete cannot land, and the fetch
+// path fails closed if it ever did.
+test('the api key cannot be deleted out from under the guard', async () => {
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async () =>
+      new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+  });
+  // Non-configurable: in sloppy mode this returns false rather than throwing.
+  assert.equal(Reflect.deleteProperty(client as object, 'apiKey'), false);
+  assert.equal((client as unknown as { apiKey: string }).apiKey, TEST_KEY, 'the key survives the attempt');
+});

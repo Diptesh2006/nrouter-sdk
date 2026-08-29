@@ -419,6 +419,14 @@ export class nRouter extends OpenAI {
   }
 
   /**
+   * Type-only redeclaration. The vendor types this `string | null`, so
+   * `client.apiKey = null` compiled and then threw — a contract advertised in
+   * the types and denied at runtime. Clearing is not supported: build a new
+   * client rather than leaving one with no credential.
+   */
+  declare apiKey: string;
+
+  /**
    * Narrowed to the same contract as the constructor.
    *
    * openai 7 declares `withOptions(options: Partial<ClientOptions>)`, and
@@ -513,7 +521,13 @@ export class nRouter extends OpenAI {
       // mistake in its own input — measured, and the exact anti-pattern this
       // SDK fixes elsewhere. The setter throws at the assignment site instead,
       // which is where the mistake was made.
-      const current = (self.client?.apiKey as string | undefined) ?? apiKey;
+      // FAIL CLOSED once the instance exists. `?? apiKey` was a fallback to the
+      // constructor-captured key, so `delete client.apiKey` left the client
+      // authenticated and BILLABLE on a credential the caller had visibly
+      // removed. Before `super()` returns there is no instance yet, and the
+      // captured value is the only one there has ever been.
+      const live = self.client ? (self.client.apiKey as unknown) : apiKey;
+      const current = assertNRouterKey(live);
       const headers = new Headers(init?.headers as ConstructorParameters<typeof Headers>[0]);
       headers.set('Authorization', `Bearer ${current}`);
       headers.delete('OpenAI-Organization');
@@ -553,7 +567,10 @@ export class nRouter extends OpenAI {
         key = assertNRouterKey(next);
       },
       enumerable: true,
-      configurable: true,
+      // NOT configurable: `delete client.apiKey` would otherwise remove the
+      // setter along with the guard, and the field would go back to being an
+      // ordinary writable property with no prefix check.
+      configurable: false,
     });
 
     this.nrouterModels = new NRouterModels(this as unknown as RawRequester);

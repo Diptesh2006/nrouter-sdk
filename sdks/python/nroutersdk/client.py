@@ -20,8 +20,10 @@ from nroutersdk._errors import (
     nRouterRequestError,
     nRouterServiceError,
 )
+from nroutersdk._options import build_extra_body, vet_extra
 from nroutersdk._response import nRouterResponseMeta
 from nroutersdk._unsupported import UNSUPPORTED
+from nroutersdk.sampling import build_sampling_params
 
 _DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 _ENV_KEY = "NROUTER_API_KEY"
@@ -365,6 +367,12 @@ class _nRouterChat:
         *,
         prompt_template_id: Optional[str] = None,
         prompt_variables: Optional[Dict[str, str]] = None,
+        guardrail_ids: Optional[List[str]] = None,
+        cache: Optional[bool] = None,
+        advanced_sampling: bool = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        model_provider: Optional[str] = None,
         stream: bool = False,
         **kwargs,
     ):
@@ -375,6 +383,9 @@ class _nRouterChat:
             model: Model name.
             prompt_template_id: Override org default prompt template.
             prompt_variables: Jinja2 variables for the template.
+            guardrail_ids: Not supported per request; non-empty values raise.
+            cache: Set false to force provider egress.
+            advanced_sampling: When true, send validated temperature/top_p.
             stream: Stream the response.
             **kwargs: All OpenAI chat.completions.create() params.
 
@@ -383,11 +394,25 @@ class _nRouterChat:
             cost, cost status, model, token counts, and request ID.
         """
         extra_body: Dict[str, Any] = kwargs.pop("extra_body", {}) or {}
+        vet_extra(extra_body)
 
-        if prompt_template_id:
-            extra_body["nrouter_prompt_template_id"] = prompt_template_id
-        if prompt_variables:
-            extra_body["nrouter_prompt_variables"] = prompt_variables
+        extra_body.update(
+            build_extra_body(
+                prompt_template_id=prompt_template_id,
+                prompt_variables=prompt_variables,
+                guardrail_ids=guardrail_ids,
+                cache=cache,
+            )
+        )
+        kwargs.update(
+            build_sampling_params(
+                advanced=advanced_sampling,
+                model=model,
+                provider=model_provider,
+                temperature=temperature,
+                top_p=top_p,
+            )
+        )
 
         return self._c.chat.completions.create(
             model=model,

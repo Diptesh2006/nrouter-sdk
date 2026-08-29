@@ -53,7 +53,11 @@
 
 pub mod errors;
 pub mod http;
+pub mod memory;
 pub mod meta;
+pub mod options;
+pub mod prompts;
+pub mod sampling;
 
 pub use errors::{ErrorBody, NRouterError};
 pub use meta::{ResponseMeta, HEADER_NAMES};

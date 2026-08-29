@@ -499,7 +499,16 @@ class PackagingContractTests(unittest.TestCase):
     a build caught it. These assertions are the parse."""
 
     def _pyproject(self) -> dict:
-        import tomllib
+        # `tomllib` is 3.11+, and pyproject declares a 3.10 floor that CI pins
+        # — so a bare `import tomllib` makes this whole file raise
+        # ModuleNotFoundError on the interpreter the project claims to support,
+        # before a single assertion runs. `tomli` is the same parser under its
+        # old name; publish-pypi.yml already installs it for the same reason in
+        # its version check.
+        try:
+            import tomllib  # type: ignore[import-not-found]
+        except ModuleNotFoundError:  # Python 3.10
+            import tomli as tomllib  # type: ignore[no-redef]
 
         path = SDK_ROOT / "sdks" / "python" / "pyproject.toml"
         with path.open("rb") as fh:

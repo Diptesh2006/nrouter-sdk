@@ -32,6 +32,11 @@ on:
       - 'spec/**'
       - 'conformance/**'
       - 'tests/**'
+      # The catalog guard `git grep`s every tracked file and asserts README.md
+      # names the live-catalogue URL, so a README-only change must run it —
+      # otherwise a hardcoded model count (Rule #28) lands unchecked.
+      - 'README.md'
+      - '*.md'
       - '.github/workflows/publish-npm.yml'
   # ⚠️ DELIBERATE EXCEPTION to the workspace's local-first CI policy
   # (`gh-workflow` skill: "Never add per-commit or per-PR hosted CI ... without
@@ -57,6 +62,11 @@ on:
       - 'spec/**'
       - 'conformance/**'
       - 'tests/**'
+      # The catalog guard `git grep`s every tracked file and asserts README.md
+      # names the live-catalogue URL, so a README-only change must run it —
+      # otherwise a hardcoded model count (Rule #28) lands unchecked.
+      - 'README.md'
+      - '*.md'
       - '.github/workflows/publish-npm.yml'
   workflow_dispatch:
 

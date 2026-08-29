@@ -26,6 +26,11 @@ on:
       # below READ them: test_sdk_contract.py walks examples/**/*.sh, and a
       # change to the gate itself must re-run the gate.
       - 'tests/**'
+      # The catalog guard `git grep`s every tracked file and asserts README.md
+      # names the live-catalogue URL, so a README-only change must run it —
+      # otherwise a hardcoded model count (Rule #28) lands unchecked.
+      - 'README.md'
+      - '*.md'
       - 'examples/**'
       - '.github/workflows/publish-pypi.yml'
   # A pull request runs the tests and the conformance gate and PUBLISHES
@@ -40,6 +45,11 @@ on:
       # below READ them: test_sdk_contract.py walks examples/**/*.sh, and a
       # change to the gate itself must re-run the gate.
       - 'tests/**'
+      # The catalog guard `git grep`s every tracked file and asserts README.md
+      # names the live-catalogue URL, so a README-only change must run it —
+      # otherwise a hardcoded model count (Rule #28) lands unchecked.
+      - 'README.md'
+      - '*.md'
       - 'examples/**'
       - '.github/workflows/publish-pypi.yml'
   workflow_dispatch:

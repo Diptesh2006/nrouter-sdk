@@ -228,7 +228,21 @@ type NRouterOptions = Omit<
   | 'project'
 > & {
   apiKey?: string;
+  /**
+   * `headers` is omitted deliberately. The constructor discards it — the
+   * vendor spreads `fetchOptions` onto the request after the headers this SDK
+   * pins, so it would overwrite the Authorization. Set headers through
+   * `defaultHeaders`, which is normalized.
+   */
+  fetchOptions?: Omit<
+    NonNullable<NonNullable<ConstructorParameters<typeof OpenAI>[0]>['fetchOptions']>,
+    'headers'
+  >;
 };
+
+/** The caller's own `fetch`, kept on our wrapper so a nested construction can
+ * unwrap instead of stacking another closure over a stale key. */
+const UNWRAPPED_FETCH = Symbol('nrouter.unwrappedFetch');
 
 /** Where the untouched parsed error body is kept. Symbol-keyed and
  * non-enumerable so it can never surface in a log or a JSON.stringify. */
@@ -433,9 +447,43 @@ export class nRouter extends OpenAI {
     const { headers: _discardedFetchHeaders, ...fetchOptions } =
       (options.fetchOptions ?? {}) as Record<string, unknown>;
 
+    // THE LAST SEAM, and the only one that covers every path. Everything above
+    // sanitizes what this constructor is given; none of it reaches openai 7's
+    // PER-REQUEST `fetchOptions`, which an inherited resource accepts as a
+    // second argument (`client.chat.completions.create(body, { fetchOptions })`)
+    // and which the vendor spreads onto the request LAST. An `Authorization`
+    // there would reach api.nrouter.ai ahead of the validated key.
+    //
+    // Pinning it here instead of chasing each entry point means no future
+    // vendor option can open a third door: whatever assembles the request,
+    // these three headers are set on the way out.
+    // UNWRAP FIRST. `withOptions({ apiKey })` re-enters this constructor with
+    // the PREVIOUS instance's options, whose `fetch` is already a wrapper
+    // closed over the OLD key. Stacking a new wrapper outside it leaves the
+    // old one running last, so the re-keyed call went out on the original key
+    // — authenticating and billing the wrong tenant, which is exactly what
+    // the withOptions test exists to catch.
+    const priorInner = (options.fetch as { [UNWRAPPED_FETCH]?: typeof fetch } | undefined)?.[
+      UNWRAPPED_FETCH
+    ];
+    const callerFetch =
+      priorInner ?? options.fetch ?? ((globalThis as { fetch?: typeof fetch }).fetch as typeof fetch);
+    const pinnedFetch = ((url: unknown, init?: RequestInit) => {
+      const headers = new Headers(init?.headers as ConstructorParameters<typeof Headers>[0]);
+      headers.set('Authorization', `Bearer ${apiKey}`);
+      headers.delete('OpenAI-Organization');
+      headers.delete('OpenAI-Project');
+      return callerFetch(url as never, { ...(init ?? {}), headers });
+    }) as typeof fetch;
+    Object.defineProperty(pinnedFetch, UNWRAPPED_FETCH, {
+      value: callerFetch,
+      enumerable: false,
+    });
+
     super({
       ...options,
       ...(options.fetchOptions ? { fetchOptions: fetchOptions as never } : {}),
+      fetch: pinnedFetch,
       apiKey,
       baseURL,
       organization: null,

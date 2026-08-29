@@ -805,3 +805,40 @@ test('record header properties overwrite, tuple entries accumulate', async () =>
   assert.match(tupled, /a/, 'tuple entries are a list');
   assert.match(tupled, /b/);
 });
+
+// PER-REQUEST fetchOptions. openai 7 lets an inherited resource take them as a
+// second argument and spreads them onto the request LAST, so nothing the
+// constructor sanitizes can reach that path. The pinned fetch wrapper is what
+// covers it — the last seam before the request leaves.
+test('per-request fetchOptions.headers cannot re-key an inherited resource call', async () => {
+  let seen: Record<string, string> = {};
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    fetch: async (_url: unknown, init: any) => {
+      seen = Object.fromEntries(new Headers(init.headers).entries());
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  await client.chat.completions
+    .create({ model: 'm', messages: [{ role: 'user', content: 'x' }] }, {
+      fetchOptions: {
+        headers: { Authorization: 'Bearer sk-openai-LEAKED', 'X-Caller-Own': 'kept' },
+      },
+    } as never)
+    .catch(() => undefined);
+  assert.equal(
+    seen.authorization,
+    `Bearer ${TEST_KEY}`,
+    'the validated key must be the one on the wire',
+  );
+  // The caller's OWN header survives, and that is the correct line. This wrapper
+  // pins authentication and removes another service's tenancy headers; it is not
+  // a filter on what a developer deliberately sends. The leak this whole
+  // sequence is about is a credential the caller never chose — from the
+  // environment, or overriding the key they DID choose.
+  assert.equal(seen['x-caller-own'], 'kept');
+});

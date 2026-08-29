@@ -658,3 +658,32 @@ test('an undefined caller header does not shield an env credential of the same n
     else process.env.OPENAI_CUSTOM_HEADERS = saved;
   }
 });
+
+// Header names are case-insensitive and the vendor applies entries in ORDER.
+// Exact-case slots keep only the last casing, and short-circuiting on "the
+// array contains a null" deletes a header the caller had just re-set.
+test('repeated header names accumulate across casings, and a value after null restores it', async () => {
+  let seen: Record<string, string> = {};
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    maxRetries: 0,
+    defaultHeaders: [
+      ['X-Tag', 'a'],
+      ['x-tag', 'b'],
+      ['X-Restored', null],
+      ['X-Restored', 'back'],
+    ] as never,
+    fetch: async (_url: unknown, init: any) => {
+      seen = Object.fromEntries(new Headers(init.headers).entries());
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  await client.nr.chat({ model: 'm', prompt: 'x' }).catch(() => undefined);
+  assert.match(seen['x-tag'] ?? '', /a/, 'the differently-cased first value was dropped');
+  assert.match(seen['x-tag'] ?? '', /b/);
+  assert.equal(seen['x-restored'], 'back', 'a value after a null must restore the header');
+  assert.equal(seen.authorization, `Bearer ${TEST_KEY}`);
+});

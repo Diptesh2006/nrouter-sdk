@@ -99,21 +99,13 @@ function nrouterHeaders(
   // that come from an environment variable, and `'toString' in {}` is true, so
   // a plain object would report inherited members as already-present. See the
   // env loop below, where that read decides whether a header is stripped.
-  const out = Object.create(null) as Record<string, string | string[] | null>;
-  // Explicit caller names, lowercased. Header names are case-insensitive, so
-  // an environment `AUTHORIZATION` must not be treated as a different header
-  // from a caller's `Authorization` — in either direction.
+  // Keyed by LOWERCASE name. Header names are case-insensitive, so
+  // `[['X-Tag','a'],['x-tag','b']]` is two values of one header; exact-case
+  // slots would keep only the last. The first casing seen is preserved for the
+  // wire.
+  const slots = new Map<string, { name: string; value: string[] | null }>();
+  // Explicit caller names, lowercased, for the environment strip below.
   const fromCaller = new Set<string>();
-  // `null` is PRESERVED, not dropped: it is the vendor's documented way to
-  // remove a header it would otherwise generate, so
-  // `defaultHeaders: { 'User-Agent': null }` must survive normalization.
-  // Three distinct meanings, and collapsing any two of them loses information
-  // the vendor acts on:
-  //   `undefined` — OMITTED. Register the name, write nothing.
-  //   `null`      — REMOVE the header the vendor would have generated.
-  //   otherwise   — a value; REPEATED names accumulate rather than overwrite,
-  //                 because `[['X-Tag','a'],['X-Tag','b']]` is two values of
-  //                 one header, not a typo.
   const add = (k: string, v: unknown) => {
     // `undefined` CONTRIBUTES NOTHING, and must not register the name as
     // caller-set: doing so made `defaultHeaders: { 'api-key': undefined }`
@@ -121,26 +113,22 @@ function nrouterHeaders(
     // credential of the same name reached the gateway. Only a value or an
     // explicit `null` removal is an expression of intent.
     if (v === undefined) return;
-    fromCaller.add(k.toLowerCase());
-    if (v === null) {
-      out[k] = null;
-      return;
+    const key = k.toLowerCase();
+    fromCaller.add(key);
+    const slot = slots.get(key) ?? { name: k, value: null };
+    slots.set(key, slot);
+    // SEQUENTIAL, matching the vendor's own builder: entries are applied in
+    // order, so `null` clears what came before and a value AFTER a null
+    // restores the header. Short-circuiting on "an array contains a null"
+    // would delete a header the caller had just re-set.
+    for (const item of Array.isArray(v) ? v : [v]) {
+      if (item === undefined) continue;
+      if (item === null) {
+        slot.value = null;
+        continue;
+      }
+      slot.value = [...(slot.value ?? []), String(item)];
     }
-    // Inside an array the same three meanings apply per element: `undefined`
-    // is skipped, `null` removes the header outright, and `String()` on either
-    // would put the literal text "undefined" or "null" on the wire.
-    const values = Array.isArray(v) ? v : [v];
-    if (values.some((x) => x === null)) {
-      out[k] = null;
-      return;
-    }
-    const incoming = values.filter((x) => x !== undefined).map(String);
-    if (incoming.length === 0) return;
-    const existing = out[k];
-    out[k] =
-      existing === undefined || existing === null
-        ? (incoming.length === 1 ? incoming[0]! : incoming)
-        : ([] as string[]).concat(existing as string | string[], incoming);
   };
   if (source instanceof Headers) {
     source.forEach((v, k) => add(k, v));
@@ -165,6 +153,10 @@ function nrouterHeaders(
   // api.nrouter.ai. Gateway rules §4f gate 9: no provider credential in a
   // customer-visible header. A header the CALLER set explicitly is kept; only
   // the environment's contribution is removed.
+  const out = Object.create(null) as Record<string, string | string[] | null>;
+  for (const { name, value } of slots.values()) {
+    out[name] = value === null ? null : value.length === 1 ? value[0]! : value;
+  }
   const envHeaders = process.env['OPENAI_CUSTOM_HEADERS'];
   if (envHeaders) {
     for (const line of envHeaders.split('\n')) {

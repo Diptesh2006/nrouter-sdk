@@ -40,17 +40,7 @@ const withPrompt = await client.chat.completions.create({
   nrouter_prompt_variables: { language: "Spanish", max_length: "100" },
 });
 
-// ━━━ 3. OVERRIDE GUARDRAILS (run only specific ones) ━━━━━━━
-// By default, ALL org-enabled guardrails apply automatically.
-// Pass nrouter_guardrail_ids to run only a subset on this request.
-const withGuardrails = await client.chat.completions.create({
-  model: "anthropic/claude-sonnet-4-5-20250929",
-  messages: [{ role: "user", content: "Summarize Q1 earnings..." }],
-  // @ts-expect-error nRouter-specific fields
-  nrouter_guardrail_ids: ["guardrail-uuid-1", "guardrail-uuid-2"],
-});
-
-// ━━━ 4. DISABLE CACHE (per-request opt-out) ━━━━━━━━━━━━━━━━
+// ━━━ 3. DISABLE CACHE (per-request opt-out) ━━━━━━━━━━━━━━━━
 // Cache is enabled by default. Pass nrouter_cache: false for fresh responses.
 const noCacheResponse = await client.chat.completions.create({
   model: "anthropic/claude-sonnet-4-5-20250929",
@@ -59,7 +49,7 @@ const noCacheResponse = await client.chat.completions.create({
   nrouter_cache: false,
 });
 
-// ━━━ 5. READ COST + METADATA FROM RESPONSE ━━━━━━━━━━━━━━━━━
+// ━━━ 4. READ COST + METADATA FROM RESPONSE ━━━━━━━━━━━━━━━━━
 const raw = await client.chat.completions
   .create({ model: "anthropic/claude-sonnet-4-5-20250929", messages: [{ role: "user", content: "Hi" }] })
   .asResponse();
@@ -69,7 +59,7 @@ console.log(cost === null ? `Cost status: ${costStatus}` : `Cost: $${cost}`);
 console.log(`Model: ${raw.headers.get("x-nr-model")}`);
 console.log(`Total tokens: ${raw.headers.get("x-nr-total-tokens")}`);
 
-// ━━━ 6. HANDLE ERRORS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ 5. HANDLE ERRORS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 try {
   await client.chat.completions.create({
     model: "anthropic/claude-sonnet-4-5-20250929",
@@ -81,7 +71,7 @@ try {
   if (e.status === 429) console.log(`Rate limited: ${e.message}`);
 }
 
-// ━━━ 7. STREAMING + EMBEDDINGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ 6. STREAMING + EMBEDDINGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const stream = await client.chat.completions.create({
   model: "anthropic/claude-sonnet-4-5-20250929", messages: [{ role: "user", content: "Write a haiku" }], stream: true,
 });

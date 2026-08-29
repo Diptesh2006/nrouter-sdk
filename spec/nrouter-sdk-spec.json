@@ -359,11 +359,6 @@
       "type": "object",
       "description": "Jinja2 variables for the prompt template"
     },
-    "nrouter_guardrail_ids": {
-      "type": "array",
-      "items": "string",
-      "description": "Run only these guardrails (UUIDs). Omit to apply all org-enabled guardrails."
-    },
     "nrouter_cache": {
       "type": "boolean",
       "default": true,

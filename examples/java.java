@@ -44,11 +44,13 @@ public class nRouterExample {
         );
         System.out.println(response.choices().get(0).message().content());
 
+        // Guardrails are assigned per key, team or org in the dashboard and
+        // apply automatically — the narrowest assignment wins. There is no
+        // per-request override to send in the body.
+        //
         // Per-request overrides (via raw HTTP POST):
-        // By default, ALL org-enabled guardrails apply automatically.
         // The Java SDK does not support extra body fields natively — use cURL or
         // a raw HTTP POST with these fields in the JSON body:
-        //   "nrouter_guardrail_ids": ["uuid1","uuid2"]
         //   "nrouter_prompt_template_id": "your-summarizer-id"
         //   "nrouter_prompt_variables": {"language": "Spanish", "max_length": "100"}
         //   "nrouter_cache": false   // disable cache for this request

@@ -75,17 +75,9 @@ print(f"\nSummarized (Spanish): {response.content}")
 # The server injected the summarizer template as a system message,
 # set language=Spanish, max_length=100, then forwarded to the model.
 
-# Per-request guardrail selection
-# By default, ALL org-enabled guardrails apply automatically.
-# Pass nrouter_guardrail_ids to run only specific guardrails on this request.
-llm_selective_guardrails = ChatOpenAI(
-    model="anthropic/claude-sonnet-4-5-20250929",
-    api_key=NROUTER_KEY,
-    base_url=f"{NROUTER_BASE}/v1",
-    model_kwargs={
-        "nrouter_guardrail_ids": ["guardrail-uuid-1", "guardrail-uuid-2"],
-    },
-)
+# Guardrails are assigned per key, team or org in the dashboard and apply
+# automatically — the narrowest assignment wins. There is no per-request
+# override to pass here.
 
 # Disable cache for a single request
 # Cache is enabled by default. Pass nrouter_cache: False for a fresh response.

@@ -52,7 +52,6 @@ const result = await client.nr.chat({
   model: "anthropic/claude-sonnet-4-5-20250929",
   prompt: "Summarize this ticket.",
   systemPrompt: "Be concise.",
-  guardrailIds: ["<guardrail-id>"], // omit to apply all org-enabled guardrails
   promptTemplateId: "<prompt-template-id>",
   promptVariables: { customer: "Acme" },
   cache: false, // force provider egress; omit or true uses the gateway default
@@ -61,6 +60,11 @@ const result = await client.nr.chat({
 console.log(client.nr.text(result));
 console.log(result.meta.requestId, result.meta.cost, result.meta.model);
 ```
+
+Guardrails are **not** selected per request. They are assigned per key, team or
+organization in the nRouter dashboard and apply automatically to every call.
+The `guardrailIds` option is deprecated and throws a configuration error: the
+gateway runs no per-request override, so it never scoped anything.
 
 Other helpers:
 

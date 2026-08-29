@@ -489,8 +489,6 @@ class AsyncClientContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(seen), 5)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class PackagingContractTests(unittest.TestCase):
@@ -567,3 +565,85 @@ class ShellExampleContractTests(unittest.TestCase):
                     f"continuation, which silently ends the command above it",
                 )
 
+
+class ExampleBodyFieldContractTests(unittest.TestCase):
+    """`examples/` is the Rule #14 canonical copy-paste starter for every
+    language, and it is world-readable — so an `nrouter_*` field that no
+    gateway reads is not a doc typo, it is a starter that guarantees a failed
+    request in twelve languages at once.
+
+    This is the test that would have caught the real one. Measured 2026-08-28:
+    every example shipped `nrouter_guardrail_ids`, which appeared NOWHERE in
+    the gateway (0 hits against 608 `guardrail` references) and in none of the
+    three `extra_body_fields` the gateway's own OpenAPI advertises. No provider
+    transformation strips it either — they each remove only the fields the
+    gateway owns — so it reached the provider verbatim and came back as an
+    opaque upstream rejection. Guardrails are real, but they are ASSIGNED per
+    key/team/org in the dashboard and resolved by specificity; there is no
+    per-request override to send.
+
+    The pin has to run over EVERY example, not just the ones a language test
+    happens to parse: the field bypassed the JS SDK entirely (raw extra body →
+    gateway → provider), so no SDK-level assertion could see it.
+    """
+
+    # A body field always appears quoted or as a bare key introducing a value
+    # (`x:` in JS/Python/Ruby, `x =>` in PHP). Anchoring on that keeps local
+    # identifiers that merely start with `nrouter_` — `nrouter_get(path)` in
+    # ruby.rb, `nrouter_key <- ...` in hello-world/r.R — out of the result,
+    # without an allowlist that would rot.
+    FIELD_IN_VALUE_POSITION = re.compile(
+        r"""["']?(nrouter_[a-z0-9_]+)["']?\s*(?::|=>)"""
+    )
+
+    def _spec_fields(self) -> set:
+        spec = json.loads((SDK_ROOT / "spec" / "nrouter-sdk-spec.json").read_text())
+        fields = set(spec["extra_body_fields"])
+        self.assertTrue(fields, "the spec declares no extra_body_fields")
+        return fields
+
+    def test_no_example_sends_a_field_the_gateway_does_not_read(self) -> None:
+        allowed = self._spec_fields()
+        offenders = {}
+        for path in sorted((SDK_ROOT / "examples").rglob("*")):
+            if not path.is_file():
+                continue
+            found = set(
+                self.FIELD_IN_VALUE_POSITION.findall(
+                    path.read_text(encoding="utf-8", errors="ignore")
+                )
+            )
+            for field in sorted(found - allowed):
+                offenders.setdefault(field, []).append(
+                    str(path.relative_to(SDK_ROOT))
+                )
+        self.assertEqual(
+            offenders,
+            {},
+            "examples send nRouter body fields absent from "
+            "spec/nrouter-sdk-spec.json extra_body_fields; the gateway does "
+            "not read them and forwards them to the provider verbatim",
+        )
+
+    def test_the_retired_guardrail_override_is_gone_everywhere(self) -> None:
+        """Named explicitly, because a regex pin can be loosened by accident
+        and this particular field was shipped publicly in twelve languages."""
+        for path in sorted((SDK_ROOT / "examples").rglob("*")):
+            if not path.is_file():
+                continue
+            self.assertNotIn(
+                "nrouter_guardrail_ids",
+                path.read_text(encoding="utf-8", errors="ignore"),
+                f"{path.relative_to(SDK_ROOT)} still teaches a field the "
+                f"gateway does not read",
+            )
+
+
+# AT THE BOTTOM, and that is the whole point. This block used to sit at line
+# 492 with THREE test classes defined after it, so `unittest.main()` ran
+# before they existed: `python3 tests/test_sdk_contract.py` printed "OK" with
+# no "Ran N tests" line and executed none of them. CI uses `-m unittest`,
+# which imports the module first and does collect them, so the gate was live
+# in CI and silently empty for anyone verifying the obvious way.
+if __name__ == "__main__":
+    unittest.main()

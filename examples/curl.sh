@@ -48,21 +48,11 @@ curl "$BASE/v1/chat/completions" \
     "nrouter_prompt_variables": {"language": "Spanish", "max_length": "100"}
   }'
 
-# ━━━ 4b. WITH PER-REQUEST GUARDRAIL SELECTION ━━━━━━━━━━━━━━━
+# Guardrails are assigned per key, team or org in the dashboard and apply
+# automatically — the narrowest assignment wins. There is no per-request
+# override to send in the body.
 
-# By default, ALL org-enabled guardrails apply automatically.
-# Pass nrouter_guardrail_ids to run only specific guardrails on this request.
-curl "$BASE/v1/chat/completions" \
-  -H "Authorization: Bearer $NROUTER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "anthropic/claude-sonnet-4-5-20250929",
-    "messages": [{"role": "user", "content": "Summarize Q1 earnings"}],
-    "nrouter_guardrail_ids": ["guardrail-uuid-1", "guardrail-uuid-2"],
-    "nrouter_prompt_template_id": "your-template-id"
-  }'
-
-# ━━━ 4c. DISABLE CACHE (per-request opt-out) ━━━━━━━━━━━━━━━━
+# ━━━ 4b. DISABLE CACHE (per-request opt-out) ━━━━━━━━━━━━━━━━
 # Cache is enabled by default. Pass nrouter_cache: false for a fresh response.
 
 curl "$BASE/v1/chat/completions" \

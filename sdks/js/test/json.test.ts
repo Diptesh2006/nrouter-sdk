@@ -44,9 +44,12 @@ test('nr.responses posts through the client transport and preserves nRouter feat
   const res = await client.nr.responses(
     { model: 'm', input: 'hello' },
     {
+      // `guardrailIds` is deliberately absent: it is no longer a wire field.
+      // The gateway reads no per-request guardrail override (0 references,
+      // measured 2026-08-28), so buildExtraBody now REFUSES a non-empty list
+      // rather than forwarding it to the provider. See test/options.test.ts.
       promptTemplateId: 'tpl-1',
       promptVariables: { name: 'Ada' },
-      guardrailIds: ['gr-1'],
       cache: false,
     },
   );
@@ -57,7 +60,6 @@ test('nr.responses posts through the client transport and preserves nRouter feat
     input: 'hello',
     nrouter_prompt_template_id: 'tpl-1',
     nrouter_prompt_variables: { name: 'Ada' },
-    nrouter_guardrail_ids: ['gr-1'],
     nrouter_cache: false,
   });
   assert.deepEqual(res.body, { id: 'resp_1', output_text: 'hello' });

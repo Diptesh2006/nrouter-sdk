@@ -11,7 +11,11 @@
 // spec/nrouter-sdk-spec.json (Rule #14). The gateway strips the fields it knows
 // and forwards the rest to the provider, so a field this SDK invents is not an
 // error a caller ever sees: it is a dead option that looks live.
+//
+// `nrouter_guardrail_ids` WAS exactly that dead option, and it is now refused
+// rather than sent. See the refusal in `buildExtraBody` for the measurement.
 
+import { configurationError } from './errors';
 import { dataUrlToPart } from './multimodal';
 import type {
   ChatContentPart,
@@ -22,7 +26,7 @@ import type {
 } from './types';
 
 /**
- * Map the nRouter-specific options onto the four `extra_body_fields` the
+ * Map the nRouter-specific options onto the three `extra_body_fields` the
  * gateway reads. Anything absent is OMITTED rather than sent as a null or an
  * empty value — omission and emptiness mean different things on this wire.
  *
@@ -59,20 +63,50 @@ export function buildExtraBody(opts: NRouterFeatureOptions): NRouterExtraBody {
     extra.nrouter_prompt_variables = opts.promptVariables;
   }
 
-  // OMITTED when absent OR empty, and the empty case is the one that matters.
+  // REFUSED, and this used to send `nrouter_guardrail_ids`. It was a FAKE
+  // SURFACE — an option our own docs advertised that nothing on the serving
+  // path has ever read.
   //
-  // `[]` is not "no guardrails" — the gateway reads OMISSION as "apply every
-  // org-enabled guardrail" and a present list as "run ONLY these". Sending an
-  // empty list is therefore a different instruction from sending nothing, and
-  // the likely-wrong one: it asks for zero guardrails on a request whose org
-  // configured some. The playground guards this the same way
-  // (`if (activeGuardrailIds.length > 0)`).
+  // MEASURED 2026-08-28 against nrouter-rust-gateway:
+  //   * `grep -rn nrouter_guardrail_ids` over the WHOLE repo returns ZERO
+  //     hits, against 608 `guardrail` references. Guardrail selection there is
+  //     resolved per org/key/team from config, with no per-request override.
+  //   * the gateway's own OpenAPI advertises only the other three extra_body
+  //     fields (`src/http/openapi.rs`, the `nrouter_cache` /
+  //     `nrouter_prompt_template_id` / `nrouter_prompt_variables` triple).
+  //   * every provider transformation explicitly strips what it knows
+  //     (`object.remove("nrouter_cache")` in all six), and NONE strips this
+  //     one — so the field was serialized straight through to OpenAI or
+  //     Anthropic, which rejected the call as an unrecognized argument. The
+  //     caller paid a round trip to learn nothing that named the cause.
   //
-  // A later refactor will want to collapse this to `if (opts.guardrailIds)`.
-  // That refactor turns "no guardrail UI state yet" into "disable the org's
-  // guardrails", which is a security regression with a green test suite.
+  // THROWING rather than dropping, deliberately, and this is the whole point.
+  // nrouter-app already faced the same choice for the playground and refuses
+  // with 400 GATEWAY_FEATURE_UNSUPPORTED, because "the user picked a safety
+  // control and would get a normal-looking answer without it" is a fake
+  // success and a security regression. Quietly deleting the option here would
+  // ship precisely that: this is a PUBLISHED package, and TypeScript's
+  // excess-property check only fires on a fresh object literal, so a plain-JS
+  // caller — or a TS caller spreading a widened options object — would see no
+  // error at all. This SDK must not be the laxer surface than our own BFF.
+  //
+  // CONFIGURATION kind, which is permanent and never retried: a caller's
+  // generic `if (isRetryable(e)) retry` loop must not spin on a condition no
+  // retry improves.
+  //
+  // Scoped to a NON-EMPTY list on purpose. `[]` expresses no selection, so
+  // nothing the caller asked for goes unserved and the org's guardrails apply
+  // exactly as before; refusing it would break `guardrailIds: state.selected`
+  // with an empty default on a request that is, and stays, correct.
   if (opts.guardrailIds && opts.guardrailIds.length > 0) {
-    extra.nrouter_guardrail_ids = opts.guardrailIds;
+    throw configurationError(
+      'guardrailIds is not supported: the gateway runs no per-request ' +
+        'guardrail override, so this option was never applied to a request. ' +
+        'Guardrails are assigned per key, team or organization in the nRouter ' +
+        'dashboard and already apply automatically to every call — remove ' +
+        '`guardrailIds` to use them. Sent as-is it reached the provider as an ' +
+        'unrecognized argument and the request failed there.',
+    );
   }
 
   // `nrouter_cache` is sent ONLY to turn caching off. `true` is the gateway

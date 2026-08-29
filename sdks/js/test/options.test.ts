@@ -6,15 +6,29 @@
 //     extra_body_fields.nrouter_cache.default), so sending it changes nothing
 //     and just grows every body. `cache: false` MUST be sent: it is the only
 //     way to force provider egress.
-//   * an EMPTY `guardrailIds` array OMITTED — omission means "apply every
-//     org-enabled guardrail", a present list means "run ONLY these". `[]` is a
-//     different instruction, and the dangerous one: it asks for zero
-//     guardrails on a request whose org configured some. Collapsing this to
-//     `if (opts.guardrailIds)` turns "no guardrail UI state yet" into
-//     "disable the org's guardrails", with a green test suite.
+//   * `guardrailIds` REFUSED, loudly. It was a fake surface: MEASURED
+//     2026-08-28, `nrouter_guardrail_ids` appears NOWHERE in the whole
+//     nrouter-rust-gateway repo (0 hits against 608 guardrail references),
+//     and the gateway's own OpenAPI advertises only the other three
+//     extra_body fields. Guardrail selection there is org/config driven,
+//     with no per-request override. Sending it anyway reached the PROVIDER
+//     verbatim — every provider transformation explicitly
+//     `object.remove("nrouter_cache")` and none removes this one — so the
+//     caller got an opaque upstream rejection. Deleting the option silently
+//     would be worse still: a plain-JS caller, or a TS caller spreading a
+//     widened options object, would see NO error and a normal-looking answer
+//     with the safety control they selected never applied. That is the
+//     "fake success" nrouter-app already refuses by name in
+//     `api/nrouter-proxy/chat/route.ts` (400 GATEWAY_FEATURE_UNSUPPORTED);
+//     this SDK must not be the laxer surface.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+/** spec/nrouter-sdk-spec.json — the Rule #14 source of truth, four levels up. */
+const SPEC_PATH = path.resolve(__dirname, '..', '..', '..', 'spec', 'nrouter-sdk-spec.json');
 
 const { buildExtraBody, buildMessages, buildChatBody } = require('../dist/options');
 
@@ -43,21 +57,63 @@ test('cache undefined is not confused with cache false', () => {
   assert.equal('nrouter_cache' in buildExtraBody({ model: 'gpt-4o', cache: undefined }), false);
 });
 
-test('an EMPTY guardrailIds array is OMITTED, not sent as []', () => {
+test('an EMPTY guardrailIds array is accepted and omitted, NOT refused', () => {
+  // The refusal must fire exactly when the caller's intent goes unserved. `[]`
+  // expresses no selection at all — the org's guardrails apply either way — so
+  // refusing it would break a caller wiring `guardrailIds: state.selected` with
+  // an empty default, on a request that works correctly today and will keep
+  // working correctly. Scope the throw to a REAL selection.
   const extra = buildExtraBody({ model: 'gpt-4o', guardrailIds: [] });
-  assert.equal(
-    'nrouter_guardrail_ids' in extra,
-    false,
-    '[] asks the gateway for ZERO guardrails; omission asks for all org-enabled ones'
-  );
   assert.deepEqual(extra, {});
 });
 
-test('a non-empty guardrailIds array IS sent', () => {
-  const ids = ['11111111-1111-1111-1111-111111111111'];
-  assert.deepEqual(buildExtraBody({ model: 'gpt-4o', guardrailIds: ids }), {
-    nrouter_guardrail_ids: ids,
+test('a non-empty guardrailIds array is REFUSED, naming what to do instead', () => {
+  // Locally, before egress: today this reaches the provider as an unrecognized
+  // argument and costs a round trip to learn nothing useful.
+  assert.throws(
+    () => buildExtraBody({ model: 'gpt-4o', guardrailIds: ['gr-1'] }),
+    (err: unknown) => {
+      const e = err as { kind?: string; message?: string };
+      // CONFIGURATION, and that is load-bearing: it is permanent and never
+      // retried, so a caller's `if (isRetryable(e)) retry` loop cannot spin on
+      // a condition no retry improves.
+      assert.equal(e.kind, 'configuration');
+      const m = String(e.message);
+      assert.match(m, /guardrailIds/, 'must name the option the caller set');
+      assert.match(m, /dashboard/i, 'must name where guardrails ARE configured');
+      assert.match(
+        m,
+        /automatically|already appl/i,
+        'must say the org guardrails still run — otherwise it reads as "no guardrails"',
+      );
+      return true;
+    },
+  );
+});
+
+test('the refusal reaches callers through buildChatBody, not just buildExtraBody', () => {
+  // buildExtraBody is internal; every real caller arrives via buildChatBody.
+  // A guard wired only into the helper nobody calls is not a guard.
+  assert.throws(
+    () => buildChatBody({ model: 'm', prompt: 'hi', guardrailIds: ['gr-1'] }, {}),
+    (err: unknown) => (err as { kind?: string }).kind === 'configuration',
+  );
+});
+
+test('NO guardrail-shaped key can ever reach the wire', () => {
+  // Keyed on the SHAPE rather than the one spelling: the defect was a field
+  // this SDK invented that the gateway never read, and a second invented
+  // spelling would be the same defect with a green suite.
+  const extra = buildExtraBody({
+    model: 'gpt-4o',
+    promptTemplateId: 'tpl-1',
+    promptVariables: { a: 'b' },
+    guardrailIds: [],
+    cache: false,
   });
+  for (const key of Object.keys(extra)) {
+    assert.equal(/guardrail/i.test(key), false, `emitted a guardrail field: ${key}`);
+  }
 });
 
 test('the prompt template and its variables map onto the spec field names', () => {
@@ -77,23 +133,50 @@ test('an EMPTY promptVariables object is omitted', () => {
   assert.deepEqual(extra, { nrouter_prompt_template_id: 'tpl-1' });
 });
 
-test('the extra_body field set is CLOSED to the four spec fields', () => {
+test('the extra_body field set is CLOSED to the three spec fields', () => {
   // The gateway strips the fields it knows and forwards the rest to the
   // provider, so an invented `nrouter_*` field is not an error a caller ever
-  // sees: it is a dead option that looks live.
+  // sees: it is a dead option that looks live. It was FOUR until
+  // `nrouter_guardrail_ids` was measured to have zero gateway readers.
   const extra = buildExtraBody({
     model: 'gpt-4o',
     promptTemplateId: 'tpl-1',
     promptVariables: { a: 'b' },
-    guardrailIds: ['g'],
     cache: false,
   });
   assert.deepEqual(Object.keys(extra).sort(), [
     'nrouter_cache',
-    'nrouter_guardrail_ids',
     'nrouter_prompt_template_id',
     'nrouter_prompt_variables',
   ]);
+});
+
+test('the emittable fields and the SPEC agree in BOTH directions', () => {
+  // The pin that would have caught this defect. `extra_body_fields` in
+  // spec/nrouter-sdk-spec.json is the Rule #14 source of truth, and it carried
+  // `nrouter_guardrail_ids` while the gateway read no such field — so the SoT
+  // was wrong and every SDK generated from it inherited the lie. Asserting
+  // only "code ⊆ spec" would have stayed green through exactly that.
+  const spec = JSON.parse(fs.readFileSync(SPEC_PATH, 'utf8'));
+  const specFields = Object.keys(spec.extra_body_fields).sort();
+  const emitted = Object.keys(
+    buildExtraBody({
+      model: 'gpt-4o',
+      promptTemplateId: 'tpl-1',
+      promptVariables: { a: 'b' },
+      cache: false,
+    }),
+  ).sort();
+  assert.deepEqual(
+    emitted,
+    specFields,
+    'the spec and this SDK disagree about the nRouter request fields',
+  );
+  assert.equal(
+    'nrouter_guardrail_ids' in spec.extra_body_fields,
+    false,
+    'the gateway reads no such field — 0 hits in nrouter-rust-gateway, measured 2026-08-28',
+  );
 });
 
 test('NO tenancy identifier is ever written into a body', () => {
@@ -101,7 +184,7 @@ test('NO tenancy identifier is ever written into a body', () => {
   // body-supplied org/team id is the spend-attribution spoof that gate exists
   // to stop, and this SDK must not be the thing that supplies one.
   const body = buildChatBody(
-    { model: 'gpt-4o', prompt: 'hi', guardrailIds: ['g'], cache: false },
+    { model: 'gpt-4o', prompt: 'hi', promptTemplateId: 'tpl-1', cache: false },
     {}
   );
   const serialized = JSON.stringify(body).toLowerCase();

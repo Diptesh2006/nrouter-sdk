@@ -37,12 +37,15 @@ ChatCompletion response = await client.CompleteChatAsync(
 );
 Console.WriteLine(response.Content[0].Text);
 
+// Guardrails are assigned per key, team or org in the dashboard and apply
+// automatically — the narrowest assignment wins. There is no per-request
+// override to send in the body.
+//
 // Per-request overrides (via raw HTTP POST):
 // The .NET SDK does not support extra body fields natively — use raw HTTP POST
 // with these fields in the JSON body:
 //   "nrouter_prompt_template_id": "your-summarizer-id"
 //   "nrouter_prompt_variables": {"language": "Spanish", "max_length": "100"}
-//   "nrouter_guardrail_ids": ["uuid1","uuid2"]
 //   "nrouter_cache": false   // disable cache for this request
 
 // ━━━ 3. PII blocked by guardrail ━━━━━━━━━━━━━━━━━━━━━━━━━━

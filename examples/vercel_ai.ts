@@ -55,16 +55,9 @@ const { text: summarized } = await generateText({
 });
 console.log(`\nSummarized: ${summarized}`);
 
-// Per-request guardrail selection
-// By default, ALL org-enabled guardrails apply automatically.
-// Pass nrouter_guardrail_ids to run only specific guardrails on this request.
-const { text: guarded } = await generateText({
-  model: nrouterRouter("anthropic/claude-sonnet-4-5-20250929"),
-  prompt: "Summarize Q1 earnings...",
-  body: {
-    nrouter_guardrail_ids: ["guardrail-uuid-1", "guardrail-uuid-2"],
-  },
-});
+// Guardrails are assigned per key, team or org in the dashboard and apply
+// automatically — the narrowest assignment wins. There is no per-request
+// override to pass here.
 
 // Disable cache for a single request
 // Cache is enabled by default. Pass nrouter_cache: false for a fresh response.

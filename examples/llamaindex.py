@@ -68,17 +68,9 @@ llm_with_prompt = OpenAI(
 response = llm_with_prompt.complete("Q1 revenue was $4.2M, up 23% YoY...")
 print(f"\nSummarized (Spanish): {response.text}")
 
-# Per-request guardrail selection
-# By default, ALL org-enabled guardrails apply automatically.
-# Pass nrouter_guardrail_ids to run only specific guardrails on this request.
-llm_selective_guardrails = OpenAI(
-    model="anthropic/claude-sonnet-4-5-20250929",
-    api_key=NROUTER_KEY,
-    api_base=f"{NROUTER_BASE}/v1",
-    additional_kwargs={
-        "nrouter_guardrail_ids": ["guardrail-uuid-1", "guardrail-uuid-2"],
-    },
-)
+# Guardrails are assigned per key, team or org in the dashboard and apply
+# automatically — the narrowest assignment wins. There is no per-request
+# override to pass here.
 
 # Disable cache for a single request
 # Cache is enabled by default. Pass nrouter_cache: False for a fresh response.

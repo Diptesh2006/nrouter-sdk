@@ -59,8 +59,11 @@ user_proxy = UserProxyAgent(
 # PII in agent conversations → blocked.
 # Prompt injection in agent prompts → blocked.
 
+# Guardrails are assigned per key, team or org in the dashboard and apply
+# automatically — the narrowest assignment wins. There is no per-request
+# override to send in the body.
+
 # Per-request overrides:
-# By default, ALL org-enabled guardrails apply automatically.
 # AutoGen does not support extra body fields natively — use the nRouter SDK
 # for per-request control:
 #   response = client.nrouter.chat(
@@ -69,7 +72,6 @@ user_proxy = UserProxyAgent(
 #       prompt_variables={"language": "Spanish"},
 #   )
 # Or use cURL with these fields in the JSON body:
-#   "nrouter_guardrail_ids": ["uuid1","uuid2"]
 #   "nrouter_prompt_template_id": "your-summarizer-id"
 #   "nrouter_prompt_variables": {"language": "Spanish", "max_length": "100"}
 #   "nrouter_cache": false   // disable cache for this request

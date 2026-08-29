@@ -44,14 +44,9 @@ $withPrompt = $client->chat()->create([
     'nrouter_prompt_variables' => ['language' => 'Spanish', 'max_length' => '100'],
 ]);
 
-// Per-request guardrail selection
-// By default, ALL org-enabled guardrails apply automatically.
-// Pass nrouter_guardrail_ids to run only specific guardrails on this request.
-$withGuardrails = $client->chat()->create([
-    'model' => 'anthropic/claude-sonnet-4-5-20250929',
-    'messages' => [['role' => 'user', 'content' => 'Summarize Q1 earnings...']],
-    'nrouter_guardrail_ids' => ['guardrail-uuid-1', 'guardrail-uuid-2'],
-]);
+// Guardrails are assigned per key, team or org in the dashboard and apply
+// automatically — the narrowest assignment wins. There is no per-request
+// override to pass here.
 
 // Disable cache for a single request
 // Cache is enabled by default. Pass nrouter_cache: false for a fresh response.

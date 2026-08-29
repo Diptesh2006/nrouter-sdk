@@ -39,12 +39,13 @@ func main() {
 	}
 	fmt.Println(response.Choices[0].Message.Content)
 
-	// Per-request guardrail selection:
-	// By default, ALL org-enabled guardrails apply automatically.
-	// Pass nrouter_guardrail_ids to run only specific guardrails on this request.
+	// Guardrails are assigned per key, team or org in the dashboard and apply
+	// automatically — the narrowest assignment wins. There is no per-request
+	// override to send in the body.
+
+	// Per-request prompt templates:
 	// The Go SDK does not support extra body fields natively — use cURL or
 	// a raw HTTP POST with the following in the JSON body:
-	//   "nrouter_guardrail_ids": ["uuid1","uuid2"]
 	//   "nrouter_prompt_template_id": "your-summarizer-id"
 	//   "nrouter_prompt_variables": {"language": "Spanish", "max_length": "100"}
 

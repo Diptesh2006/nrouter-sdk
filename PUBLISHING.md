@@ -32,43 +32,39 @@ the no-change case into a quiet green no-op instead.
 | secret | purpose |
 |---|---|
 | `PYPI_API_TOKEN` | PyPI project token for `nrouter-sdk` |
-| `NPM_TOKEN` | npm token with write access to `@nrouter_ai/sdk` — **on the way out**, see below |
 | `CENTRAL_USERNAME` | Sonatype Central Portal token username |
 | `CENTRAL_PASSWORD` | Sonatype Central Portal token password |
 | `GPG_PRIVATE_KEY` | ASCII-armored private signing key |
 | `MAVEN_GPG_PASSPHRASE` | signing key passphrase |
 
-### npm: the token is temporary, and it has a hard end date
+### npm needs NO secret — trusted publishing (OIDC)
 
-The npm lane is mid-migration to **trusted publishing (OIDC)**, which uses no
-secret at all. Everything on the repository side is done — `publish-npm.yml`
-declares `id-token: write` on the publish job and publishes with `--provenance`.
+DONE 2026-08-29. `@nrouter_ai/sdk` publishes with no credential: `publish-npm.yml`
+declares `id-token: write` on its publish job, and npm exchanges a short-lived
+runner-minted token for publish rights after matching this repository and this
+workflow FILENAME against the trusted publisher registered on the package.
+`NPM_TOKEN` has been deleted from the repository.
 
-**The one remaining step is a human at npmjs.com**, because npm puts
-trusted-publishing configuration behind an interactive 2FA challenge that no
-automation can satisfy:
+**Renaming `publish-npm.yml` breaks publishing** until the registration is
+updated to match. That is the security property.
 
-> `@nrouter_ai/sdk` > Settings > Trusted Publisher > GitHub Actions
-> organization `nRouterAI`, repository `nrouter-sdk`,
-> workflow filename `publish-npm.yml`, environment **empty**
+The registration itself lives at npmjs.com > `@nrouter_ai/sdk` > Settings >
+Trusted Publisher > GitHub Actions — organization `nRouterAI`, repository
+`nrouter-sdk`, workflow filename `publish-npm.yml`, environment **empty** (the
+job declares none, and a name here would never match). Editing it requires an
+interactive 2FA challenge, so no automation can do it.
 
-Then delete the two `env:` lines under the Publish step and run
-`gh secret delete NPM_TOKEN -R nRouterAI/nrouter-sdk`. **Both halves** — a token
-left beside OIDC is a fallback npm prefers silently, so the run goes green
-without ever proving OIDC works.
+Proof a release used this path: a provenance attestation on the published
+version naming the workflow. Only an Actions run can produce one —
+`npm audit signatures` verifies it, and 1.2.1 is the first version with it.
 
-⚠️ **Do not create a granular access token for CI and expect it to publish.**
-Measured 2026-08-28: a correctly scoped granular token authenticates, signs a
-provenance statement, and then fails `EOTP` — npm requires an interactive 2FA
-challenge on writes, and a runner has no authenticator. The deciding field is
-`bypass_2fa`, readable per token at
-`https://registry.npmjs.org/-/npm/v1/tokens`, and it is stamped at token
-CREATION — flipping the account's 2FA mode afterwards does not rescue an
-existing token. A Classic **Automation** token carries it true by construction.
-
-The clock: npm withdraws direct publish from bypass-2FA tokens in
-[January 2027](https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/),
-and the current token expires 2026-11-26.
+⚠️ **Do not re-create an NPM_TOKEN secret.** A token sitting beside OIDC is a
+fallback npm prefers silently, so the pipeline would go green while proving
+nothing — and npm withdraws direct publish from bypass-2FA granular tokens in
+[January 2027](https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/).
+A granular token cannot publish from CI anyway without `bypass_2fa`, and one
+WITH it can no longer perform account or package management: measured on
+2026-08-28, such a token authenticated, signed provenance, then failed `EOTP`.
 
 Maven token: central.sonatype.com -> account settings -> generate user token.
 Use the generated token username and password, not your login password.

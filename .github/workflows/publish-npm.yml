@@ -210,29 +210,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # No `cache:` here. A restored npm cache is attacker-controlled content
-      # entering the one job that holds the OIDC permission; this job installs
-      # no dependencies, so it has nothing to cache.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      # OIDC trusted publishing landed in npm 11.5.0 (npm/cli#8336). The
-      # runner's bundled npm 10 does not attempt it at all — it would fall
-      # through to token auth and, with no token present, simply fail. This is
-      # a floor, not an upgrade.
-      - name: npm >= 11.5.1, the floor for OIDC trusted publishing
-        run: |
-          npm install -g 'npm@^11.5.1'
-          npm --version
-
-      - name: Restore the verified build output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: js-dist
-          path: sdks/js/dist
-
       # The token is only as scoped as the registry it is SENT to. npm gives a
       # project `.npmrc` precedence over the one setup-node writes, and
       # `publishConfig.registry` overrides both for a publish — so a merged
@@ -240,9 +217,15 @@ jobs:
       # credential, to a host the attacker controls. `--ignore-scripts` does
       # not help: no script has to run for that.
       #
-      # Under OIDC there is no long-lived token to steal, but the minted one
-      # is still SENT somewhere: a redirected registry receives a credential
-      # that can publish this package. The guard outlives the token.
+      # RUNS FIRST, immediately after checkout, and the ORDER is the control.
+      # Under OIDC the minting capability is JOB-scoped, not step-scoped: the
+      # `ACTIONS_ID_TOKEN_REQUEST_*` variables are ambient to every step here.
+      # So anything this job fetches or executes can mint a publish token — and
+      # the very first fetch, the npm floor install below, reads project npm
+      # config from `sdks/js`. Running this guard after that would let a merged
+      # `sdks/js/.npmrc` redirect that install and execute attacker-served code
+      # inside the credential boundary before the guard ever looked. The token
+      # era hid this: the credential was step-scoped `env:` on Publish alone.
       - name: Refuse a repository-controlled npm config
         run: |
           set -euo pipefail
@@ -277,6 +260,35 @@ jobs:
             exit 1
           fi
           echo "registry confirmed: $eff"
+
+      # No `cache:` here. A restored npm cache is attacker-controlled content
+      # entering the one job that holds the OIDC permission; this job installs
+      # no dependencies, so it has nothing to cache.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # OIDC trusted publishing landed in npm 11.5.0 (npm/cli#8336). The
+      # runner's bundled npm 10 does not attempt it at all — it would fall
+      # through to token auth and, with no token present, simply fail. This is
+      # a floor, not an upgrade.
+      - name: npm 11.19.1, the floor for OIDC trusted publishing
+        run: |
+          # EXACT pin and an EXPLICIT registry, not `npm@^11.5.1`. This install
+          # runs inside the one job holding `id-token: write`, and the OIDC
+          # request variables are ambient to every step in it — so whatever
+          # this fetches can mint a publish token. A floating range means the
+          # privileged job executes a version nobody reviewed, and an implicit
+          # registry means the config decides where it comes from.
+          npm install -g npm@11.19.1 --registry=https://registry.npmjs.org
+          npm --version
+
+      - name: Restore the verified build output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: js-dist
+          path: sdks/js/dist
 
       # NO CREDENTIAL. `id-token: write` on this job lets the runner mint a
       # short-lived token that npm exchanges for publish rights after matching

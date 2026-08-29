@@ -36,7 +36,8 @@ on:
       # names the live-catalogue URL, so a prose-only change must run it —
       # otherwise a hardcoded model count (Rule #28) lands unchecked.
       # `*.md` is ROOT-ONLY in GitHub path filters, which would have missed all
-      # ten `sdks/*/README.md` — the exact files a "240 models" line goes into.
+      # ten `sdks/*/README.md` — the exact files a hardcoded catalogue-size
+      # claim goes into.
       - '*.md'
       - '**/*.md'
       - '.github/workflows/publish-npm.yml'
@@ -68,7 +69,8 @@ on:
       # names the live-catalogue URL, so a prose-only change must run it —
       # otherwise a hardcoded model count (Rule #28) lands unchecked.
       # `*.md` is ROOT-ONLY in GitHub path filters, which would have missed all
-      # ten `sdks/*/README.md` — the exact files a "240 models" line goes into.
+      # ten `sdks/*/README.md` — the exact files a hardcoded catalogue-size
+      # claim goes into.
       - '*.md'
       - '**/*.md'
       - '.github/workflows/publish-npm.yml'

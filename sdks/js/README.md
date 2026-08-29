@@ -92,8 +92,8 @@ The raw nRouter `/models` response is valid JSON, but the current OpenAI JS SDK
 page parser exposes it with an empty `data` array. `nrouterModels.list()`
 bypasses that parser and returns the gateway response directly. It still travels
 the client's own request pipeline, so a configured `fetch`, `timeout`,
-`maxRetries`, `httpAgent` and default headers apply to it exactly as they do to
-every other call.
+`maxRetries`, `fetchOptions` and default headers apply to it exactly as they do
+to every other call.
 
 ## Development
 

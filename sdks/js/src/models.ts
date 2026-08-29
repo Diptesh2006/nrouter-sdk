@@ -33,7 +33,7 @@ export type NRouterModelList = {
 /**
  * The slice of the inherited OpenAI client this helper needs: its own request
  * pipeline. Going through it is what keeps the caller's `fetch` override,
- * `timeout`, `maxRetries`, `httpAgent`, `defaultHeaders` and `defaultQuery`
+ * `timeout`, `maxRetries`, `fetchOptions`, `defaultHeaders` and `defaultQuery`
  * applied to model discovery, and is why no global `fetch` is required.
  *
  * It is a structural type rather than an import of the vendor client so this

@@ -20,9 +20,18 @@ to correct a release, only appended to.
   that floor and this package inherits it. Previously nothing declared a floor
   at all, so an unsupported runtime failed somewhere further in.
 - **`apiKey` must be a string.** openai 7 also accepts a function that returns a
-  key; this SDK refuses it, because its job is to check the `sk-nrouter-`
-  prefix before a request and a function cannot be checked until the request is
-  already in flight.
+  key; this SDK refuses it, in the types as well as at runtime, because its job
+  is to check the `sk-nrouter-` prefix before a request and a function cannot be
+  checked until the request is already in flight.
+- **`httpAgent` is gone.** openai 7 removed it in favour of `fetchOptions`. If
+  you passed an agent for a proxy or custom TLS, move it there — a `dispatcher`
+  under `fetchOptions` is the undici equivalent. This SDK's docs promised
+  `httpAgent` applied to every call, and that promise is withdrawn rather than
+  quietly left to fail.
+- **`provider`, `workloadIdentity` and `dataResidency` are not accepted.** They
+  are mutually exclusive with the `apiKey` and `baseURL` this constructor always
+  injects, so they could never work; they are now removed from the type instead
+  of failing inside the vendor.
 
 **Why the upgrade: the dependency tree goes from 37 packages to zero.**
 `openai` 4 pulled `node-fetch`, `form-data`, `agentkeepalive` and 34 others;

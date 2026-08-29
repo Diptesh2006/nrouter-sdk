@@ -75,7 +75,17 @@ function resolveApiKey(apiKey?: unknown): string {
 // NonNullable first: the vendor's parameter is optional, and `Omit` over a
 // `X | undefined` union silently drops every property — which showed up as
 // "Property 'baseURL' does not exist", not as anything about apiKey.
-type NRouterOptions = Omit<NonNullable<ConstructorParameters<typeof OpenAI>[0]>, 'apiKey'> & {
+type NRouterOptions = Omit<
+  NonNullable<ConstructorParameters<typeof OpenAI>[0]>,
+  // `apiKey` — narrowed to a string below.
+  // The rest are openai 7 authentication and routing options that CANNOT work
+  // here: this constructor always injects an nRouter `apiKey` and `baseURL`,
+  // and the vendor treats each of these as mutually exclusive with one or
+  // both. Leaving them in the public type lets a call compile and then fail
+  // inside the vendor with a mutually-exclusive-option error that names
+  // nothing the caller wrote.
+  'apiKey' | 'provider' | 'workloadIdentity' | 'dataResidency'
+> & {
   apiKey?: string;
 };
 
@@ -418,7 +428,7 @@ export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
    * The single place a request leaves this SDK.
    *
    * It goes through the VENDOR client's own pipeline, which is what keeps the
-   * caller's `fetch` override, `timeout`, `maxRetries`, `httpAgent`,
+   * caller's `fetch` override, `timeout`, `maxRetries`, `fetchOptions`,
    * `defaultHeaders` and `defaultQuery` applied to every nRouter call too —
    * and is why this SDK never touches the API key itself.
    */

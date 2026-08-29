@@ -22,6 +22,11 @@ on:
       - 'sdks/python/**'
       - 'spec/**'
       - 'conformance/**'
+      # tests/ and examples/ are here because the repository contract gates
+      # below READ them: test_sdk_contract.py walks examples/**/*.sh, and a
+      # change to the gate itself must re-run the gate.
+      - 'tests/**'
+      - 'examples/**'
       - '.github/workflows/publish-pypi.yml'
   # A pull request runs the tests and the conformance gate and PUBLISHES
   # NOTHING — see IS_RELEASE below. Without this, a PR touching only the Python
@@ -31,6 +36,11 @@ on:
       - 'sdks/python/**'
       - 'spec/**'
       - 'conformance/**'
+      # tests/ and examples/ are here because the repository contract gates
+      # below READ them: test_sdk_contract.py walks examples/**/*.sh, and a
+      # change to the gate itself must re-run the gate.
+      - 'tests/**'
+      - 'examples/**'
       - '.github/workflows/publish-pypi.yml'
   workflow_dispatch:
 
@@ -76,6 +86,25 @@ jobs:
       # The tests and the cross-SDK contract gate. Nothing publishes if either
       # is red.
       - run: python -m pytest -q
+
+      # THE REPOSITORY CONTRACT GATES, which ran in NO workflow until now.
+      #
+      # `tests/test_sdk_contract.py` was RED on main and nothing said so: it
+      # asserts spec/nrouter-sdk-spec.json agrees with the Python package
+      # version ("Version lives in four places. Any one drifting is a broken
+      # release."), the spec drifted to 2.1.0 while Python shipped 2.1.1, 2.1.2
+      # and 2.1.3, and three releases went out over a failing gate. Conformance
+      # does not cover this — it compares the SDKs to each other, not the spec
+      # to the package.
+      #
+      # It lives in THIS workflow because it imports `nroutersdk` and httpx,
+      # which only this job installs. `spec/**` is in both workflows' filters,
+      # so a spec change reaches it from either side.
+      - name: Repository contract gates
+        working-directory: .
+        run: |
+          python -m unittest tests/test_sdk_contract.py
+          bash tests/sdk-static-catalog-count.test.sh
 
       - name: Cross-SDK conformance
         working-directory: .

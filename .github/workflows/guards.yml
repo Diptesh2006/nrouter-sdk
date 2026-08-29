@@ -12,7 +12,7 @@
 # lives here rather than inside the release workflows, where it inherited their
 # filters and their build costs.
 #
-# ⚠️ PER-COMMIT AND PER-PR HOSTED CI, which the `gh-workflow` contract forbids
+# ⚠️ PER-PR HOSTED CI, which the `gh-workflow` contract forbids
 # "without explicit operator direction". The direction is the operator's
 # standing instruction in this repository to inherit open-source project
 # standards on a PUBLIC repo that merges outside pull requests — recorded here
@@ -33,9 +33,11 @@
 # catalogue at nrouter.ai/api/public/models.
 name: guards
 
+# PULL REQUESTS ONLY — operator direction 2026-08-29: "on PR is fine and don't
+# need run for each commit". A guard that re-runs on every push to main re-checks
+# a tree its own PR already cleared, and the release workflows are the gate that
+# matters at merge time.
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 

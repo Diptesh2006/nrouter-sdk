@@ -52,6 +52,18 @@ public final class NRouter {
                 .build();
     }
 
+    /** Native Java 11 surface with raw nRouter metadata and typed errors. */
+    public static NRouterHttpClient httpClient(String apiKey) {
+        return httpClient(apiKey, DEFAULT_BASE_URL);
+    }
+
+    /** Native Java 11 surface pointed at a custom gateway. */
+    public static NRouterHttpClient httpClient(String apiKey, String baseUrl) {
+        return new NRouterHttpClient(
+                resolveApiKey(apiKey),
+                baseUrl != null ? baseUrl : DEFAULT_BASE_URL);
+    }
+
     public static Map<String, Object> buildExtraBody(
             String promptTemplateId,
             Map<String, String> promptVariables,

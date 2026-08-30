@@ -53,6 +53,37 @@ public struct NRouter: Sendable {
         }
     }
 
+    /// One provider-native SSE frame plus portable incremental text.
+    public struct StreamChunk: Sendable {
+        public let event: String?
+        public let delta: String
+        /// The untouched JSON bytes for usage, finish, and provider-specific fields.
+        public let data: Data
+
+        public init(event: String?, delta: String, data: Data) {
+            self.event = event
+            self.delta = delta
+            self.data = data
+        }
+    }
+
+    /// Response metadata is available before the first streamed token arrives.
+    public struct StreamResponse: Sendable {
+        public let meta: NRouterResponseMeta
+        public let statusCode: Int
+        public let chunks: AsyncThrowingStream<StreamChunk, Error>
+
+        public init(
+            meta: NRouterResponseMeta,
+            statusCode: Int,
+            chunks: AsyncThrowingStream<StreamChunk, Error>
+        ) {
+            self.meta = meta
+            self.statusCode = statusCode
+            self.chunks = chunks
+        }
+    }
+
     /// Build a client. The key is validated up front so a malformed one fails
     /// here rather than as a 401 that reads like a revoked credential.
     ///
@@ -113,6 +144,26 @@ public struct NRouter: Sendable {
     /// `POST /responses`
     public func responses(_ body: [String: Any]) async throws -> Response {
         try await post("/responses", body)
+    }
+
+    /// Incremental `POST /chat/completions`; forces `stream: true` in a copy.
+    public func chatCompletionsStream(_ body: [String: Any]) async throws -> StreamResponse {
+        try await stream("/chat/completions", body)
+    }
+
+    /// Incremental legacy `POST /completions`.
+    public func completionsStream(_ body: [String: Any]) async throws -> StreamResponse {
+        try await stream("/completions", body)
+    }
+
+    /// Incremental native Anthropic `POST /messages`.
+    public func messagesStream(_ body: [String: Any]) async throws -> StreamResponse {
+        try await stream("/messages", body)
+    }
+
+    /// Incremental `POST /responses`.
+    public func responsesStream(_ body: [String: Any]) async throws -> StreamResponse {
+        try await stream("/responses", body)
     }
 
     /// `POST /images/generations`
@@ -248,6 +299,113 @@ public struct NRouter: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await send(request)
+    }
+
+    /// Stream any JSON `POST` under the gateway's `/v1` root as SSE.
+    public func stream(_ path: String, _ body: [String: Any]) async throws -> StreamResponse {
+        var streamed = body
+        streamed["stream"] = true
+        var request = URLRequest(url: try url(path))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: streamed)
+
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: request)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw NRouterError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw NRouterError.transport("Response was not HTTP.")
+        }
+        let meta = NRouterResponseMeta(response: http)
+        guard (200..<300).contains(http.statusCode) else {
+            var data = Data()
+            for try await byte in bytes.prefix(1 << 20) { data.append(byte) }
+            let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            throw NRouterError.fromCode(
+                NRouter.errorBody(status: http.statusCode, payload: parsed, meta: meta)
+            )
+        }
+        let contentType = (http.value(forHTTPHeaderField: "content-type") ?? "").lowercased()
+        guard contentType.contains("text/event-stream") else {
+            throw NRouterError.transport(
+                "nRouter returned \(http.statusCode) with content-type '\(contentType)', " +
+                    "which is not an SSE stream."
+            )
+        }
+
+        let chunks = AsyncThrowingStream<StreamChunk, Error> { continuation in
+            let reader = Task {
+                do {
+                    var event: String?
+                    var dataLines: [String] = []
+                    var lineData = Data()
+                    func processLine(_ rawLine: String) throws -> Bool {
+                        let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
+                        try Task.checkCancellation()
+                        if line.isEmpty {
+                            if dataLines.isEmpty {
+                                event = nil
+                                return false
+                            }
+                            let result = try NRouter.parseStreamFrame(
+                                event: event,
+                                data: dataLines.joined(separator: "\n"),
+                                meta: meta
+                            )
+                            event = nil
+                            dataLines.removeAll(keepingCapacity: true)
+                            switch result {
+                            case .chunk(let chunk): continuation.yield(chunk)
+                            case .done:
+                                continuation.finish()
+                                return true
+                            case .skip: return false
+                            }
+                            return false
+                        }
+                        if line.hasPrefix(":") { return false }
+                        let pieces = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+                        let name = String(pieces[0])
+                        let value = pieces.count == 2
+                            ? String(pieces[1]).drop(while: { $0 == " " })
+                            : Substring()
+                        if name == "event" { event = String(value) }
+                        if name == "data" { dataLines.append(String(value)) }
+                        return false
+                    }
+                    for try await byte in bytes {
+                        if byte == 0x0A {
+                            let line = String(data: lineData, encoding: .utf8) ?? ""
+                            lineData.removeAll(keepingCapacity: true)
+                            if try processLine(line) { return }
+                        } else {
+                            lineData.append(byte)
+                        }
+                    }
+                    if !lineData.isEmpty {
+                        let line = String(data: lineData, encoding: .utf8) ?? ""
+                        if try processLine(line) { return }
+                    }
+                    continuation.finish(
+                        throwing: NRouterError.transport(
+                            "the stream ended before its terminal event"
+                        )
+                    )
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in reader.cancel() }
+        }
+        return StreamResponse(meta: meta, statusCode: http.statusCode, chunks: chunks)
     }
 
     /// Any `GET` path under the gateway's `/v1` root.
@@ -399,6 +557,73 @@ public struct NRouter: Sendable {
             authReason: meta.authReason
         )
     }
+
+    private enum ParsedStreamFrame {
+        case chunk(StreamChunk)
+        case done
+        case skip
+    }
+
+    private static func parseStreamFrame(
+        event: String?,
+        data: String,
+        meta: NRouterResponseMeta
+    ) throws -> ParsedStreamFrame {
+        let trimmed = data.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return .skip }
+        if trimmed == "[DONE]" { return .done }
+        guard
+            let encoded = trimmed.data(using: .utf8),
+            let raw = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        else {
+            if event == "error" {
+                throw NRouterError.other(
+                    NRouterErrorBody(message: trimmed, status: 200, requestID: meta.requestID)
+                )
+            }
+            return .skip
+        }
+        if event == "error" || raw["error"] != nil {
+            let node = (raw["error"] as? [String: Any]) ?? raw
+            let explicitCode = node["code"] as? String
+            let type = node["type"] as? String
+            let code = explicitCode ?? (knownStreamErrorCodes.contains(type ?? "") ? type : nil)
+            throw NRouterError.fromCode(
+                NRouterErrorBody(
+                    message: node["message"] as? String ?? trimmed,
+                    code: code,
+                    status: 200,
+                    requestID: meta.requestID,
+                    limitSource: meta.limitSource,
+                    authReason: meta.authReason
+                )
+            )
+        }
+        if let type = raw["type"] as? String,
+           type == "message_stop" || type == "response.completed"
+        {
+            return .done
+        }
+        return .chunk(
+            StreamChunk(event: event, delta: streamDelta(raw), data: encoded)
+        )
+    }
+
+    private static func streamDelta(_ raw: [String: Any]) -> String {
+        if let value = raw["delta"] as? String { return value }
+        if let delta = raw["delta"] as? [String: Any], let text = delta["text"] as? String {
+            return text
+        }
+        guard let choice = (raw["choices"] as? [[String: Any]])?.first else { return "" }
+        if let text = choice["text"] as? String { return text }
+        return (choice["delta"] as? [String: Any])?["content"] as? String ?? ""
+    }
+
+    private static let knownStreamErrorCodes: Set<String> = [
+        "invalid_request", "guardrail_blocked", "invalid_api_key", "insufficient_credits",
+        "model_not_found", "rate_limit_exceeded", "tpm_limit_exceeded",
+        "credit_check_failed", "service_unavailable",
+    ]
 }
 
 // A struct reflects its stored properties by default, so `String(describing:)`,

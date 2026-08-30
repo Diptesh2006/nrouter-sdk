@@ -17,10 +17,19 @@ void main() {
 
     test('every spec header is read', () {
       const expected = [
-        'x-nr-request-id', 'x-nr-request-cost', 'x-nr-cost-status', 'x-nr-model',
-        'x-nr-input-tokens', 'x-nr-output-tokens', 'x-nr-total-tokens',
-        'x-nr-cache-read-tokens', 'x-nr-cache-write-tokens', 'x-nr-limit-source',
-        'x-nr-auth-reason', 'x-nr-response-cache', 'x-nr-response-cache-age',
+        'x-nr-request-id',
+        'x-nr-request-cost',
+        'x-nr-cost-status',
+        'x-nr-model',
+        'x-nr-input-tokens',
+        'x-nr-output-tokens',
+        'x-nr-total-tokens',
+        'x-nr-cache-read-tokens',
+        'x-nr-cache-write-tokens',
+        'x-nr-limit-source',
+        'x-nr-auth-reason',
+        'x-nr-response-cache',
+        'x-nr-response-cache-age',
       ];
       expect(NRouterResponseMeta.headerNames.length, 13);
       for (final name in expected) {
@@ -53,13 +62,15 @@ void main() {
       // request error makes NRouterGuardrailBlockedError unreachable.
       expect(
         NRouterError.fromCode(
-          const NRouterErrorBody(message: "blocked by guardrail 'pii'", status: 400),
+          const NRouterErrorBody(
+              message: "blocked by guardrail 'pii'", status: 400),
         ),
         isA<NRouterGuardrailBlockedError>(),
       );
       expect(
         NRouterError.fromCode(
-          const NRouterErrorBody(message: 'invalid request: bad shape', status: 400),
+          const NRouterErrorBody(
+              message: 'invalid request: bad shape', status: 400),
         ),
         isA<NRouterRequestError>(),
       );
@@ -69,10 +80,16 @@ void main() {
       // Byte-for-byte what GatewayError::into_response emits.
       final body = NRouter.errorBodyFrom(
         400,
-        {'error': {'type': 'gateway_error', 'message': "blocked by guardrail 'pii'"}},
+        {
+          'error': {
+            'type': 'gateway_error',
+            'message': "blocked by guardrail 'pii'"
+          }
+        },
         const NRouterResponseMeta(),
       );
-      expect(body.code, isNull, reason: 'the gateway sends no code on this path');
+      expect(body.code, isNull,
+          reason: 'the gateway sends no code on this path');
       expect(NRouterError.fromCode(body), isA<NRouterGuardrailBlockedError>());
     });
 
@@ -81,7 +98,8 @@ void main() {
       // of a shortfall's.
       expect(
         NRouterError.fromCode(
-          const NRouterErrorBody(message: 'budget exceeded: spend 5.00', status: 402),
+          const NRouterErrorBody(
+              message: 'budget exceeded: spend 5.00', status: 402),
         ),
         isA<NRouterBudgetExceededError>(),
       );
@@ -169,15 +187,14 @@ void main() {
     test('a key without the prefix is refused before any request', () {
       expect(() => NRouter(apiKey: 'sk-openai-nope'),
           throwsA(isA<NRouterConfigurationError>()));
-      expect(() => NRouter(apiKey: ''),
-          throwsA(isA<NRouterConfigurationError>()));
+      expect(
+          () => NRouter(apiKey: ''), throwsA(isA<NRouterConfigurationError>()));
       expect(NRouter.validateApiKey('sk-nrouter-abc'), 'sk-nrouter-abc');
     });
 
     test('toString never prints the api key', () {
       // A logged client must be useful without being dangerous (Rule #5).
-      final rendered =
-          NRouter(apiKey: 'sk-nrouter-SECRET123').toString();
+      final rendered = NRouter(apiKey: 'sk-nrouter-SECRET123').toString();
       expect(rendered, isNot(contains('SECRET123')));
       expect(rendered, contains('sk-nrouter-...T123'));
     });
@@ -192,6 +209,72 @@ void main() {
   });
 
   group('over the wire', () {
+    test('messagesStream parses incremental Anthropic deltas', () async {
+      late http.BaseRequest seen;
+      final mock = MockClient.streaming((request, bodyStream) async {
+        await bodyStream.drain<void>();
+        seen = request;
+        return http.StreamedResponse(
+          Stream.fromIterable([
+            utf8.encode(
+                'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hel'),
+            utf8.encode(
+                'lo"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n'),
+          ]),
+          200,
+          headers: {
+            'content-type': 'text/event-stream',
+            'x-nr-request-id': 'req_stream',
+          },
+        );
+      });
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+
+      final chunks = await client.messagesStream({'model': 'claude'}).toList();
+
+      expect(seen.headers['Accept'], 'text/event-stream');
+      expect(jsonDecode((seen as http.Request).body)['stream'], isTrue);
+      expect(chunks, hasLength(1));
+      expect(chunks.single.delta, 'hello');
+      expect(chunks.single.meta.requestId, 'req_stream');
+    });
+
+    test('stream surfaces an in-band guardrail error as typed', () async {
+      final mock = MockClient.streaming((request, bodyStream) async {
+        await bodyStream.drain<void>();
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(
+            'event: error\ndata: {"error":{"type":"guardrail_blocked","message":"withheld by guardrail"}}\n\n',
+          )),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+
+      await expectLater(
+        client.messagesStream({}).drain<void>(),
+        throwsA(isA<NRouterGuardrailBlockedError>()),
+      );
+    });
+
+    test('stream rejects EOF without a protocol terminator', () async {
+      final mock = MockClient.streaming((request, bodyStream) async {
+        await bodyStream.drain<void>();
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('data: {"delta":"partial"}\n\n')),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+
+      await expectLater(
+        client.responsesStream({}).drain<void>(),
+        throwsA(isA<NRouterTransportError>()),
+      );
+    });
+
     test('a call carries the key and returns the gateway metadata', () async {
       late http.Request seen;
       final mock = MockClient((request) async {
@@ -210,7 +293,8 @@ void main() {
       });
 
       final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
-      final result = await client.chatCompletions({'model': 'claude-sonnet-4-5'});
+      final result =
+          await client.chatCompletions({'model': 'claude-sonnet-4-5'});
 
       expect(seen.headers['Authorization'], 'Bearer sk-nrouter-test');
       expect(seen.url.path, '/v1/chat/completions');
@@ -226,7 +310,10 @@ void main() {
       final mock = MockClient((request) async => http.Response(
             'binary-audio',
             200,
-            headers: {'content-type': 'audio/mpeg', 'x-nr-request-cost': '0.004'},
+            headers: {
+              'content-type': 'audio/mpeg',
+              'x-nr-request-cost': '0.004'
+            },
           ));
       final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
       await expectLater(
@@ -239,7 +326,10 @@ void main() {
       final mock = MockClient((request) async => http.Response(
             'binary-audio',
             200,
-            headers: {'content-type': 'audio/mpeg', 'x-nr-request-cost': '0.004'},
+            headers: {
+              'content-type': 'audio/mpeg',
+              'x-nr-request-cost': '0.004'
+            },
           ));
       final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
       final raw = await client.bytes('/audio/speech', {});
@@ -331,7 +421,8 @@ void main() {
       // the CODE, not just the type — the HTTP-status fallback would produce
       // the same type for a 402 even if the bare envelope were ignored.
       final mock = MockClient((request) async => http.Response(
-            jsonEncode({'message': 'no credits', 'code': 'insufficient_credits'}),
+            jsonEncode(
+                {'message': 'no credits', 'code': 'insufficient_credits'}),
             402,
             headers: {'content-type': 'application/json'},
           ));
@@ -356,7 +447,10 @@ void main() {
         return http.Response(
           binary ? 'bytes' : '{}',
           200,
-          headers: {'content-type': binary ? 'application/octet-stream' : 'application/json'},
+          headers: {
+            'content-type':
+                binary ? 'application/octet-stream' : 'application/json'
+          },
         );
       });
       final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);

@@ -41,6 +41,33 @@ System.out.println(response.choices().get(0).message().content());
 `NRouter.create()` returns a real `OpenAIClient`, so every resource `openai-java`
 supports works unmodified.
 
+### Native response metadata and typed errors
+
+Use the additive Java 11 client when you need nRouter response headers or
+gateway-specific error classification:
+
+```java
+import ai.nrouter.sdk.NRouterHttpClient;
+import ai.nrouter.sdk.NRouterHttpResponse;
+import java.util.Map;
+
+NRouterHttpClient client = NRouter.httpClient();
+NRouterHttpResponse response = client.messages(Map.of(
+        "model", "claude-haiku-4-5-20251001",
+        "max_tokens", 64,
+        "messages", java.util.List.of(Map.of("role", "user", "content", "Hello!"))
+));
+
+System.out.println(response.meta().requestId());
+if (response.meta().isPriced()) {
+    System.out.println(response.meta().cost());
+}
+```
+
+`NRouterException` classifies the canonical gateway errors and preserves the
+HTTP status plus the same response metadata. A missing cost header remains
+unknown—it is never converted to zero.
+
 ## Features & Capabilities
 
 - **Key Validation & Base URL**: Auto-reads `NROUTER_API_KEY`, enforces `sk-nrouter-` prefix, defaults to `https://api.nrouter.ai/v1`.

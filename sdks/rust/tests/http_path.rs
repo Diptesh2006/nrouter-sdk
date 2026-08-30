@@ -99,6 +99,51 @@ async fn a_call_carries_the_key_and_returns_the_gateway_metadata() {
 }
 
 #[tokio::test]
+async fn messages_stream_yields_anthropic_delta_and_forces_stream_true() {
+    let body = concat!(
+        "event: content_block_delta\n",
+        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Claude\"}}\n\n",
+        "event: message_stop\n",
+        "data: {\"type\":\"message_stop\"}\n\n"
+    );
+    let (base, rx) = serve_once(200, "text/event-stream", body);
+    let original = json!({"model": "claude"});
+    let mut stream = client(&base)
+        .messages_stream(&original)
+        .await
+        .expect("open stream");
+    assert_eq!(stream.meta.request_id.as_deref(), Some("req_42"));
+    let mut text = String::new();
+    while let Some(chunk) = stream.next().await.expect("stream frame") {
+        text.push_str(&chunk.delta);
+    }
+    assert_eq!(text, "Claude");
+    assert!(original.get("stream").is_none(), "caller body was mutated");
+    let sent = rx.recv().expect("request");
+    assert!(sent.contains("POST /v1/messages"), "{sent}");
+    assert!(sent.contains("\"stream\":true"), "{sent}");
+}
+
+#[tokio::test]
+async fn stream_guardrail_event_is_a_typed_failure() {
+    let body = concat!(
+        "event: error\n",
+        "data: {\"error\":{\"type\":\"guardrail_blocked\",\"message\":\"the response was withheld by an output guardrail\"}}\n\n"
+    );
+    let (base, _rx) = serve_once(200, "text/event-stream", body);
+    let mut stream = client(&base)
+        .messages_stream(&json!({}))
+        .await
+        .expect("open stream");
+    let err = stream.next().await.expect_err("must refuse");
+    assert!(matches!(err, NRouterError::GuardrailBlocked(_)), "{err:?}");
+    assert_eq!(
+        err.body().and_then(|b| b.request_id.as_deref()),
+        Some("req_42")
+    );
+}
+
+#[tokio::test]
 async fn a_non_json_2xx_refuses_rather_than_reporting_an_empty_success() {
     // /v1/audio/speech returns audio. Parsed as JSON it becomes Null — the
     // caller is BILLED and receives nothing, while the call reports 200.

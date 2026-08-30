@@ -18,6 +18,21 @@ class NRouterResponse {
   final int statusCode;
 }
 
+/// One decoded server-sent event from a streaming text request.
+class NRouterStreamChunk {
+  const NRouterStreamChunk({
+    required this.event,
+    required this.delta,
+    required this.data,
+    required this.meta,
+  });
+
+  final String event;
+  final String delta;
+  final Map<String, dynamic> data;
+  final NRouterResponseMeta meta;
+}
+
 /// Raw bytes paired with the metadata and status reported by the gateway.
 typedef NRouterBinaryResponse = ({
   List<int> bytes,
@@ -87,7 +102,8 @@ class NRouter {
   /// without making it dangerous (Rule #5).
   @override
   String toString() {
-    final tail = _apiKey.length >= 4 ? _apiKey.substring(_apiKey.length - 4) : '';
+    final tail =
+        _apiKey.length >= 4 ? _apiKey.substring(_apiKey.length - 4) : '';
     return 'NRouter(baseUrl: $baseUrl, apiKey: $keyPrefix...$tail)';
   }
 
@@ -123,6 +139,97 @@ class NRouter {
   /// `POST /responses`
   Future<NRouterResponse> responses(Map<String, dynamic> body) =>
       post('/responses', body);
+
+  /// Incrementally stream `POST /chat/completions` as server-sent events.
+  Stream<NRouterStreamChunk> chatCompletionsStream(Map<String, dynamic> body) =>
+      stream('/chat/completions', body);
+
+  /// Incrementally stream the legacy `POST /completions` wire.
+  Stream<NRouterStreamChunk> completionsStream(Map<String, dynamic> body) =>
+      stream('/completions', body);
+
+  /// Incrementally stream the native Anthropic `POST /messages` wire.
+  Stream<NRouterStreamChunk> messagesStream(Map<String, dynamic> body) =>
+      stream('/messages', body);
+
+  /// Incrementally stream `POST /responses`.
+  Stream<NRouterStreamChunk> responsesStream(Map<String, dynamic> body) =>
+      stream('/responses', body);
+
+  /// Open a JSON POST as a cold, cancellable SSE stream.
+  Stream<NRouterStreamChunk> stream(
+    String path,
+    Map<String, dynamic> body,
+  ) async* {
+    final uri = Uri.parse(
+      '$baseUrl/${path.startsWith('/') ? path.substring(1) : path}',
+    );
+    final request = http.Request('POST', uri)
+      ..headers['Authorization'] = 'Bearer $_apiKey'
+      ..headers['Content-Type'] = 'application/json'
+      ..headers['Accept'] = 'text/event-stream'
+      ..body = jsonEncode(<String, dynamic>{...body, 'stream': true});
+
+    final http.StreamedResponse response;
+    try {
+      response = await _http.send(request);
+    } on Exception catch (e) {
+      throw NRouterTransportError(e.toString());
+    }
+
+    final meta = NRouterResponseMeta.fromHeaders(response.headers);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final buffered = await http.Response.fromStream(response);
+      Map<String, dynamic> parsed = <String, dynamic>{};
+      try {
+        final decoded = jsonDecode(buffered.body);
+        if (decoded is Map<String, dynamic>) parsed = decoded;
+      } on FormatException {
+        // Preserve the typed status fallback for non-JSON intermediary errors.
+      }
+      throw NRouterError.fromCode(
+        errorBodyFrom(response.statusCode, parsed, meta),
+      );
+    }
+
+    final contentType = (response.headers['content-type'] ?? '').toLowerCase();
+    if (!contentType.contains('text/event-stream')) {
+      await response.stream.listen((_) {}).cancel();
+      throw NRouterTransportError(
+        'nRouter returned ${response.statusCode} with content-type '
+        "'$contentType', which is not an SSE stream.",
+      );
+    }
+
+    var buffer = '';
+    var terminated = false;
+    try {
+      await for (final text in response.stream.transform(utf8.decoder)) {
+        buffer = (buffer + text).replaceAll('\r\n', '\n');
+        var boundary = buffer.indexOf('\n\n');
+        while (boundary >= 0) {
+          final frame = buffer.substring(0, boundary);
+          buffer = buffer.substring(boundary + 2);
+          final result = _parseSseFrame(frame, meta, response.statusCode);
+          if (result.terminal) {
+            terminated = true;
+            return;
+          }
+          if (result.chunk != null) yield result.chunk!;
+          boundary = buffer.indexOf('\n\n');
+        }
+      }
+    } on NRouterError {
+      rethrow;
+    } on Exception catch (e) {
+      throw NRouterTransportError('the stream failed while being read: $e');
+    }
+    if (!terminated) {
+      throw const NRouterTransportError(
+        'the stream ended before its terminal event',
+      );
+    }
+  }
 
   /// `POST /images/generations`
   Future<NRouterResponse> imagesGenerations(Map<String, dynamic> body) =>
@@ -403,3 +510,104 @@ class NRouter {
     );
   }
 }
+
+typedef _SseResult = ({NRouterStreamChunk? chunk, bool terminal});
+
+_SseResult _parseSseFrame(
+  String frame,
+  NRouterResponseMeta meta,
+  int status,
+) {
+  var event = '';
+  final dataLines = <String>[];
+  for (final line in frame.split('\n')) {
+    if (line.isEmpty || line.startsWith(':')) continue;
+    final separator = line.indexOf(':');
+    final name = separator < 0 ? line : line.substring(0, separator);
+    var value = separator < 0 ? '' : line.substring(separator + 1);
+    if (value.startsWith(' ')) value = value.substring(1);
+    if (name == 'event') event = value;
+    if (name == 'data') dataLines.add(value);
+  }
+  if (dataLines.isEmpty) return (chunk: null, terminal: false);
+  final encoded = dataLines.join('\n').trim();
+  if (encoded.isEmpty) return (chunk: null, terminal: false);
+  if (encoded == '[DONE]') return (chunk: null, terminal: true);
+
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(encoded);
+  } on FormatException catch (e) {
+    throw NRouterTransportError(
+        'the stream contained invalid JSON: ${e.message}');
+  }
+  if (decoded is! Map<String, dynamic>) {
+    throw const NRouterTransportError(
+      'the stream contained a JSON event that is not an object',
+    );
+  }
+
+  if (event == 'error' || decoded['error'] != null) {
+    final nested = decoded['error'];
+    final node = nested is Map<String, dynamic> ? nested : decoded;
+    final type = node['type'];
+    final code = node['code'];
+    final promoted = code is String
+        ? code
+        : type is String && _knownErrorCode(type)
+            ? type
+            : null;
+    throw NRouterError.fromCode(NRouterErrorBody(
+      message: node['message'] is String
+          ? node['message'] as String
+          : 'nRouter stream failed',
+      code: promoted,
+      status: status,
+      requestId: meta.requestId,
+      limitSource: meta.limitSource,
+      authReason: meta.authReason,
+    ));
+  }
+
+  final type = decoded['type'];
+  if (type == 'message_stop' || type == 'response.completed') {
+    return (chunk: null, terminal: true);
+  }
+  return (
+    chunk: NRouterStreamChunk(
+      event: event,
+      delta: _streamDelta(decoded),
+      data: decoded,
+      meta: meta,
+    ),
+    terminal: false,
+  );
+}
+
+String _streamDelta(Map<String, dynamic> data) {
+  final direct = data['delta'];
+  if (direct is String) return direct;
+  if (direct is Map<String, dynamic> && direct['text'] is String) {
+    return direct['text'] as String;
+  }
+  final choices = data['choices'];
+  if (choices is! List || choices.isEmpty || choices.first is! Map) return '';
+  final choice = Map<String, dynamic>.from(choices.first as Map);
+  if (choice['text'] is String) return choice['text'] as String;
+  final delta = choice['delta'];
+  return delta is Map && delta['content'] is String
+      ? delta['content'] as String
+      : '';
+}
+
+bool _knownErrorCode(String code) => const {
+      'invalid_request',
+      'guardrail_blocked',
+      'invalid_api_key',
+      'insufficient_credits',
+      'model_not_found',
+      'rate_limit_exceeded',
+      'tpm_limit_exceeded',
+      'credit_check_failed',
+      'service_unavailable',
+    }.contains(code);

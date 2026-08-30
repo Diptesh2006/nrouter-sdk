@@ -108,11 +108,45 @@ case err != nil:
 and their remedies are opposites; telling a customer whose budget is exhausted
 to add money is a wrong answer delivered confidently.
 
-## Binary and streaming endpoints
+## Streaming
+
+The four text wires have incremental SSE helpers. `Delta` is portable across
+OpenAI-shaped chunks and native Anthropic Messages events; `Raw` preserves the
+complete provider-native frame for usage and finish metadata. Always inspect
+`Err` after iteration, because an output guardrail arrives as an in-band error
+after the HTTP status has already been sent:
+
+```go
+stream, err := client.MessagesStream(ctx, map[string]any{
+	"model": "claude-sonnet-4-5",
+	"max_tokens": 256,
+	"messages": []any{
+		map[string]any{"role": "user", "content": "Hello!"},
+	},
+})
+if err != nil {
+	log.Fatal(err)
+}
+defer stream.Close()
+
+for stream.Next() {
+	fmt.Print(stream.Chunk().Delta)
+}
+if err := stream.Err(); err != nil {
+	log.Fatal(err)
+}
+fmt.Printf("\nrequest %s\n", stream.Meta.RequestID)
+```
+
+`ChatCompletionsStream`, `CompletionsStream`, `MessagesStream`, and
+`ResponsesStream` copy the request body and force `stream: true`; they never
+mutate the caller's map. `Stream` remains the generic escape hatch.
+
+## Binary endpoints
 
 The JSON helpers refuse a non-JSON 2xx rather than handing back an empty body
-for a request you were billed for. Use `Bytes` for `/audio/speech`,
-`/videos/{id}/content`, and any request with `"stream": true`:
+for a request you were billed for. Use `Bytes` for `/audio/speech` and
+`/videos/{id}/content`:
 
 ```go
 audio, err := client.AudioSpeech(ctx, map[string]any{
@@ -122,11 +156,11 @@ audio, err := client.AudioSpeech(ctx, map[string]any{
 
 ## Endpoints
 
-All 15 gateway operations have named helpers: `ChatCompletions`, `Completions`,
+All 15 gateway operations have named buffered helpers: `ChatCompletions`, `Completions`,
 `Embeddings`, `ImagesGenerations`, `Messages`, `CountTokens`, `Responses`,
 `Models`, `Model`, `CreateVideo`, `RetrieveVideo`, `DownloadVideoContent`,
 `AudioSpeech`, `AudioTranscriptions`, and `AudioTranslations`. `Post`, `Get`,
-`Bytes`, and `Multipart` remain available as escape hatches.
+`Bytes`, `Multipart`, and `Stream` remain available as escape hatches.
 
 ## Test
 

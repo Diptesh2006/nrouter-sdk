@@ -19,6 +19,59 @@ pub struct Response<T> {
     pub meta: ResponseMeta,
 }
 
+/// One provider-native SSE frame plus portable incremental text.
+#[derive(Debug, Clone)]
+pub struct StreamChunk {
+    pub event: Option<String>,
+    pub delta: String,
+    pub raw: Value,
+}
+
+/// An incremental billed response. Dropping it drops the reqwest response and
+/// cancels the unread body rather than leaving generation running unseen.
+pub struct EventStream {
+    pub meta: ResponseMeta,
+    response: reqwest::Response,
+    buffer: Vec<u8>,
+    done: bool,
+}
+
+impl EventStream {
+    /// Read the next SSE frame. `Ok(None)` means an explicit protocol
+    /// terminator; a bare EOF is a retryable transport failure.
+    pub async fn next(&mut self) -> Result<Option<StreamChunk>, NRouterError> {
+        if self.done {
+            return Ok(None);
+        }
+        loop {
+            if let Some(frame) = take_sse_frame(&mut self.buffer) {
+                match parse_sse_frame(&frame, &self.meta)? {
+                    ParsedFrame::Chunk(chunk) => return Ok(Some(chunk)),
+                    ParsedFrame::Done => {
+                        self.done = true;
+                        return Ok(None);
+                    }
+                    ParsedFrame::Skip => continue,
+                }
+            }
+            match self
+                .response
+                .chunk()
+                .await
+                .map_err(|e| NRouterError::Transport(e.to_string()))?
+            {
+                Some(bytes) => self.buffer.extend_from_slice(&bytes),
+                None => {
+                    self.done = true;
+                    return Err(NRouterError::Transport(
+                        "the stream ended before its terminal event".into(),
+                    ));
+                }
+            }
+        }
+    }
+}
+
 /// Thin nRouter HTTP client over the OpenAI wire format.
 ///
 /// `Debug` is implemented by hand, NOT derived: a derived one prints `api_key`
@@ -110,6 +163,26 @@ impl Client {
     /// `POST /responses`.
     pub async fn responses(&self, body: &Value) -> Result<Response<Value>, NRouterError> {
         self.post("/responses", body).await
+    }
+
+    /// Incremental `POST /chat/completions`.
+    pub async fn chat_completions_stream(&self, body: &Value) -> Result<EventStream, NRouterError> {
+        self.stream("/chat/completions", body).await
+    }
+
+    /// Incremental legacy `POST /completions`.
+    pub async fn completions_stream(&self, body: &Value) -> Result<EventStream, NRouterError> {
+        self.stream("/completions", body).await
+    }
+
+    /// Incremental native Anthropic `POST /messages`.
+    pub async fn messages_stream(&self, body: &Value) -> Result<EventStream, NRouterError> {
+        self.stream("/messages", body).await
+    }
+
+    /// Incremental `POST /responses`.
+    pub async fn responses_stream(&self, body: &Value) -> Result<EventStream, NRouterError> {
+        self.stream("/responses", body).await
     }
 
     /// `POST /images/generations`.
@@ -222,6 +295,62 @@ impl Client {
             .bearer_auth(&self.api_key)
             .json(body);
         self.send(req).await
+    }
+
+    /// Stream any JSON `POST` under the gateway's `/v1` root as SSE. The body
+    /// is cloned before `stream: true` is inserted.
+    pub async fn stream(&self, path: &str, body: &Value) -> Result<EventStream, NRouterError> {
+        let mut streamed = body.clone();
+        let object = streamed.as_object_mut().ok_or_else(|| {
+            NRouterError::Configuration("streaming request body must be a JSON object".into())
+        })?;
+        object.insert("stream".into(), Value::Bool(true));
+        let response = self
+            .http
+            .post(self.url(path))
+            .bearer_auth(&self.api_key)
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .json(&streamed)
+            .send()
+            .await
+            .map_err(|e| NRouterError::Transport(e.to_string()))?;
+        let status = response.status().as_u16();
+        let meta = ResponseMeta::from_headers(response.headers());
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !(200..300).contains(&status) {
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok());
+            let raw = response
+                .bytes()
+                .await
+                .map_err(|e| NRouterError::Transport(e.to_string()))?;
+            let parsed: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
+            return Err(NRouterError::from_code(error_body(
+                status,
+                &parsed,
+                &meta,
+                retry_after,
+            )));
+        }
+        if !content_type.contains("text/event-stream") {
+            return Err(NRouterError::Transport(format!(
+                "nRouter returned {status} with content-type '{content_type}', which is not an SSE stream"
+            )));
+        }
+        Ok(EventStream {
+            meta,
+            response,
+            buffer: Vec::new(),
+            done: false,
+        })
     }
 
     /// Any `GET` path under the gateway's `/v1` root.
@@ -347,6 +476,127 @@ impl Client {
             retry_after,
         )))
     }
+}
+
+enum ParsedFrame {
+    Chunk(StreamChunk),
+    Done,
+    Skip,
+}
+
+fn take_sse_frame(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+    let lf = buffer.windows(2).position(|w| w == b"\n\n").map(|i| (i, 2));
+    let crlf = buffer
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|i| (i, 4));
+    let (index, delimiter) = match (lf, crlf) {
+        (Some(a), Some(b)) => {
+            if a.0 <= b.0 {
+                a
+            } else {
+                b
+            }
+        }
+        (Some(found), None) | (None, Some(found)) => found,
+        (None, None) => return None,
+    };
+    let frame = buffer[..index].to_vec();
+    buffer.drain(..index + delimiter);
+    Some(frame)
+}
+
+fn parse_sse_frame(frame: &[u8], meta: &ResponseMeta) -> Result<ParsedFrame, NRouterError> {
+    let text = String::from_utf8_lossy(frame);
+    let mut event = None;
+    let mut data = Vec::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        if line.starts_with(':') {
+            continue;
+        }
+        let (name, value) = line.split_once(':').unwrap_or((line, ""));
+        let value = value.strip_prefix(' ').unwrap_or(value);
+        match name {
+            "event" => event = Some(value.to_string()),
+            "data" => data.push(value),
+            _ => {}
+        }
+    }
+    let data = data.join("\n");
+    let trimmed = data.trim();
+    if trimmed.is_empty() {
+        return Ok(ParsedFrame::Skip);
+    }
+    if trimmed == "[DONE]" {
+        return Ok(ParsedFrame::Done);
+    }
+    let raw: Value = match serde_json::from_str(trimmed) {
+        Ok(value) => value,
+        Err(_) if event.as_deref() != Some("error") => return Ok(ParsedFrame::Skip),
+        Err(_) => {
+            return Err(NRouterError::from_code(ErrorBody {
+                message: trimmed.to_string(),
+                status: Some(200),
+                request_id: meta.request_id.clone(),
+                ..ErrorBody::default()
+            }))
+        }
+    };
+    if event.as_deref() == Some("error") || raw.get("error").is_some() {
+        let node = raw.get("error").unwrap_or(&raw);
+        let explicit = node.get("code").and_then(Value::as_str);
+        let type_code = node
+            .get("type")
+            .and_then(Value::as_str)
+            .filter(|code| is_known_error_code(code));
+        return Err(NRouterError::from_code(ErrorBody {
+            message: node
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or(trimmed)
+                .to_string(),
+            code: explicit.or(type_code).map(str::to_string),
+            status: Some(200),
+            request_id: meta.request_id.clone(),
+            limit_source: meta.limit_source.clone(),
+            auth_reason: meta.auth_reason.clone(),
+            retry_after: None,
+        }));
+    }
+    if matches!(
+        raw.get("type").and_then(Value::as_str),
+        Some("message_stop" | "response.completed")
+    ) {
+        return Ok(ParsedFrame::Done);
+    }
+    let delta = raw
+        .get("delta")
+        .and_then(Value::as_str)
+        .or_else(|| raw.pointer("/delta/text").and_then(Value::as_str))
+        .or_else(|| raw.pointer("/choices/0/text").and_then(Value::as_str))
+        .or_else(|| {
+            raw.pointer("/choices/0/delta/content")
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("")
+        .to_string();
+    Ok(ParsedFrame::Chunk(StreamChunk { event, delta, raw }))
+}
+
+fn is_known_error_code(code: &str) -> bool {
+    matches!(
+        code,
+        "invalid_request"
+            | "guardrail_blocked"
+            | "invalid_api_key"
+            | "insufficient_credits"
+            | "model_not_found"
+            | "rate_limit_exceeded"
+            | "tpm_limit_exceeded"
+            | "credit_check_failed"
+            | "service_unavailable"
+    )
 }
 
 fn percent_encode_segment(value: &str) -> String {

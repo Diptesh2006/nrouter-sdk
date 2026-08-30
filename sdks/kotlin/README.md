@@ -33,6 +33,28 @@ println(result.body.getJSONArray("choices"))
 Calls are `suspend` and hop to `Dispatchers.IO` themselves, so calling one from
 a UI coroutine will not block the main thread.
 
+## Streaming
+
+The four text wires expose cold, cancellable `Flow`s. Each item carries a
+portable `delta`, the untouched provider-native `raw` frame, and the response
+metadata. Cancelling collection cancels the underlying OkHttp call immediately:
+
+```kotlin
+client.messagesStream(
+    JSONObject()
+        .put("model", "claude-haiku-4-5-20251001")
+        .put("max_tokens", 256)
+        .put("messages", listOf(mapOf("role" to "user", "content" to "Hello!")))
+).collect { chunk ->
+    print(chunk.delta)
+}
+```
+
+`chatCompletionsStream`, `completionsStream`, `messagesStream`, and
+`responsesStream` copy the supplied `JSONObject` and force `stream: true`.
+An in-band output-guardrail event terminates collection with
+`NRouterError.GuardrailBlocked`; it never looks like a clean truncated answer.
+
 ## What a call cost
 
 Every response carries the gateway's `x-nr-*` metadata:
@@ -111,11 +133,11 @@ NRouter(
 
 ## Endpoints
 
-All 15 gateway operations have named helpers: `chatCompletions`, `completions`,
+All 15 gateway operations have named buffered helpers: `chatCompletions`, `completions`,
 `embeddings`, `imagesGenerations`, `messages`, `countTokens`, `responses`,
 `models`, `model`, `createVideo`, `retrieveVideo`, `downloadVideoContent`,
 `audioSpeech`, `audioTranscriptions`, and `audioTranslations`. `post`, `get`,
-`bytes`, and `multipart` remain available as escape hatches.
+`bytes`, `multipart`, and `stream` remain available as escape hatches.
 
 **Not JSON:** `audioTranscriptions` and `audioTranslations` send multipart/form-data
 (the gateway requires a binary `file` part, so the JSON helpers cannot reach them);

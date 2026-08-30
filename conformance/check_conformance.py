@@ -53,7 +53,12 @@ SDK_SOURCES: dict[str, list[str]] = {
         "sdks/js/src/meta.ts",
         "sdks/js/src/errors.ts",
     ],
-    "java": ["sdks/java/src/main/java/ai/nrouter/sdk/NRouter.java"],
+    "java": [
+        "sdks/java/src/main/java/ai/nrouter/sdk/NRouter.java",
+        "sdks/java/src/main/java/ai/nrouter/sdk/NRouterHttpClient.java",
+        "sdks/java/src/main/java/ai/nrouter/sdk/NRouterException.java",
+        "sdks/java/src/main/java/ai/nrouter/sdk/NRouterResponseMeta.java",
+    ],
     "kotlin": [
         "sdks/kotlin/src/main/kotlin/ai/nrouter/sdk/NRouter.kt",
         "sdks/kotlin/src/main/kotlin/ai/nrouter/sdk/NRouterError.kt",
@@ -79,7 +84,12 @@ SDK_SOURCES: dict[str, list[str]] = {
         "sdks/dart/lib/src/meta.dart",
     ],
     "r": ["sdks/r/R/client.R", "sdks/r/R/errors.R", "sdks/r/R/meta.R"],
-    "go": ["sdks/go/client.go", "sdks/go/errors.go", "sdks/go/meta.go"],
+    "go": [
+        "sdks/go/client.go",
+        "sdks/go/errors.go",
+        "sdks/go/meta.go",
+        "sdks/go/stream.go",
+    ],
 }
 
 # These SDKs own their HTTP transport rather than delegating it to a vendor or
@@ -87,6 +97,16 @@ SDK_SOURCES: dict[str, list[str]] = {
 # executable source. This is a source-level cross-language gate; each SDK's own
 # wire tests prove that the named helper sends the path correctly.
 FIRST_PARTY_NATIVE = {"go", "kotlin", "swift", "rust", "dart", "r"}
+
+# The four text-generation wires are genuinely incremental in every native
+# transport. Keep that a contract rather than a README claim.
+STREAMING_NATIVE = FIRST_PARTY_NATIVE
+STREAM_HELPERS = {
+    "chatCompletions": "chatCompletionsStream",
+    "completions": "completionsStream",
+    "messages": "messagesStream",
+    "responses": "responsesStream",
+}
 
 # Canonical operation names come from the spec. Every native SDK uses the same
 # conceptual helper name, translated only into that language's naming style.
@@ -127,13 +147,25 @@ def native_helper_pattern(sdk: str, basename: str) -> str:
     }
     return patterns[sdk]
 
+
+def stream_helper_pattern(sdk: str, basename: str) -> str:
+    snake = snake_case(basename)
+    patterns = {
+        "go": rf"func\s+\(c \*Client\)\s+{basename[0].upper() + basename[1:]}\(",
+        "kotlin": rf"public\s+fun\s+{basename}\(",
+        "swift": rf"public\s+func\s+{basename}\(",
+        "rust": rf"pub\s+async\s+fn\s+{snake}\(",
+        "dart": rf"Stream<NRouterStreamChunk>\s+{basename}\(",
+        "r": rf"nrouter_{snake}\s*<-\s*function\(",
+    }
+    return patterns[sdk]
+
 # An SDK that only wraps a vendor client does not restate every constant: the
 # vendor SDK owns the transport, so headers and error codes live in the wrapper
 # only where it adds them. These SDKs are held to the connection contract (base
 # URL, env var, key prefix) and exempted from the rest, with the reason stated
 # so the exemption is a decision rather than an oversight.
 WRAPPER_ONLY = {
-    "java": "wraps com.openai:openai-java; transport and errors are the vendor's",
     "android": "delegates every wire concern to the shared sdks/kotlin artifact",
 }
 
@@ -349,6 +381,13 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
                         f"{endpoint['path']} has no executable native helper"
                     )
 
+        if sdk in STREAMING_NATIVE:
+            for basename in STREAM_HELPERS.values():
+                if re.search(stream_helper_pattern(sdk, basename), blob) is None:
+                    failures.append(
+                        f"{sdk}: native streaming helper {basename!r} is missing"
+                    )
+
         # The code STRINGS are only half the error contract: the spec also fixes
         # each code's HTTP status, and the gateway's main error path sends no
         # code at all, so status dispatch is the ordinary route rather than a
@@ -447,6 +486,16 @@ def self_test() -> int:
             problems.append("deleting a real header from a real SDK did not fail the check")
         victim.write_text(text)
 
+        # Delete one native streaming helper. Streaming is a public capability,
+        # so a buffered-only regression must not pass the shared gate.
+        victim = fake_root / "sdks/go/stream.go"
+        text = victim.read_text()
+        victim.write_text(text.replace("MessagesStream(", "RemovedMessagesStream(", 1))
+        failures = check(root=fake_root)
+        if not any("messagesStream" in f and "go" in f for f in failures):
+            problems.append("deleting a real streaming helper did not fail the check")
+        victim.write_text(text)
+
         # Delete a real native helper while leaving its path string behind.
         # A path-only gate would miss this because the generic transport can
         # still send arbitrary paths; completeness requires the public helper.
@@ -468,10 +517,16 @@ def self_test() -> int:
         victim = fake_root / "sdks/dart/lib/src/errors.dart"
         text = victim.read_text()
         victim.write_text(text.replace("'guardrail_blocked'", "'REMOVED'"))
+        stream_victim = fake_root / "sdks/dart/lib/src/client.dart"
+        stream_text = stream_victim.read_text()
+        stream_victim.write_text(
+            stream_text.replace("'guardrail_blocked'", "'REMOVED'")
+        )
         failures = check(root=fake_root)
         if not any("guardrail_blocked" in f and "dart" in f for f in failures):
             problems.append("deleting a real error code from a real SDK did not fail the check")
         victim.write_text(text)
+        stream_victim.write_text(stream_text)
 
         # Plant a retired spelling.
         victim = fake_root / "sdks/swift/Sources/NRouter/NRouter.swift"

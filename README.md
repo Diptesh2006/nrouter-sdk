@@ -152,7 +152,7 @@ nothing):
 | Language | Install | Registry status | Package | Typed errors | `x-nr-*` metadata |
 |----------|---------|---|---------|---|---|
 | **TypeScript / JS** | `npm install @nrouter_ai/sdk` | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | ✅ 9 codes | ✅ 13 headers |
-| **Java** | Maven `ai.nrouter:nrouter-sdk` | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | vendor SDK's | vendor response access |
+| **Java** | Maven `ai.nrouter:nrouter-sdk` | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | ✅ 9 codes (native HTTP surface) | ✅ 13 headers (native HTTP surface) |
 | **Kotlin** | Maven `ai.nrouter:nrouter-sdk-kotlin` | ⛔ not published | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
 | **Android** | Maven `ai.nrouter:nrouter-sdk-android` | ⛔ not published | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
 | **Swift** | SwiftPM, this repo's URL | ⛔ not published (needs a semver tag) | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
@@ -176,18 +176,30 @@ curl -s https://repo1.maven.org/maven2/ai/nrouter/ | grep -oE 'href="[^"]+"'
 curl -s https://proxy.golang.org/github.com/n!router!a!i/nrouter-sdk/sdks/go/@v/list
 ```
 
-Java extends a vendor OpenAI client, which owns its transport and error types.
-JavaScript/TypeScript and the six first-party native clients map the gateway's
-nine stable error codes and expose all thirteen `x-nr-*` headers. Android
-delegates those guarantees to Kotlin; Python adds the same nRouter typing and
-metadata capture around its vendor client.
+Java keeps its vendor-compatible OpenAI factory and adds a Java 11 native HTTP
+surface for all thirteen `x-nr-*` headers and nine typed gateway errors.
+JavaScript/TypeScript and the six first-party native clients expose the same
+contract. Android delegates those guarantees to Kotlin; Python adds the same
+nRouter typing and metadata capture around its vendor client.
 
 **Every SDK is held to one contract.** `conformance/check_conformance.py` reads
 [`spec/nrouter-sdk-spec.json`](spec/nrouter-sdk-spec.json) and fails if any SDK drifts on
 the base URL, the environment variable, the key prefix, a response header, an error code,
-or one of the 15 native endpoint helpers.
+one of the 15 native endpoint helpers, or one of the four native streaming
+helpers.
 It needs no toolchains, and its `--self-test` proves it goes red rather than merely
 printing green. See [`conformance/`](conformance/).
+
+Run the complete local release gate—including all ten language suites, Android
+lint/AAR assembly, race/clippy/analyzer checks, and conformance mutation
+proof—with:
+
+```bash
+scripts/test-all.sh
+```
+
+The opt-in live tests are intentionally excluded unless `NROUTER_LIVE=1` is
+set, because they make billed inference calls.
 
 Publishing is [`PUBLISHING.md`](PUBLISHING.md): bump the version, merge to `main`, and one workflow per language tests it and ships it. A merge that changes no version publishes nothing.
 

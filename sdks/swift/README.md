@@ -35,6 +35,30 @@ let result = try await client.chatCompletions([
 On iOS there is no environment to read, so pass the key: `try NRouter(apiKey:)`.
 See the key-handling note below before you hardcode one.
 
+## Streaming
+
+The four text wires return an `AsyncThrowingStream`. Metadata is available as
+soon as response headers arrive; each chunk carries portable `delta` text and
+the untouched provider-native JSON bytes:
+
+```swift
+let response = try await client.messagesStream([
+    "model": "claude-haiku-4-5-20251001",
+    "max_tokens": 256,
+    "messages": [["role": "user", "content": "Hello!"]],
+])
+
+for try await chunk in response.chunks {
+    print(chunk.delta, terminator: "")
+}
+print("\nrequest \(response.meta.requestID ?? "-")")
+```
+
+`chatCompletionsStream`, `completionsStream`, `messagesStream`, and
+`responsesStream` copy the request and force `stream: true`. Cancelling the
+consumer task cancels the stream reader, and an in-band output-guardrail event
+throws `.guardrailBlocked` rather than looking like a clean truncated answer.
+
 ## What a call cost
 
 ```swift
@@ -112,11 +136,11 @@ try NRouter(
 
 ## Endpoints
 
-All 15 gateway operations have named helpers: `chatCompletions`, `completions`,
+All 15 gateway operations have named buffered helpers: `chatCompletions`, `completions`,
 `embeddings`, `imagesGenerations`, `messages`, `countTokens`, `responses`,
 `models`, `model`, `createVideo`, `retrieveVideo`, `downloadVideoContent`,
 `audioSpeech`, `audioTranscriptions`, and `audioTranslations`. `post`, `get`,
-`bytes`, and `multipart` remain available as escape hatches.
+`bytes`, `multipart`, and `stream` remain available as escape hatches.
 
 **Not JSON:** `audioTranscriptions` and `audioTranslations` send multipart/form-data
 (the gateway requires a binary `file` part, so the JSON helpers cannot reach them);

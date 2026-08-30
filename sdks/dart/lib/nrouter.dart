@@ -3,6 +3,7 @@
 /// Works unchanged in Flutter (mobile, desktop, web) and plain Dart.
 library;
 
-export 'src/client.dart' show NRouter, NRouterResponse;
+export 'src/client.dart'
+    show NRouter, NRouterResponse, NRouterStreamChunk, NRouterBinaryResponse;
 export 'src/errors.dart';
 export 'src/meta.dart' show NRouterResponseMeta;

@@ -26,6 +26,29 @@ result <- nrouter_chat_completions(client, list(
 result$body$choices[[1]]$message$content
 ```
 
+## Streaming
+
+The four text-generation wires invoke a callback as each SSE event arrives.
+The parser accepts OpenAI `[DONE]` and native Anthropic `message_stop`
+terminators, and raises the same classed conditions for in-band gateway errors.
+
+```r
+nrouter_messages_stream(client, list(
+  model = "claude-haiku-4-5-20251001",
+  max_tokens = 64,
+  messages = list(list(role = "user", content = "Hello!"))
+), function(chunk) {
+  cat(chunk$delta)
+})
+```
+
+The other helpers are `nrouter_chat_completions_stream()`,
+`nrouter_completions_stream()`, and `nrouter_responses_stream()`;
+`nrouter_stream()` is the generic escape hatch. Return `FALSE` from the callback
+to cancel early. Opening response headers carry the request ID, while final
+cost normally remains unknown because headers are committed before generation
+finishes; unknown stays `NULL`, never zero.
+
 One-call form, when you do not need the metadata:
 
 ```r

@@ -107,12 +107,14 @@ final class NRouterRequestError extends NRouterError {
 
 /// `guardrail_blocked` (400) — a guardrail rule denied the request.
 final class NRouterGuardrailBlockedError extends NRouterError {
-  NRouterGuardrailBlockedError(NRouterErrorBody body) : super(_describe(body), body);
+  NRouterGuardrailBlockedError(NRouterErrorBody body)
+      : super(_describe(body), body);
 }
 
 /// `invalid_api_key` (401) — virtual-key authentication refused.
 final class NRouterAuthenticationError extends NRouterError {
-  NRouterAuthenticationError(NRouterErrorBody body) : super(_describe(body), body);
+  NRouterAuthenticationError(NRouterErrorBody body)
+      : super(_describe(body), body);
 }
 
 /// `insufficient_credits` (402) — the credit reserve failed.
@@ -125,7 +127,8 @@ final class NRouterCreditError extends NRouterError {
 /// Three conditions share 402 and two are budget ceilings, whose fix is the
 /// OPPOSITE of a shortfall's: raise the budget, not top up.
 final class NRouterBudgetExceededError extends NRouterError {
-  NRouterBudgetExceededError(NRouterErrorBody body) : super(_describe(body), body);
+  NRouterBudgetExceededError(NRouterErrorBody body)
+      : super(_describe(body), body);
 }
 
 /// `model_not_found` (404) — alias absent or invisible to this tenant.

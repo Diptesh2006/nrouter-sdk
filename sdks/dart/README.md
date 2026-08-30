@@ -24,6 +24,33 @@ print(result.body['choices']);
 client.close();
 ```
 
+## Streaming
+
+The four text-generation wires expose cold, cancellable SSE streams. The SDK
+sets `stream: true`, accepts OpenAI `[DONE]` and native Anthropic
+`message_stop` terminators, and turns in-band gateway errors into the same
+typed exceptions as buffered calls.
+
+```dart
+await for (final chunk in client.messagesStream({
+  'model': 'claude-haiku-4-5-20251001',
+  'max_tokens': 64,
+  'messages': [{'role': 'user', 'content': 'Hello!'}],
+})) {
+  print(chunk.delta);
+}
+```
+
+Available helpers are `chatCompletionsStream`, `completionsStream`,
+`messagesStream`, and `responsesStream`; `stream(path, body)` is the generic
+escape hatch. Cancelling the subscription stops consuming the underlying HTTP
+response.
+
+Streaming metadata is captured from the opening response headers. The final
+request cost is normally unknown there because the headers are sent before
+generation completes; `cost` therefore remains `null`, never a misleading
+zero.
+
 ## Why there is no environment fallback
 
 The server-side nRouter SDKs read `NROUTER_API_KEY`. This one deliberately does

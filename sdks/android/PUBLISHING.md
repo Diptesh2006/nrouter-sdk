@@ -37,9 +37,18 @@ An Android build needs the Android SDK. Point at it with `ANDROID_HOME`, or a
 machine-specific and must never be committed.
 
 ```bash
-export ANDROID_HOME=$HOME/Library/Android/sdk
+brew install --cask android-commandlinetools
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+export PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+yes | sdkmanager --licenses >/dev/null
+sdkmanager 'platforms;android-34' 'build-tools;34.0.0' 'platform-tools'
 ./gradlew build     # compiles, lints, runs the Robolectric tests, builds the AAR
 ```
+
+The paths above are the Homebrew defaults on Apple Silicon. On another host,
+keep the same package IDs and point `JAVA_HOME`/`ANDROID_HOME` at that host's
+JDK 17 and Android SDK roots.
 
 ## Developing against an unreleased core
 

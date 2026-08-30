@@ -2,6 +2,11 @@ package ai.nrouter.sdk
 
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -10,6 +15,7 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -61,6 +67,14 @@ public class NRouter @JvmOverloads constructor(
         val statusCode: Int,
     )
 
+    /** One provider-native SSE frame plus portable incremental text. */
+    public data class StreamChunk(
+        val event: String?,
+        val delta: String,
+        val raw: JSONObject,
+        val meta: NRouterResponseMeta,
+    )
+
     /** `POST /chat/completions` */
     public suspend fun chatCompletions(body: JSONObject): Response = post("/chat/completions", body)
 
@@ -75,6 +89,22 @@ public class NRouter @JvmOverloads constructor(
 
     /** `POST /responses` */
     public suspend fun responses(body: JSONObject): Response = post("/responses", body)
+
+    /** Incremental `POST /chat/completions`; forces `stream: true` in a copy. */
+    public fun chatCompletionsStream(body: JSONObject): Flow<StreamChunk> =
+        stream("/chat/completions", body)
+
+    /** Incremental legacy `POST /completions`. */
+    public fun completionsStream(body: JSONObject): Flow<StreamChunk> =
+        stream("/completions", body)
+
+    /** Incremental native Anthropic `POST /messages`. */
+    public fun messagesStream(body: JSONObject): Flow<StreamChunk> =
+        stream("/messages", body)
+
+    /** Incremental `POST /responses`. */
+    public fun responsesStream(body: JSONObject): Flow<StreamChunk> =
+        stream("/responses", body)
 
     /** `POST /images/generations` */
     public suspend fun imagesGenerations(body: JSONObject): Response = post("/images/generations", body)
@@ -148,9 +178,106 @@ public class NRouter @JvmOverloads constructor(
     public suspend fun post(path: String, body: JSONObject): Response {
         val request = Request.Builder()
             .url(url(path))
-            .post(body.toString().toRequestBody(JSON))
+            .post(encodeJson(body).toRequestBody(JSON))
             .build()
         return send(request)
+    }
+
+    /**
+     * Stream any JSON `POST` under the gateway's `/v1` root as SSE.
+     *
+     * The returned Flow is cold: collection starts the request. Cancelling the
+     * collector calls OkHttp's `Call.cancel()` immediately, which is
+     * load-bearing for billed streams that may otherwise continue unseen.
+     */
+    public fun stream(path: String, body: JSONObject): Flow<StreamChunk> = callbackFlow {
+        val streamed = normalizedObject(body).put("stream", true)
+        val request = Request.Builder()
+            .url(url(path))
+            .header("Authorization", "Bearer $apiKey")
+            .header("Accept", "text/event-stream")
+            .post(streamed.toString().toRequestBody(JSON))
+            .build()
+        val call = http.newCall(request)
+        call.enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                close(NRouterError.Transport(e.message ?: "the stream never reached nRouter"))
+            }
+
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                val meta = NRouterResponseMeta.fromLookup { name -> response.header(name) }
+                if (response.code !in 200..299) {
+                    response.use {
+                        val parsed = runCatching { JSONObject(it.body?.string().orEmpty()) }
+                            .getOrElse { JSONObject() }
+                        close(NRouterError.fromCode(errorBody(it.code, parsed, meta)))
+                    }
+                    return
+                }
+                val contentType = response.header("content-type").orEmpty().lowercase()
+                if (!contentType.contains("text/event-stream")) {
+                    response.close()
+                    close(
+                        NRouterError.Transport(
+                            "nRouter returned ${response.code} with content-type '$contentType', " +
+                                "which is not an SSE stream."
+                        )
+                    )
+                    return
+                }
+
+                launch(Dispatchers.IO) {
+                    response.use {
+                        val source = it.body?.source()
+                        if (source == null) {
+                            close(NRouterError.Transport("nRouter returned an empty stream body"))
+                            return@use
+                        }
+                        var event: String? = null
+                        val data = mutableListOf<String>()
+                        var terminated = false
+                        while (true) {
+                            val line = source.readUtf8Line() ?: break
+                            if (line.isEmpty()) {
+                                if (data.isEmpty()) {
+                                    event = null
+                                    continue
+                                }
+                                when (val frame = parseStreamFrame(event, data.joinToString("\n"), meta)) {
+                                    is ParsedStreamFrame.Chunk -> {
+                                        if (!trySend(frame.value).isSuccess) return@use
+                                    }
+                                    is ParsedStreamFrame.Error -> {
+                                        close(frame.value)
+                                        return@use
+                                    }
+                                    ParsedStreamFrame.Done -> {
+                                        terminated = true
+                                        close()
+                                        return@use
+                                    }
+                                    ParsedStreamFrame.Skip -> Unit
+                                }
+                                event = null
+                                data.clear()
+                                continue
+                            }
+                            if (line.startsWith(":")) continue
+                            val name = line.substringBefore(':')
+                            val value = line.substringAfter(':', "").removePrefix(" ")
+                            when (name) {
+                                "event" -> event = value
+                                "data" -> data += value
+                            }
+                        }
+                        if (!terminated) {
+                            close(NRouterError.Transport("the stream ended before its terminal event"))
+                        }
+                    }
+                }
+            }
+        })
+        awaitClose { call.cancel() }
     }
 
     /** Any `GET` path under the gateway's `/v1` root. */
@@ -184,7 +311,7 @@ public class NRouter @JvmOverloads constructor(
         val request = if (body == null) {
             builder.get().build()
         } else {
-            builder.post(body.toString().toRequestBody(JSON)).build()
+            builder.post(encodeJson(body).toRequestBody(JSON)).build()
         }
 
         return runCall(request) {
@@ -358,4 +485,111 @@ public class NRouter @JvmOverloads constructor(
             )
         }
     }
+}
+
+private sealed interface ParsedStreamFrame {
+    data class Chunk(val value: NRouter.StreamChunk) : ParsedStreamFrame
+    data class Error(val value: NRouterError) : ParsedStreamFrame
+    data object Done : ParsedStreamFrame
+    data object Skip : ParsedStreamFrame
+}
+
+private fun parseStreamFrame(
+    event: String?,
+    data: String,
+    meta: NRouterResponseMeta,
+): ParsedStreamFrame {
+    val trimmed = data.trim()
+    if (trimmed.isEmpty()) return ParsedStreamFrame.Skip
+    if (trimmed == "[DONE]") return ParsedStreamFrame.Done
+    val raw = runCatching { JSONObject(trimmed) }.getOrElse {
+        return if (event == "error") {
+            ParsedStreamFrame.Error(NRouterError.Other(NRouterErrorBody(trimmed, status = 200, requestId = meta.requestId)))
+        } else {
+            ParsedStreamFrame.Skip
+        }
+    }
+    if (event == "error" || raw.has("error")) {
+        val node = raw.optJSONObject("error") ?: raw
+        val type = node.optString("code").ifEmpty {
+            node.optString("type").takeIf(::isKnownStreamErrorCode).orEmpty()
+        }
+        val body = NRouterErrorBody(
+            message = node.optString("message").ifEmpty { trimmed },
+            code = type.ifEmpty { null },
+            status = 200,
+            requestId = meta.requestId,
+            limitSource = meta.limitSource,
+            authReason = meta.authReason,
+        )
+        return ParsedStreamFrame.Error(NRouterError.fromCode(body))
+    }
+    when (raw.optString("type")) {
+        "message_stop", "response.completed" -> return ParsedStreamFrame.Done
+    }
+    return ParsedStreamFrame.Chunk(
+        NRouter.StreamChunk(event, streamDelta(raw), raw, meta)
+    )
+}
+
+private fun streamDelta(raw: JSONObject): String {
+    val direct = raw.opt("delta")
+    if (direct is String) return direct
+    if (direct is JSONObject) return direct.optString("text")
+    val choices = raw.optJSONArray("choices") ?: return ""
+    if (choices.length() == 0) return ""
+    val choice = choices.optJSONObject(0) ?: return ""
+    if (choice.opt("text") is String) return choice.optString("text")
+    return choice.optJSONObject("delta")?.optString("content").orEmpty()
+}
+
+private fun isKnownStreamErrorCode(code: String): Boolean = code in setOf(
+    "invalid_request",
+    "guardrail_blocked",
+    "invalid_api_key",
+    "insufficient_credits",
+    "model_not_found",
+    "rate_limit_exceeded",
+    "tpm_limit_exceeded",
+    "credit_check_failed",
+    "service_unavailable",
+)
+
+// Android's platform org.json does not normalize Kotlin collections the same
+// way as the JVM artifact: JSONObject.put("messages", listOf(...)) can encode
+// `messages` as a string instead of a JSON array. Normalize recursively at the
+// transport boundary so the documented idiomatic Kotlin body is portable.
+private fun encodeJson(body: JSONObject): String = normalizedObject(body).toString()
+
+private fun normalizedObject(body: JSONObject): JSONObject = JSONObject().also { result ->
+    val keys = body.keys()
+    while (keys.hasNext()) {
+        val key = keys.next()
+        result.put(key, normalizedValue(body.opt(key)))
+    }
+}
+
+private fun normalizedValue(value: Any?): Any? = when {
+    value == null || value === JSONObject.NULL -> JSONObject.NULL
+    value is JSONObject -> normalizedObject(value)
+    value is JSONArray -> JSONArray().also { result ->
+        for (index in 0 until value.length()) result.put(normalizedValue(value.opt(index)))
+    }
+    value is Map<*, *> -> JSONObject().also { result ->
+        value.forEach { (key, nested) ->
+            if (key !is String) {
+                throw NRouterError.Configuration("JSON object keys must be strings.")
+            }
+            result.put(key, normalizedValue(nested))
+        }
+    }
+    value is Iterable<*> -> JSONArray().also { result ->
+        value.forEach { result.put(normalizedValue(it)) }
+    }
+    value.javaClass.isArray -> JSONArray().also { result ->
+        for (index in 0 until java.lang.reflect.Array.getLength(value)) {
+            result.put(normalizedValue(java.lang.reflect.Array.get(value, index)))
+        }
+    }
+    else -> value
 }

@@ -3,6 +3,7 @@ package ai.nrouter.sdk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -252,6 +253,73 @@ class ContractTest {
         val raw = clientFor(server).bytes("/audio/speech", JSONObject())
         assertEquals("binary-audio", String(raw.bytes))
         assertEquals(0.004, raw.meta.cost)
+    }
+
+    @Test
+    fun `messages stream yields native Anthropic deltas and forces stream true`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "text/event-stream")
+                .setHeader("x-nr-request-id", "req_stream")
+                .setBody(
+                    "event: content_block_delta\n" +
+                        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Claude\"}}\n\n" +
+                        "event: message_stop\n" +
+                        "data: {\"type\":\"message_stop\"}\n\n",
+                ),
+        )
+
+        val original = JSONObject().put("model", "claude")
+        val chunks = clientFor(server).messagesStream(original).toList()
+        assertEquals(1, chunks.size)
+        assertEquals("Claude", chunks.single().delta)
+        assertEquals("req_stream", chunks.single().meta.requestId)
+        assertFalse(original.has("stream"), "the helper must not mutate the caller's body")
+        assertTrue(JSONObject(server.takeRequest().body.readUtf8()).getBoolean("stream"))
+    }
+
+    @Test
+    fun `nested Kotlin collections are encoded as JSON arrays and objects`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "application/json")
+                .setBody("{}"),
+        )
+        clientFor(server).messages(
+            JSONObject()
+                .put("model", "claude")
+                .put(
+                    "messages",
+                    listOf(mapOf("role" to "user", "content" to "hello")),
+                ),
+        )
+
+        val sent = JSONObject(server.takeRequest().body.readUtf8())
+        val message = sent.getJSONArray("messages").getJSONObject(0)
+        assertEquals("user", message.getString("role"))
+        assertEquals("hello", message.getString("content"))
+    }
+
+    @Test
+    fun `stream error frame raises the typed guardrail failure`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "text/event-stream")
+                .setHeader("x-nr-request-id", "req_blocked")
+                .setBody(
+                    "event: error\n" +
+                        "data: {\"error\":{\"type\":\"guardrail_blocked\",\"message\":\"the response was withheld by an output guardrail\"}}\n\n",
+                ),
+        )
+
+        val error = assertFailsWith<NRouterError.GuardrailBlocked> {
+            clientFor(server).messagesStream(JSONObject()).toList()
+        }
+        assertEquals("req_blocked", error.body?.requestId)
+        assertEquals("guardrail_blocked", error.body?.code)
     }
 
     @Test

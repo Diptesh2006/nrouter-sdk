@@ -10,7 +10,8 @@ dependencies {
 
 The wire behaviour is the shared [`sdks/kotlin`](../kotlin) artifact — this is
 not a second client. Read that README for the response metadata and the error
-table; both apply here unchanged. This module adds the Android-specific parts.
+table; its cold, cancellable streaming helpers also apply here unchanged. This
+module adds the Android-specific parts.
 
 ## Why this module exists
 

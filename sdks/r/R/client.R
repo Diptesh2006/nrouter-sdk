@@ -441,3 +441,235 @@ nrouter_chat <- function(messages, model = "claude-sonnet-4-5", api_key = NULL,
   client <- nrouter_client(api_key = api_key, base_url = base_url)
   nrouter_chat_completions(client, list(model = model, messages = messages))$body
 }
+
+#' Build an incremental server-sent event parser
+#'
+#' The parser is public for advanced transports and deterministic testing. Most
+#' callers should use one of the named streaming helpers.
+#'
+#' @param on_chunk Function called with each decoded event. Return \code{FALSE}
+#'   to cancel the request early.
+#' @return A list with \code{feed(raw)} and \code{finish()} functions.
+#' @export
+nrouter_sse_parser <- function(on_chunk) {
+  if (!is.function(on_chunk)) {
+    stop(nrouter_configuration_condition("on_chunk must be a function."))
+  }
+  buffer <- raw()
+  terminated <- FALSE
+
+  boundary <- function(bytes) {
+    n <- length(bytes)
+    if (n < 2L) return(NULL)
+    lf <- which(bytes[-n] == as.raw(10L) & bytes[-1L] == as.raw(10L))
+    crlf <- if (n >= 4L) {
+      which(bytes[seq_len(n - 3L)] == as.raw(13L) &
+            bytes[2L:(n - 2L)] == as.raw(10L) &
+            bytes[3L:(n - 1L)] == as.raw(13L) &
+            bytes[4L:n] == as.raw(10L))
+    } else integer()
+    starts <- c(if (length(lf)) lf[[1L]] else integer(),
+                if (length(crlf)) crlf[[1L]] else integer())
+    if (!length(starts)) return(NULL)
+    start <- min(starts)
+    list(start = start, end = start + if (start %in% crlf) 3L else 1L)
+  }
+
+  delta_from <- function(data) {
+    if (is.character(data$delta) && length(data$delta)) return(data$delta[[1L]])
+    if (is.list(data$delta) && is.character(data$delta$text)) {
+      return(data$delta$text[[1L]])
+    }
+    choice <- if (is.list(data$choices) && length(data$choices)) data$choices[[1L]] else NULL
+    if (is.list(choice) && is.character(choice$text)) return(choice$text[[1L]])
+    if (is.list(choice$delta) && is.character(choice$delta$content)) {
+      return(choice$delta$content[[1L]])
+    }
+    ""
+  }
+
+  dispatch <- function(frame) {
+    lines <- strsplit(gsub("\r\n", "\n", frame, fixed = TRUE), "\n", fixed = TRUE)[[1L]]
+    event <- ""
+    data_lines <- character()
+    for (line in lines) {
+      if (!nzchar(line) || startsWith(line, ":")) next
+      colon <- regexpr(":", line, fixed = TRUE)[[1L]]
+      name <- if (colon < 0L) line else substr(line, 1L, colon - 1L)
+      value <- if (colon < 0L) "" else substr(line, colon + 1L, nchar(line))
+      value <- sub("^ ", "", value)
+      if (identical(name, "event")) event <- value
+      if (identical(name, "data")) data_lines <- c(data_lines, value)
+    }
+    if (!length(data_lines)) return(invisible(NULL))
+    encoded <- trimws(paste(data_lines, collapse = "\n"))
+    if (!nzchar(encoded)) return(invisible(NULL))
+    if (identical(encoded, "[DONE]")) {
+      terminated <<- TRUE
+      return(invisible(NULL))
+    }
+    data <- tryCatch(
+      jsonlite::fromJSON(encoded, simplifyVector = FALSE),
+      error = function(e) stop(nrouter_transport_condition(
+        paste0("The stream contained invalid JSON: ", conditionMessage(e))
+      ))
+    )
+    if (!is.list(data)) {
+      stop(nrouter_transport_condition(
+        "The stream contained a JSON event that is not an object."
+      ))
+    }
+    if (identical(event, "error") || is.list(data$error)) {
+      node <- if (is.list(data$error)) data$error else data
+      code <- if (is.character(node$code)) node$code[[1L]] else NULL
+      type <- if (is.character(node$type)) node$type[[1L]] else NULL
+      if (is.null(code) && !is.null(type) && type %in% names(NROUTER_ERROR_CLASSES)) {
+        code <- type
+      }
+      message <- if (is.character(node$message)) node$message[[1L]] else "nRouter stream failed"
+      stop(nrouter_condition(message, code = code, status = 200L))
+    }
+    type <- if (is.character(data$type)) data$type[[1L]] else NULL
+    if (!is.null(type) && type %in% c("message_stop", "response.completed")) {
+      terminated <<- TRUE
+      return(invisible(NULL))
+    }
+    keep_going <- on_chunk(list(event = event, delta = delta_from(data), data = data))
+    if (identical(keep_going, FALSE)) {
+      stop(structure(list(message = "stream cancelled", call = NULL),
+                     class = c("nrouter_stream_cancel", "condition")))
+    }
+    invisible(NULL)
+  }
+
+  feed <- function(bytes) {
+    if (terminated || !length(bytes)) return(invisible(NULL))
+    buffer <<- c(buffer, bytes)
+    repeat {
+      split <- boundary(buffer)
+      if (is.null(split)) break
+      frame <- if (split$start > 1L) rawToChar(buffer[seq_len(split$start - 1L)]) else ""
+      buffer <<- if (split$end < length(buffer)) buffer[(split$end + 1L):length(buffer)] else raw()
+      dispatch(frame)
+      if (terminated) break
+    }
+    invisible(NULL)
+  }
+
+  finish <- function() {
+    if (!terminated) {
+      stop(nrouter_transport_condition(
+        "The stream ended before its terminal event."
+      ))
+    }
+    invisible(TRUE)
+  }
+  list(feed = feed, finish = finish)
+}
+
+#' Stream a JSON request from the nRouter gateway
+#'
+#' @param client An \code{nrouter_client}.
+#' @param path Path under the gateway's \code{/v1} root.
+#' @param body Named list forming the request body. \code{stream = TRUE} is set
+#'   in a copy and the caller's list is not mutated.
+#' @param on_chunk Function called incrementally with \code{event}, \code{delta},
+#'   and provider-native \code{data}. Return \code{FALSE} to cancel early.
+#' @return A list with final \code{meta}, \code{status_code}, and
+#'   \code{cancelled}.
+#' @export
+nrouter_stream <- function(client, path, body, on_chunk) {
+  url <- paste0(client$base_url, "/", sub("^/+", "", path))
+  payload <- body
+  payload$stream <- TRUE
+  handle <- curl::new_handle()
+  curl::handle_setheaders(
+    handle,
+    Authorization = paste("Bearer", client$api_key),
+    Accept = "text/event-stream",
+    "Content-Type" = "application/json"
+  )
+  curl::handle_setopt(
+    handle,
+    customrequest = "POST",
+    postfields = charToRaw(jsonlite::toJSON(
+      payload, auto_unbox = TRUE, null = "null"
+    ))
+  )
+  parser <- nrouter_sse_parser(on_chunk)
+  buffered <- raw()
+  cancelled <- FALSE
+  failure <- NULL
+
+  info <- tryCatch(
+    curl::curl_fetch_stream(url, function(bytes) {
+      current <- curl::handle_data(handle)
+      if (current$status_code >= 200L && current$status_code < 300L &&
+          identical(current$type, "text/event-stream")) {
+        parser$feed(bytes)
+      } else {
+        buffered <<- c(buffered, bytes)
+      }
+    }, handle = handle),
+    nrouter_stream_cancel = function(e) {
+      cancelled <<- TRUE
+      curl::handle_data(handle)
+    },
+    nrouter_error = function(e) {
+      failure <<- e
+      curl::handle_data(handle)
+    },
+    error = function(e) {
+      failure <<- nrouter_transport_condition(conditionMessage(e))
+      curl::handle_data(handle)
+    }
+  )
+  if (!is.null(failure)) stop(failure)
+
+  headers <- curl::parse_headers_list(info$headers)
+  meta <- nrouter_meta(headers)
+  status <- info$status_code
+  if (status < 200L || status >= 300L) {
+    parsed <- tryCatch(
+      jsonlite::fromJSON(rawToChar(buffered), simplifyVector = FALSE),
+      error = function(e) list()
+    )
+    stop(nrouter_error_from_payload(status, parsed, meta))
+  }
+  if (!identical(info$type, "text/event-stream")) {
+    stop(nrouter_transport_condition(paste0(
+      "nRouter returned ", status, " with content-type '", info$type,
+      "', which is not an SSE stream."
+    )))
+  }
+  if (!cancelled) parser$finish()
+  list(meta = meta, status_code = status, cancelled = cancelled)
+}
+
+#' Stream POST /chat/completions
+#' @inheritParams nrouter_stream
+#' @export
+nrouter_chat_completions_stream <- function(client, body, on_chunk) {
+  nrouter_stream(client, "/chat/completions", body, on_chunk)
+}
+
+#' Stream POST /completions
+#' @inheritParams nrouter_stream
+#' @export
+nrouter_completions_stream <- function(client, body, on_chunk) {
+  nrouter_stream(client, "/completions", body, on_chunk)
+}
+
+#' Stream POST /messages
+#' @inheritParams nrouter_stream
+#' @export
+nrouter_messages_stream <- function(client, body, on_chunk) {
+  nrouter_stream(client, "/messages", body, on_chunk)
+}
+
+#' Stream POST /responses
+#' @inheritParams nrouter_stream
+#' @export
+nrouter_responses_stream <- function(client, body, on_chunk) {
+  nrouter_stream(client, "/responses", body, on_chunk)
+}

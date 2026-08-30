@@ -53,6 +53,31 @@ match out.meta.cost {
 `cache_read_tokens`, `cache_write_tokens`, `limit_source`, `auth_reason`,
 `response_cache`, `response_cache_age`.
 
+## Streaming
+
+The native client incrementally parses SSE on all four text wires. `delta` is
+portable across OpenAI and Anthropic frames; `raw` preserves the complete
+provider-native JSON. Dropping the stream drops the response body, cancelling
+unread generation:
+
+```rust
+let mut stream = client.messages_stream(&serde_json::json!({
+    "model": "claude-haiku-4-5-20251001",
+    "max_tokens": 256,
+    "messages": [{"role": "user", "content": "Hello!"}]
+})).await?;
+
+while let Some(chunk) = stream.next().await? {
+    print!("{}", chunk.delta);
+}
+println!("\nrequest {:?}", stream.meta.request_id);
+```
+
+`chat_completions_stream`, `completions_stream`, `messages_stream`, and
+`responses_stream` clone the request body and force `stream: true`. An in-band
+output-guardrail event returns `NRouterError::GuardrailBlocked`; a bare EOF is
+a retryable transport failure, never a clean completion.
+
 ## Errors
 
 `NRouterError` variants are chosen from the gateway's stable `code` — not the
@@ -98,11 +123,11 @@ let client = nrouter::http::Client::new("sk-nrouter-...")?
 
 ## Endpoints
 
-All 15 gateway operations have named helpers: `chat_completions`, `completions`,
+All 15 gateway operations have named buffered helpers: `chat_completions`, `completions`,
 `embeddings`, `images_generations`, `messages`, `count_tokens`, `responses`,
 `models`, `model`, `create_video`, `retrieve_video`, `download_video_content`,
 `audio_speech`, `audio_transcriptions`, and `audio_translations`. `post`, `get`,
-`bytes`, and `multipart` remain available as escape hatches.
+`bytes`, `multipart`, and `stream` remain available as escape hatches.
 
 **Not JSON:** `audio_transcriptions` and `audio_translations` send multipart/form-data
 (the gateway requires a binary `file` part, so the JSON helpers cannot reach them);

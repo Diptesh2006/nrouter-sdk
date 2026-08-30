@@ -245,6 +245,74 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(result.body["text"] as? String, "hello")
     }
 
+    func testMessagesStreamYieldsAnthropicDeltaAndForcesStreamTrue() async throws {
+        StubProtocol.captured = nil
+        StubProtocol.response = (
+            200,
+            ["content-type": "text/event-stream", "x-nr-request-id": "req_stream"],
+            Data(
+                (
+                    "event: content_block_delta\n" +
+                    "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Claude\"}}\n\n" +
+                    "event: message_stop\n" +
+                    "data: {\"type\":\"message_stop\"}\n\n"
+                ).utf8
+            )
+        )
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(apiKey: "sk-nrouter-test", session: URLSession(configuration: config))
+        let original: [String: Any] = ["model": "claude"]
+
+        let response = try await client.messagesStream(original)
+        var chunks: [NRouter.StreamChunk] = []
+        for try await chunk in response.chunks { chunks.append(chunk) }
+
+        XCTAssertEqual(chunks.map(\.delta).joined(), "Claude")
+        XCTAssertEqual(response.meta.requestID, "req_stream")
+        XCTAssertNil(original["stream"], "the helper must not mutate the caller's dictionary")
+        let sent = try JSONSerialization.jsonObject(with: XCTUnwrap(StubProtocol.capturedBody))
+            as? [String: Any]
+        XCTAssertEqual(sent?["stream"] as? Bool, true)
+    }
+
+    func testStreamGuardrailEventThrowsTypedFailure() async throws {
+        StubProtocol.response = (
+            200,
+            ["content-type": "text/event-stream", "x-nr-request-id": "req_blocked"],
+            Data(
+                "event: error\ndata: {\"error\":{\"type\":\"guardrail_blocked\",\"message\":\"the response was withheld by an output guardrail\"}}\n\n".utf8
+            )
+        )
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(apiKey: "sk-nrouter-test", session: URLSession(configuration: config))
+        let response = try await client.messagesStream([:])
+
+        do {
+            for try await _ in response.chunks {}
+            XCTFail("an in-band guardrail error must not end as a clean stream")
+        } catch let NRouterError.guardrailBlocked(body) {
+            XCTAssertEqual(body.code, "guardrail_blocked")
+            XCTAssertEqual(body.requestID, "req_blocked")
+        }
+    }
+
+    func testCancellingBufferedCallStopsURLSessionTask() async throws {
+        StubProtocol.hangs = true
+        StubProtocol.stopped = false
+        defer { StubProtocol.hangs = false }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(apiKey: "sk-nrouter-test", session: URLSession(configuration: config))
+        let task = Task { try await client.chatCompletions(["model": "m"]) }
+        try await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+        _ = await task.result
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(StubProtocol.stopped, "cancellation did not stop the billed URLSession task")
+    }
+
     func testNoRenderingOfTheClientPrintsTheAPIKey() throws {
         // A struct reflects its stored properties, so print(), dump() and the
         // debugger all show `apiKey` unless all three protocols are supplied.
@@ -477,6 +545,8 @@ final class StubProtocol: URLProtocol {
     nonisolated(unsafe) static var captured: URLRequest?
     nonisolated(unsafe) static var capturedBody: Data?
     nonisolated(unsafe) static var response: (Int, [String: String], Data) = (200, [:], Data())
+    nonisolated(unsafe) static var hangs = false
+    nonisolated(unsafe) static var stopped = false
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -510,9 +580,10 @@ final class StubProtocol: URLProtocol {
             headerFields: headers
         )!
         client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+        if Self.hangs { return }
         client?.urlProtocol(self, didLoad: payload)
         client?.urlProtocolDidFinishLoading(self)
     }
 
-    override func stopLoading() {}
+    override func stopLoading() { Self.stopped = true }
 }

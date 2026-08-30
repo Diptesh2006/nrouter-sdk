@@ -14,9 +14,11 @@ URL: https://nrouter.ai, https://github.com/nRouterAI/nrouter-sdk
 BugReports: https://github.com/nRouterAI/nrouter-sdk/issues
 Encoding: UTF-8
 Imports:
+    curl,
     httr,
     jsonlite
 Suggests:
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    webfakes
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.1.0

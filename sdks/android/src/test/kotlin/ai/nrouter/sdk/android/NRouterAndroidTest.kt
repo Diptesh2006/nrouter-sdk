@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import ai.nrouter.sdk.NRouter
 import ai.nrouter.sdk.NRouterError
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockWebServer
+import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -71,5 +74,25 @@ class NRouterAndroidTest {
             baseURL = "https://api-stage.nrouter.ai/v1/",
         )
         assertEquals("https://api-stage.nrouter.ai/v1", client.baseURL)
+    }
+
+    @Test
+    fun `a non-string Kotlin map key is a typed configuration failure`() = runBlocking {
+        val server = MockWebServer().also { it.start() }
+        try {
+            val client = NRouterAndroid.create(
+                context,
+                apiKey = "sk-nrouter-test",
+                baseURL = server.url("/v1").toString(),
+            )
+            val error = assertFailsWith<NRouterError.Configuration> {
+                client.messages(
+                    JSONObject().put("messages", listOf(mapOf(1 to "invalid"))),
+                )
+            }
+            assertTrue(error.message.orEmpty().contains("keys must be strings"))
+        } finally {
+            server.shutdown()
+        }
     }
 }

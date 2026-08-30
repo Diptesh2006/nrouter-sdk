@@ -92,6 +92,96 @@ func TestDefaultBaseURLIsTheGateway(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsStreamYieldsIncrementalTextAndMetadata(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body["stream"] != true {
+			t.Fatalf("named streaming helper must force stream=true; got %#v", body)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("x-nr-request-id", "req_stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+
+	stream, err := c.ChatCompletionsStream(context.Background(), map[string]any{"model": "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if stream.Meta.RequestID != "req_stream" {
+		t.Fatalf("metadata must be available before iteration; got %#v", stream.Meta)
+	}
+	var text strings.Builder
+	for stream.Next() {
+		text.WriteString(stream.Chunk().Delta)
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if text.String() != "hello" {
+		t.Fatalf("streamed text = %q", text.String())
+	}
+}
+
+func TestMessagesStreamUnderstandsAnthropicFramesAndTerminator(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/messages" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Claude\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	})
+
+	stream, err := c.MessagesStream(context.Background(), map[string]any{"model": "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if !stream.Next() || stream.Chunk().Delta != "Claude" {
+		t.Fatalf("first chunk = %#v, err = %v", stream.Chunk(), stream.Err())
+	}
+	if stream.Next() {
+		t.Fatal("message_stop is terminal, not a content chunk")
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamTurnsGuardrailErrorEventIntoTypedFailure(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("x-nr-request-id", "req_blocked")
+		_, _ = fmt.Fprint(w, "event: error\ndata: {\"error\":{\"type\":\"guardrail_blocked\",\"message\":\"the response was withheld by an output guardrail\"}}\n\n")
+	})
+
+	stream, err := c.MessagesStream(context.Background(), map[string]any{"model": "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if stream.Next() {
+		t.Fatal("an error frame must never be yielded as a successful chunk")
+	}
+	if !errors.Is(stream.Err(), ErrGuardrailBlocked) {
+		t.Fatalf("got %v; want ErrGuardrailBlocked", stream.Err())
+	}
+	var e *Error
+	if !errors.As(stream.Err(), &e) || e.RequestID != "req_blocked" || e.Code != "guardrail_blocked" {
+		t.Fatalf("typed stream error lost response context: %#v", stream.Err())
+	}
+}
+
 // A single %+v in a caller's log must not print the key. Go's fmt reflects
 // over unexported fields, so this holds only because String/GoString exist.
 func TestClientNeverPrintsTheKey(t *testing.T) {

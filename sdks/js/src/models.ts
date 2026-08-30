@@ -53,17 +53,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Percent-encode a model id for use as a single path segment.
+ * Percent-encode each component of a model id while preserving `/`.
  *
- * Model aliases carry `/` and `:` on some providers (`meta/llama-3.1-70b`,
- * `anthropic.claude-sonnet-4-5:0`). Interpolated unencoded, a `/` splits the
- * id into two path segments and the request silently addresses a DIFFERENT
- * resource — the failure mode is a confusing 404 or, worse, a 200 describing
- * the wrong model. `encodeURIComponent` is the right tool rather than
- * `encodeURI`, which leaves `/` alone precisely because it expects a path.
+ * The gateway intentionally exposes this as a wildcard route because provider
+ * model ids commonly carry `/` (`meta/llama-3.1-70b`). Its WAF rejects an
+ * encoded slash, so encoding the whole id makes valid models unreachable.
+ * Encoding each component protects spaces, query markers and fragments without
+ * changing the gateway's model-id semantics.
  */
 function encodeModelId(modelId: string): string {
-  return encodeURIComponent(modelId);
+  return modelId.split('/').map(encodeURIComponent).join('/');
 }
 
 /**

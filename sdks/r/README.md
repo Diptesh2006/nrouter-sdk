@@ -109,16 +109,23 @@ nrouter_client(
 
 ## Endpoints
 
-`nrouter_chat_completions()`, `nrouter_embeddings()`, `nrouter_messages()`
-(Anthropic wire format), `nrouter_responses()`, `nrouter_models()`, plus
-`nrouter_request()` for anything else under `/v1`.
+All 15 gateway operations have named helpers: `nrouter_chat_completions()`,
+`nrouter_completions()`, `nrouter_embeddings()`,
+`nrouter_images_generations()`, `nrouter_messages()`, `nrouter_count_tokens()`,
+`nrouter_responses()`, `nrouter_models()`, `nrouter_model()`,
+`nrouter_create_video()`, `nrouter_retrieve_video()`,
+`nrouter_download_video_content()`, `nrouter_audio_speech()`,
+`nrouter_audio_transcriptions()`, and `nrouter_audio_translations()`.
+`nrouter_request()`, `nrouter_bytes()`, and `nrouter_multipart()` remain
+available as escape hatches.
 
 **Not JSON:** `nrouter_audio_transcriptions()` and `nrouter_audio_translations()`
 send multipart/form-data (the gateway requires a binary `file` part, so the JSON
-helpers cannot reach them); `nrouter_bytes()` returns raw bytes for
-`/v1/audio/speech`, video content, and anything else that does not answer in JSON.
-The JSON helpers refuse a non-JSON response rather than handing back an empty body
-for a request you were billed for.
+helpers cannot reach them). `nrouter_audio_speech()` and
+`nrouter_download_video_content()` return raw bytes plus metadata;
+`nrouter_bytes()` remains available for other non-JSON responses. The JSON
+helpers refuse a non-JSON response rather than handing back an empty body for a
+request you were billed for.
 
 ## Build and test
 

@@ -106,14 +106,18 @@ itself is released by `close()`.
 
 ## Endpoints
 
-`chatCompletions`, `embeddings`, `messages` (Anthropic wire format), `responses`,
-`models`, plus `post(path, body)` and `get(path)` for anything else under `/v1`.
+All 15 gateway operations have named helpers: `chatCompletions`, `completions`,
+`embeddings`, `imagesGenerations`, `messages`, `countTokens`, `responses`,
+`models`, `model`, `createVideo`, `retrieveVideo`, `downloadVideoContent`,
+`audioSpeech`, `audioTranscriptions`, and `audioTranslations`. `post`, `get`,
+`bytes`, and `multipart` remain available as escape hatches.
 
 **Not JSON:** `audioTranscriptions` and `audioTranslations` send multipart/form-data
 (the gateway requires a binary `file` part, so the JSON helpers cannot reach them);
-`bytes(path, body)` returns raw bytes for `/v1/audio/speech`, video content, and
-anything else that does not answer in JSON. The JSON helpers refuse a non-JSON
-response rather than handing back an empty body for a request you were billed for.
+`audioSpeech()` and `downloadVideoContent()` return raw bytes plus metadata;
+`bytes(path, body)` remains available for other non-JSON responses. The JSON
+helpers refuse a non-JSON response rather than handing back an empty body for a
+request you were billed for.
 
 ## Build and test
 

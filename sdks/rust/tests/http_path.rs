@@ -161,6 +161,58 @@ async fn audio_transcriptions_sends_multipart_with_a_named_file_part() {
 }
 
 #[tokio::test]
+async fn named_helpers_cover_every_remaining_gateway_operation() {
+    macro_rules! assert_body_call {
+        ($method:ident, $expected:literal) => {{
+            let (base, rx) = serve_once(200, "application/json", r#"{}"#);
+            client(&base).$method(&json!({})).await.expect("ok");
+            let sent = rx.recv().expect("request");
+            assert!(sent.contains($expected), "{sent}");
+        }};
+    }
+
+    macro_rules! assert_id_call {
+        ($method:ident, $id:literal, $expected:literal) => {{
+            let (base, rx) = serve_once(200, "application/json", r#"{}"#);
+            client(&base).$method($id).await.expect("ok");
+            let sent = rx.recv().expect("request");
+            assert!(sent.contains($expected), "{sent}");
+        }};
+    }
+
+    assert_body_call!(completions, "POST /v1/completions");
+    assert_body_call!(images_generations, "POST /v1/images/generations");
+    assert_body_call!(count_tokens, "POST /v1/messages/count_tokens");
+    assert_id_call!(
+        model,
+        "provider/model one",
+        "GET /v1/models/provider/model%20one"
+    );
+    assert_body_call!(create_video, "POST /v1/videos");
+    assert_id_call!(retrieve_video, "video/one", "GET /v1/videos/video%2Fone");
+
+    let (base, rx) = serve_once(200, "audio/mpeg", "audio");
+    client(&base)
+        .audio_speech(&json!({}))
+        .await
+        .expect("audio speech");
+    assert!(rx
+        .recv()
+        .expect("request")
+        .contains("POST /v1/audio/speech"));
+
+    let (base, rx) = serve_once(200, "video/mp4", "video");
+    client(&base)
+        .download_video_content("video/one")
+        .await
+        .expect("video content");
+    assert!(rx
+        .recv()
+        .expect("request")
+        .contains("GET /v1/videos/video%2Fone/content"));
+}
+
+#[tokio::test]
 async fn a_codeless_guardrail_400_raises_the_guardrail_variant() {
     // Byte-for-byte the gateway's real envelope: type + message, NO code.
     let (base, _rx) = serve_once(

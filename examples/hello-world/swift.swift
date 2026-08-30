@@ -12,9 +12,13 @@ import NRouter
 struct HelloNRouter {
     static func main() async throws {
         let client = try NRouter() // reads NROUTER_API_KEY from environment
+        // A Smart Router alias activates its strategy/fallback chain; a
+        // concrete model id pins the request to that model.
+        let model = ProcessInfo.processInfo.environment["NROUTER_MODEL"]
+            ?? "claude-sonnet-4-5-20250929"
 
         let result = try await client.chatCompletions([
-            "model": "claude-sonnet-4-5-20250929",
+            "model": model,
             "messages": [
                 ["role": "user", "content": "Reply with one short sentence saying hello from nRouter."]
             ],

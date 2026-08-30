@@ -95,6 +95,11 @@ public struct NRouter: Sendable {
         try await post("/chat/completions", body)
     }
 
+    /// `POST /completions` — the legacy text-completions wire.
+    public func completions(_ body: [String: Any]) async throws -> Response {
+        try await post("/completions", body)
+    }
+
     /// `POST /embeddings`
     public func embeddings(_ body: [String: Any]) async throws -> Response {
         try await post("/embeddings", body)
@@ -108,6 +113,16 @@ public struct NRouter: Sendable {
     /// `POST /responses`
     public func responses(_ body: [String: Any]) async throws -> Response {
         try await post("/responses", body)
+    }
+
+    /// `POST /images/generations`
+    public func imagesGenerations(_ body: [String: Any]) async throws -> Response {
+        try await post("/images/generations", body)
+    }
+
+    /// `POST /messages/count_tokens` — counts input without generating.
+    public func countTokens(_ body: [String: Any]) async throws -> Response {
+        try await post("/messages/count_tokens", body)
     }
 
     /// `POST /audio/transcriptions` — Whisper-style speech to text.
@@ -133,6 +148,13 @@ public struct NRouter: Sendable {
         fields: [String: String] = [:]
     ) async throws -> Response {
         try await multipart("/audio/translations", file: file, fileName: fileName, fields: fields)
+    }
+
+    /// `POST /audio/speech` — generated audio plus response metadata.
+    public func audioSpeech(_ body: [String: Any]) async throws -> (
+        data: Data, meta: NRouterResponseMeta, statusCode: Int
+    ) {
+        try await bytes("/audio/speech", body)
     }
 
     /// Any multipart `POST` under the gateway's `/v1` root.
@@ -197,6 +219,28 @@ public struct NRouter: Sendable {
         try await get("/models")
     }
 
+    /// `GET /models/{model_id}` — one model visible to this key.
+    public func model(_ modelID: String) async throws -> Response {
+        try await get("/models/\(modelPath(modelID))")
+    }
+
+    /// `POST /videos` — starts a video generation job.
+    public func createVideo(_ body: [String: Any]) async throws -> Response {
+        try await post("/videos", body)
+    }
+
+    /// `GET /videos/{id}` — polls one video generation job.
+    public func retrieveVideo(_ videoID: String) async throws -> Response {
+        try await get("/videos/\(pathSegment(videoID))")
+    }
+
+    /// `GET /videos/{id}/content` — generated video bytes.
+    public func downloadVideoContent(_ videoID: String) async throws -> (
+        data: Data, meta: NRouterResponseMeta, statusCode: Int
+    ) {
+        try await bytes("/videos/\(pathSegment(videoID))/content")
+    }
+
     /// Any `POST` path under the gateway's `/v1` root.
     public func post(_ path: String, _ body: [String: Any]) async throws -> Response {
         var request = URLRequest(url: try url(path))
@@ -259,6 +303,23 @@ public struct NRouter: Sendable {
             throw NRouterError.transport("Could not build a URL for \(baseURL)/\(trimmed).")
         }
         return url
+    }
+
+    private func pathSegment(_ value: String) throws -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        guard let encoded = value.addingPercentEncoding(withAllowedCharacters: allowed) else {
+            throw NRouterError.configuration("Path id could not be percent-encoded.")
+        }
+        return encoded
+    }
+
+    // The gateway's model lookup is a wildcard route because provider model
+    // IDs contain `/`. Preserve those separators and escape each component.
+    private func modelPath(_ value: String) throws -> String {
+        try value.split(separator: "/", omittingEmptySubsequences: false)
+            .map { try pathSegment(String($0)) }
+            .joined(separator: "/")
     }
 
     private func send(_ request: URLRequest) async throws -> Response {

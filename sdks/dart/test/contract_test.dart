@@ -346,5 +346,37 @@ void main() {
         ),
       );
     });
+
+    test('named helpers cover every remaining gateway operation', () async {
+      late http.Request seen;
+      final mock = MockClient((request) async {
+        seen = request;
+        final binary = request.url.path == '/v1/audio/speech' ||
+            request.url.path.endsWith('/content');
+        return http.Response(
+          binary ? 'bytes' : '{}',
+          200,
+          headers: {'content-type': binary ? 'application/octet-stream' : 'application/json'},
+        );
+      });
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+
+      await client.completions({});
+      expect(seen.url.path, '/v1/completions');
+      await client.imagesGenerations({});
+      expect(seen.url.path, '/v1/images/generations');
+      await client.countTokens({});
+      expect(seen.url.path, '/v1/messages/count_tokens');
+      await client.model('provider/model one');
+      expect(seen.url.toString(), contains('/v1/models/provider/model%20one'));
+      await client.createVideo({});
+      expect(seen.url.path, '/v1/videos');
+      await client.retrieveVideo('video/one');
+      expect(seen.url.toString(), contains('/v1/videos/video%2Fone'));
+      await client.audioSpeech({});
+      expect(seen.url.path, '/v1/audio/speech');
+      await client.downloadVideoContent('video/one');
+      expect(seen.url.toString(), contains('/v1/videos/video%2Fone/content'));
+    });
   });
 }

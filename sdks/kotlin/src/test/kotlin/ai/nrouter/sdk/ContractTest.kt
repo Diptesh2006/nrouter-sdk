@@ -361,6 +361,27 @@ class ContractTest {
     fun `all remaining endpoints build expected requests`() = runBlocking {
         val client = clientFor(server)
 
+        suspend fun json(path: String, call: suspend () -> Unit) {
+            server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "application/json").setBody("{}"))
+            call()
+            assertEquals(path, server.takeRequest().path)
+        }
+
+        json("/v1/completions") { client.completions(JSONObject()) }
+        json("/v1/images/generations") { client.imagesGenerations(JSONObject()) }
+        json("/v1/messages/count_tokens") { client.countTokens(JSONObject()) }
+        json("/v1/models/provider/model%20one") { client.model("provider/model one") }
+        json("/v1/videos") { client.createVideo(JSONObject()) }
+        json("/v1/videos/video%2Fone") { client.retrieveVideo("video/one") }
+
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "audio/mpeg").setBody("audio"))
+        client.audioSpeech(JSONObject())
+        assertEquals("/v1/audio/speech", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "video/mp4").setBody("video"))
+        client.downloadVideoContent("video/one")
+        assertEquals("/v1/videos/video%2Fone/content", server.takeRequest().path)
+
         server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "application/json").setBody("{}"))
         client.embeddings(JSONObject().put("model", "text-embedding-3"))
         assertEquals("/v1/embeddings", server.takeRequest().path)

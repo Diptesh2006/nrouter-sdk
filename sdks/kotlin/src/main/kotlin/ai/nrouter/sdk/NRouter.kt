@@ -1,5 +1,7 @@
 package ai.nrouter.sdk
 
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -62,6 +64,9 @@ public class NRouter @JvmOverloads constructor(
     /** `POST /chat/completions` */
     public suspend fun chatCompletions(body: JSONObject): Response = post("/chat/completions", body)
 
+    /** `POST /completions` — the legacy text-completions wire. */
+    public suspend fun completions(body: JSONObject): Response = post("/completions", body)
+
     /** `POST /embeddings` */
     public suspend fun embeddings(body: JSONObject): Response = post("/embeddings", body)
 
@@ -70,6 +75,12 @@ public class NRouter @JvmOverloads constructor(
 
     /** `POST /responses` */
     public suspend fun responses(body: JSONObject): Response = post("/responses", body)
+
+    /** `POST /images/generations` */
+    public suspend fun imagesGenerations(body: JSONObject): Response = post("/images/generations", body)
+
+    /** `POST /messages/count_tokens` — counts input without generating. */
+    public suspend fun countTokens(body: JSONObject): Response = post("/messages/count_tokens", body)
 
     /**
      * `POST /audio/transcriptions` — Whisper-style speech to text.
@@ -96,6 +107,9 @@ public class NRouter @JvmOverloads constructor(
         fields: Map<String, String> = emptyMap(),
     ): Response = multipart("/audio/translations", file, fileName, fields)
 
+    /** `POST /audio/speech` — generated audio bytes plus response metadata. */
+    public suspend fun audioSpeech(body: JSONObject): RawResponse = bytes("/audio/speech", body)
+
     /** Any multipart `POST` under the gateway's `/v1` root. */
     public suspend fun multipart(
         path: String,
@@ -116,6 +130,19 @@ public class NRouter @JvmOverloads constructor(
 
     /** `GET /models` — what this key is allowed to route to. */
     public suspend fun models(): Response = get("/models")
+
+    /** `GET /models/{model_id}` — one model visible to this key. */
+    public suspend fun model(modelID: String): Response = get("/models/${modelPath(modelID)}")
+
+    /** `POST /videos` — starts a video generation job. */
+    public suspend fun createVideo(body: JSONObject): Response = post("/videos", body)
+
+    /** `GET /videos/{id}` — polls one video generation job. */
+    public suspend fun retrieveVideo(videoID: String): Response = get("/videos/${pathSegment(videoID)}")
+
+    /** `GET /videos/{id}/content` — generated video bytes. */
+    public suspend fun downloadVideoContent(videoID: String): RawResponse =
+        bytes("/videos/${pathSegment(videoID)}/content")
 
     /** Any `POST` path under the gateway's `/v1` root. */
     public suspend fun post(path: String, body: JSONObject): Response {
@@ -174,6 +201,13 @@ public class NRouter @JvmOverloads constructor(
     }
 
     private fun url(path: String): String = "$baseURL/${path.trimStart('/')}"
+
+    private fun pathSegment(value: String): String =
+        URLEncoder.encode(value, StandardCharsets.UTF_8.toString()).replace("+", "%20")
+
+    // Model IDs are wildcard paths (for example `provider/model`), not one
+    // segment. Preserve their namespace separators while escaping each part.
+    private fun modelPath(value: String): String = value.split('/').joinToString("/") { pathSegment(it) }
 
     /**
      * Run one call and read it, cancelling the call if the caller is cancelled.

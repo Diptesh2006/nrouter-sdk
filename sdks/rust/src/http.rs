@@ -92,6 +92,11 @@ impl Client {
         self.post("/chat/completions", body).await
     }
 
+    /// `POST /completions` — the legacy text-completions wire.
+    pub async fn completions(&self, body: &Value) -> Result<Response<Value>, NRouterError> {
+        self.post("/completions", body).await
+    }
+
     /// `POST /embeddings`.
     pub async fn embeddings(&self, body: &Value) -> Result<Response<Value>, NRouterError> {
         self.post("/embeddings", body).await
@@ -105,6 +110,16 @@ impl Client {
     /// `POST /responses`.
     pub async fn responses(&self, body: &Value) -> Result<Response<Value>, NRouterError> {
         self.post("/responses", body).await
+    }
+
+    /// `POST /images/generations`.
+    pub async fn images_generations(&self, body: &Value) -> Result<Response<Value>, NRouterError> {
+        self.post("/images/generations", body).await
+    }
+
+    /// `POST /messages/count_tokens` — counts input without generating.
+    pub async fn count_tokens(&self, body: &Value) -> Result<Response<Value>, NRouterError> {
+        self.post("/messages/count_tokens", body).await
     }
 
     /// `POST /audio/transcriptions` — Whisper-style speech to text.
@@ -136,6 +151,11 @@ impl Client {
             .await
     }
 
+    /// `POST /audio/speech` — generated audio plus response metadata.
+    pub async fn audio_speech(&self, body: &Value) -> Result<Response<Vec<u8>>, NRouterError> {
+        self.bytes("POST", "/audio/speech", Some(body)).await
+    }
+
     /// Any multipart `POST` under the gateway's `/v1` root.
     pub async fn multipart(
         &self,
@@ -162,6 +182,36 @@ impl Client {
     /// `GET /models` — what this key is allowed to route to.
     pub async fn models(&self) -> Result<Response<Value>, NRouterError> {
         self.get("/models").await
+    }
+
+    /// `GET /models/{model_id}` — one model visible to this key.
+    pub async fn model(&self, model_id: &str) -> Result<Response<Value>, NRouterError> {
+        self.get(&format!("/models/{}", percent_encode_model_id(model_id)))
+            .await
+    }
+
+    /// `POST /videos` — starts a video generation job.
+    pub async fn create_video(&self, body: &Value) -> Result<Response<Value>, NRouterError> {
+        self.post("/videos", body).await
+    }
+
+    /// `GET /videos/{id}` — polls one video generation job.
+    pub async fn retrieve_video(&self, video_id: &str) -> Result<Response<Value>, NRouterError> {
+        self.get(&format!("/videos/{}", percent_encode_segment(video_id)))
+            .await
+    }
+
+    /// `GET /videos/{id}/content` — generated video bytes.
+    pub async fn download_video_content(
+        &self,
+        video_id: &str,
+    ) -> Result<Response<Vec<u8>>, NRouterError> {
+        self.bytes(
+            "GET",
+            &format!("/videos/{}/content", percent_encode_segment(video_id)),
+            None,
+        )
+        .await
     }
 
     /// Any `POST` path under the gateway's `/v1` root.
@@ -297,6 +347,31 @@ impl Client {
             retry_after,
         )))
     }
+}
+
+fn percent_encode_segment(value: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+    }
+    encoded
+}
+
+// Provider model IDs are wildcard paths (`provider/model`), whereas video IDs
+// are single segments. Preserve model namespace separators and encode each
+// component independently so the gateway WAF never receives `%2F`.
+fn percent_encode_model_id(value: &str) -> String {
+    value
+        .split('/')
+        .map(percent_encode_segment)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Pull the gateway's stable `code` and message out of an error payload.

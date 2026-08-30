@@ -115,10 +115,18 @@ for a request you were billed for. Use `Bytes` for `/audio/speech`,
 `/videos/{id}/content`, and any request with `"stream": true`:
 
 ```go
-audio, err := client.Bytes(ctx, "POST", "/audio/speech", map[string]any{
+audio, err := client.AudioSpeech(ctx, map[string]any{
 	"model": "gpt-4o-mini-tts", "voice": "alloy", "input": "Hello",
 })
 ```
+
+## Endpoints
+
+All 15 gateway operations have named helpers: `ChatCompletions`, `Completions`,
+`Embeddings`, `ImagesGenerations`, `Messages`, `CountTokens`, `Responses`,
+`Models`, `Model`, `CreateVideo`, `RetrieveVideo`, `DownloadVideoContent`,
+`AudioSpeech`, `AudioTranscriptions`, and `AudioTranslations`. `Post`, `Get`,
+`Bytes`, and `Multipart` remain available as escape hatches.
 
 ## Test
 

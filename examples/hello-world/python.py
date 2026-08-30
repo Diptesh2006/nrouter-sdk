@@ -8,9 +8,13 @@ from nroutersdk import nRouter
 
 def main() -> None:
     client = nRouter()  # reads NROUTER_API_KEY from environment
+    # A Smart Router alias activates its configured strategy and fallback
+    # chain; a concrete model id pins the request to that model.
+    import os
+    model = os.getenv("NROUTER_MODEL", "claude-sonnet-4-5-20250929")
 
     response = client.chat.completions.create(
-        model="claude-sonnet-4-5-20250929",
+        model=model,
         messages=[{"role": "user", "content": "Reply with one short sentence saying hello from nRouter."}],
         max_tokens=32,
     )

@@ -1,21 +1,17 @@
 # nRouter — R hello world
-# install.packages(c("httr", "jsonlite"))
-# No official OpenAI R SDK — call the OpenAI-compatible endpoint directly.
+# remotes::install_github("nRouterAI/nrouter-sdk", subdir = "sdks/r")
 
-library(httr)
-library(jsonlite)
+library(nrouter)
 
-nrouter_key <- Sys.getenv("NROUTER_API_KEY")
+# A Smart Router alias activates its strategy/fallback chain; a concrete model
+# id pins the request to that model.
+model <- Sys.getenv("NROUTER_MODEL", "claude-sonnet-4-5-20250929")
+client <- nrouter_client()
 
-response <- POST(
-  url = "https://api.nrouter.ai/v1/chat/completions",
-  add_headers(Authorization = paste("Bearer", nrouter_key)),
-  content_type_json(),
-  body = toJSON(list(
-    model = "claude-sonnet-4-5",
-    messages = list(list(role = "user", content = "Hello, nRouter!"))
-  ), auto_unbox = TRUE)
-)
+response <- nrouter_chat_completions(client, list(
+  model = model,
+  messages = list(list(role = "user", content = "Hello, nRouter!"))
+))
 
-result <- content(response, as = "parsed", type = "application/json")
-cat(result$choices[[1]]$message$content, "\n")
+cat(response$body$choices[[1]]$message$content, "\n")
+print(response$meta)

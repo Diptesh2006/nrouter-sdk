@@ -12,9 +12,12 @@ import org.json.JSONObject
 
 fun main() = runBlocking {
     val client = NRouter() // reads NROUTER_API_KEY from environment
+    // A Smart Router alias activates its strategy/fallback chain; a concrete
+    // model id pins the request to that model.
+    val model = System.getenv("NROUTER_MODEL") ?: "claude-sonnet-4-5-20250929"
 
     val body = JSONObject()
-        .put("model", "claude-sonnet-4-5-20250929")
+        .put("model", model)
         .put("messages", JSONArray().put(
             JSONObject()
                 .put("role", "user")

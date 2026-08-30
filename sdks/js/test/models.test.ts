@@ -65,14 +65,14 @@ test('ids() returns ids in gateway order and drops entries without one', async (
   assert.deepEqual(await new NRouterModels(client).ids(), ['a', 'b']);
 });
 
-test('get() percent-encodes a model id so a slash cannot re-route the request', async () => {
+test('get() preserves model namespace slashes and encodes each component', async () => {
   // `meta/llama-3.1-70b` interpolated unencoded splits into two path segments
   // and silently addresses a DIFFERENT resource.
   const client = fakeClient((path: string) => ({ id: decodeURIComponent(path.slice('/models/'.length)) }));
   const models = new NRouterModels(client);
 
   await models.get('meta/llama-3.1-70b');
-  assert.equal(client.seen[0], '/models/meta%2Fllama-3.1-70b');
+  assert.equal(client.seen[0], '/models/meta/llama-3.1-70b');
 
   await models.get('anthropic.claude-sonnet-4-5:0');
   assert.equal(client.seen[1], '/models/anthropic.claude-sonnet-4-5%3A0');

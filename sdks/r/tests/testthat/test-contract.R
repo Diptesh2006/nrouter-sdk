@@ -180,3 +180,20 @@ test_that("printing a client never discloses its key", {
   expect_false(grepl("SECRET123", rendered, fixed = TRUE))
   expect_true(grepl("sk-nrouter-...T123", rendered, fixed = TRUE))
 })
+
+test_that("named helpers cover every remaining gateway operation", {
+  expect_equal(nrouter:::nrouter_endpoint_path("completions"), "/completions")
+  expect_equal(nrouter:::nrouter_endpoint_path("images_generations"), "/images/generations")
+  expect_equal(nrouter:::nrouter_endpoint_path("count_tokens"), "/messages/count_tokens")
+  expect_equal(
+    nrouter:::nrouter_endpoint_path("model", "provider/model one"),
+    "/models/provider/model%20one"
+  )
+  expect_equal(nrouter:::nrouter_endpoint_path("create_video"), "/videos")
+  expect_equal(nrouter:::nrouter_endpoint_path("retrieve_video", "video/one"), "/videos/video%2Fone")
+  expect_equal(nrouter:::nrouter_endpoint_path("audio_speech"), "/audio/speech")
+  expect_equal(
+    nrouter:::nrouter_endpoint_path("download_video_content", "video/one"),
+    "/videos/video%2Fone/content"
+  )
+})

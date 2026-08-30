@@ -98,15 +98,18 @@ let client = nrouter::http::Client::new("sk-nrouter-...")?
 
 ## Endpoints
 
-`chat_completions`, `embeddings`, `messages` (Anthropic wire format),
-`responses`, `models`, plus `post(path, body)` and `get(path)` for anything else
-under `/v1`.
+All 15 gateway operations have named helpers: `chat_completions`, `completions`,
+`embeddings`, `images_generations`, `messages`, `count_tokens`, `responses`,
+`models`, `model`, `create_video`, `retrieve_video`, `download_video_content`,
+`audio_speech`, `audio_transcriptions`, and `audio_translations`. `post`, `get`,
+`bytes`, and `multipart` remain available as escape hatches.
 
 **Not JSON:** `audio_transcriptions` and `audio_translations` send multipart/form-data
 (the gateway requires a binary `file` part, so the JSON helpers cannot reach them);
-`bytes(method, path, body)` returns raw bytes for `/v1/audio/speech`, video content,
-and anything else that does not answer in JSON. The JSON helpers refuse a non-JSON
-response rather than handing back an empty body for a request you were billed for.
+`audio_speech()` and `download_video_content()` return raw bytes plus metadata;
+`bytes(method, path, body)` remains available for other non-JSON responses. The
+JSON helpers refuse a non-JSON response rather than handing back an empty body
+for a request you were billed for.
 
 ## Build and test
 

@@ -21,10 +21,11 @@ to the same conformance gate, and are **not yet released**.
 | Python | PyPI | `nrouter-sdk` | 2.1.3 |
 | Java | Maven Central | `ai.nrouter:nrouter-sdk` | 1.0.0 |
 
-`sdks/{kotlin,android,go,rust,swift,dart,r}` are complete enough to pass the
-cross-SDK contract gate and are exercised on every change — they simply have no
-registry release, so no version number here can go stale. Treat them as
-buildable from source, not as something to `install`.
+`sdks/{kotlin,android,go,rust,swift,dart,r}` are held to the same public wire
+contract. The six first-party native transports expose named helpers for all
+15 supported gateway operations; Android delegates that exact surface to
+Kotlin. They simply have no registry release, so treat them as buildable from
+source rather than as something to `install`.
 
 Read those versions off the registries rather than this table if the difference
 would matter; the badges above are live and this text is not.
@@ -136,7 +137,7 @@ println("Cost: ${res.meta.cost?.let { "$$it" } ?: "unpriced"}")
 
 ### SDK Ecosystem & Status
 
-Nine more branded packages, each pre-configured for nRouter. Every one validates the
+Ten branded packages, each pre-configured for nRouter. Every one validates the
 `sk-nrouter-` prefix before any request and points at `https://api.nrouter.ai/v1`; all
 but Dart also resolve `NROUTER_API_KEY` (Dart requires an explicit key — `dart:io` does
 not exist in a Flutter web build, so an environment fallback would silently resolve to
@@ -150,8 +151,8 @@ nothing):
 
 | Language | Install | Registry status | Package | Typed errors | `x-nr-*` metadata |
 |----------|---------|---|---------|---|---|
-| **TypeScript / JS** | `npm install @nrouter_ai/sdk` | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | vendor SDK's | via `.asResponse()` |
-| **Java** | Maven `ai.nrouter:nrouter-sdk` | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | vendor SDK's | via an OkHttp interceptor |
+| **TypeScript / JS** | `npm install @nrouter_ai/sdk` | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | ✅ 9 codes | ✅ 13 headers |
+| **Java** | Maven `ai.nrouter:nrouter-sdk` | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | vendor SDK's | vendor response access |
 | **Kotlin** | Maven `ai.nrouter:nrouter-sdk-kotlin` | ⛔ not published | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
 | **Android** | Maven `ai.nrouter:nrouter-sdk-android` | ⛔ not published | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
 | **Swift** | SwiftPM, this repo's URL | ⛔ not published (needs a semver tag) | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
@@ -175,13 +176,16 @@ curl -s https://repo1.maven.org/maven2/ai/nrouter/ | grep -oE 'href="[^"]+"'
 curl -s https://proxy.golang.org/github.com/n!router!a!i/nrouter-sdk/sdks/go/@v/list
 ```
 
-The JS and Java SDKs extend a vendor OpenAI client, which owns the transport and its own
-error types; the rest are native clients that map the gateway's nine stable error codes to
-typed errors and hand back all thirteen `x-nr-*` headers beside every response.
+Java extends a vendor OpenAI client, which owns its transport and error types.
+JavaScript/TypeScript and the six first-party native clients map the gateway's
+nine stable error codes and expose all thirteen `x-nr-*` headers. Android
+delegates those guarantees to Kotlin; Python adds the same nRouter typing and
+metadata capture around its vendor client.
 
 **Every SDK is held to one contract.** `conformance/check_conformance.py` reads
 [`spec/nrouter-sdk-spec.json`](spec/nrouter-sdk-spec.json) and fails if any SDK drifts on
-the base URL, the environment variable, the key prefix, a response header or an error code.
+the base URL, the environment variable, the key prefix, a response header, an error code,
+or one of the 15 native endpoint helpers.
 It needs no toolchains, and its `--self-test` proves it goes red rather than merely
 printing green. See [`conformance/`](conformance/).
 
@@ -237,6 +241,20 @@ provider key. This table is derived from `spec/nrouter-sdk-spec.json` › `suppo
 | `/v1/videos/{id}/content` | `GET /v1/videos/{id}/content` | Download the video (free) |
 | `/v1/models` | `models.list()` | Tenant-filtered model list |
 | `/v1/models/{model_id}` | `models.retrieve()` | Retrieve one model |
+
+### Routing strategies are selected by the model value
+
+Routing strategy is a gateway concern, so there is no separate per-language
+strategy API to drift. Put a Smart Router alias in `model` to activate its
+configured strategy and fallback chain; put a concrete model id there to pin
+the call to that model. Every runnable hello-world example accepts
+`NROUTER_MODEL` so the same example demonstrates both modes without inventing
+client-only routing behavior.
+
+```bash
+NROUTER_MODEL=my-production-router ./run-your-example   # alias: strategy + fallback
+NROUTER_MODEL=claude-sonnet-4-5-20250929 ./run-your-example  # concrete: pinned
+```
 
 ### Not Served By The Gateway
 

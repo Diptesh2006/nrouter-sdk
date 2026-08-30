@@ -7,6 +7,8 @@ gateway serving ten clients is only as correct as the one that drifted.
 This gate closes that gap. It reads `spec/nrouter-sdk-spec.json` — the source of
 truth under Rule #14 — and asserts every SDK's source encodes the same base URL,
 environment variable, key prefix, thirteen `x-nr-*` headers and nine error codes.
+For the six first-party native transports it also requires a named helper for
+every operation the spec marks supported.
 
 ```bash
 python3 conformance/check_conformance.py             # check
@@ -47,8 +49,8 @@ with each other. Neither replaces the other.
 
 ## Exemptions, stated rather than silent
 
-- **`java`, `js`** — wrap a vendor OpenAI SDK, which owns the transport and the
-  error types. Held to the connection contract only.
+- **`java`** — wraps a vendor OpenAI SDK, which owns the transport and error
+  types. Held to the connection contract only.
 - **`android`** — delegates every wire concern to the shared `sdks/kotlin`
   artifact. It must *prove* the delegation by referencing
   `NRouter.DEFAULT_BASE_URL`, and it **fails if it hardcodes the base URL**,

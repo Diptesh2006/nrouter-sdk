@@ -800,3 +800,71 @@ func TestOutOfRangeTokenCountIsNil(t *testing.T) {
 		t.Fatalf("out-of-range counts must be nil: in=%v total=%v", res.Meta.InputTokens, res.Meta.TotalTokens)
 	}
 }
+
+func TestNamedHelpersCoverEveryRemainingGatewayOperation(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		binary bool
+		call   func(*Client) error
+	}{
+		{
+			name: "audio speech", method: http.MethodPost, path: "/audio/speech", binary: true,
+			call: func(c *Client) error {
+				_, err := c.AudioSpeech(context.Background(), map[string]any{"model": "tts-1", "input": "hi"})
+				return err
+			},
+		},
+		{
+			name: "create video", method: http.MethodPost, path: "/videos",
+			call: func(c *Client) error {
+				_, err := c.CreateVideo(context.Background(), map[string]any{"model": "video-1", "prompt": "ocean"})
+				return err
+			},
+		},
+		{
+			name: "retrieve video", method: http.MethodGet, path: "/videos/video%2Fone",
+			call: func(c *Client) error {
+				_, err := c.RetrieveVideo(context.Background(), "video/one")
+				return err
+			},
+		},
+		{
+			name: "retrieve model", method: http.MethodGet, path: "/models/provider/model%20one",
+			call: func(c *Client) error {
+				_, err := c.Model(context.Background(), "provider/model one")
+				return err
+			},
+		},
+		{
+			name: "download video", method: http.MethodGet, path: "/videos/video%2Fone/content", binary: true,
+			call: func(c *Client) error {
+				_, err := c.DownloadVideoContent(context.Background(), "video/one")
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seen := make(chan *http.Request, 1)
+			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				seen <- r.Clone(r.Context())
+				if tt.binary {
+					w.Header().Set("Content-Type", "application/octet-stream")
+					_, _ = w.Write([]byte("bytes"))
+					return
+				}
+				jsonHandler(200, nil, map[string]any{"ok": true})(w, r)
+			})
+			if err := tt.call(client); err != nil {
+				t.Fatalf("call failed: %v", err)
+			}
+			req := <-seen
+			if req.Method != tt.method || req.URL.EscapedPath() != tt.path {
+				t.Fatalf("got %s %s; want %s %s", req.Method, req.URL.EscapedPath(), tt.method, tt.path)
+			}
+		})
+	}
+}

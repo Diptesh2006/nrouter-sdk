@@ -18,6 +18,13 @@ class NRouterResponse {
   final int statusCode;
 }
 
+/// Raw bytes paired with the metadata and status reported by the gateway.
+typedef NRouterBinaryResponse = ({
+  List<int> bytes,
+  NRouterResponseMeta meta,
+  int statusCode,
+});
+
 /// nRouter client — one API key for models across six provider clouds.
 ///
 /// The gateway speaks the OpenAI wire format, so request and response bodies
@@ -101,6 +108,10 @@ class NRouter {
   Future<NRouterResponse> chatCompletions(Map<String, dynamic> body) =>
       post('/chat/completions', body);
 
+  /// `POST /completions` — the legacy text-completions wire.
+  Future<NRouterResponse> completions(Map<String, dynamic> body) =>
+      post('/completions', body);
+
   /// `POST /embeddings`
   Future<NRouterResponse> embeddings(Map<String, dynamic> body) =>
       post('/embeddings', body);
@@ -112,6 +123,14 @@ class NRouter {
   /// `POST /responses`
   Future<NRouterResponse> responses(Map<String, dynamic> body) =>
       post('/responses', body);
+
+  /// `POST /images/generations`
+  Future<NRouterResponse> imagesGenerations(Map<String, dynamic> body) =>
+      post('/images/generations', body);
+
+  /// `POST /messages/count_tokens` — counts input without generating.
+  Future<NRouterResponse> countTokens(Map<String, dynamic> body) =>
+      post('/messages/count_tokens', body);
 
   /// `POST /audio/transcriptions` — Whisper-style speech to text.
   ///
@@ -134,6 +153,10 @@ class NRouter {
     Map<String, String> fields = const {},
   }) =>
       multipart('/audio/translations', file, fileName, fields: fields);
+
+  /// `POST /audio/speech` — generated audio plus response metadata.
+  Future<NRouterBinaryResponse> audioSpeech(Map<String, dynamic> body) =>
+      bytes('/audio/speech', body);
 
   /// Any multipart `POST` under the gateway's `/v1` root.
   Future<NRouterResponse> multipart(
@@ -203,6 +226,22 @@ class NRouter {
   /// `GET /models` — what this key is allowed to route to.
   Future<NRouterResponse> models() => get('/models');
 
+  /// `GET /models/{model_id}` — one model visible to this key.
+  Future<NRouterResponse> model(String modelId) =>
+      get('/models/${modelId.split('/').map(Uri.encodeComponent).join('/')}');
+
+  /// `POST /videos` — starts a video generation job.
+  Future<NRouterResponse> createVideo(Map<String, dynamic> body) =>
+      post('/videos', body);
+
+  /// `GET /videos/{id}` — polls one video generation job.
+  Future<NRouterResponse> retrieveVideo(String videoId) =>
+      get('/videos/${Uri.encodeComponent(videoId)}');
+
+  /// `GET /videos/{id}/content` — generated video bytes.
+  Future<NRouterBinaryResponse> downloadVideoContent(String videoId) =>
+      bytes('/videos/${Uri.encodeComponent(videoId)}/content');
+
   /// Any `POST` path under the gateway's `/v1` root.
   Future<NRouterResponse> post(String path, Map<String, dynamic> body) =>
       _send('POST', path, body);
@@ -216,7 +255,7 @@ class NRouter {
   /// video, and `stream: true` returns SSE. The JSON helpers refuse those
   /// rather than handing back an empty body for a request you were billed for;
   /// this is the method that returns them.
-  Future<({List<int> bytes, NRouterResponseMeta meta, int statusCode})> bytes(
+  Future<NRouterBinaryResponse> bytes(
     String path, [
     Map<String, dynamic>? body,
   ]) async {

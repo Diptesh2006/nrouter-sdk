@@ -4,16 +4,18 @@
 Each SDK is written in its own language with its own idioms, and each one was
 tested against its own copy of the constants. That proves each SDK is
 self-consistent. It does not prove they agree with EACH OTHER, and a gateway
-serving eight SDKs is only as correct as the one that drifted.
+serving ten SDKs is only as correct as the one that drifted.
 
 This gate closes that. It reads `spec/nrouter-sdk-spec.json` — the source of
 truth under Rule #14 — and asserts that every SDK's source literally contains
 the base URL, the environment variable, the key prefix, all thirteen `x-nr-*`
-headers and all nine error codes. Change the spec and every SDK goes red until
-it is updated; drop a header from one SDK and only that SDK goes red.
+headers and all nine error codes. The six first-party native transports must
+also expose a named helper for every supported operation. Change the spec and
+every SDK goes red until it is updated; drop a header or endpoint helper from
+one SDK and only that SDK goes red.
 
 It deliberately checks the SOURCE TEXT rather than importing each SDK, because
-importing would need eight toolchains present and would quietly skip the ones
+importing would need ten toolchains present and would quietly skip the ones
 that are missing. A skipped check reads as a pass, which is the failure mode
 this gate exists to prevent.
 
@@ -67,6 +69,7 @@ SDK_SOURCES: dict[str, list[str]] = {
     ],
     "rust": [
         "sdks/rust/src/lib.rs",
+        "sdks/rust/src/http.rs",
         "sdks/rust/src/errors.rs",
         "sdks/rust/src/meta.rs",
     ],
@@ -78,6 +81,51 @@ SDK_SOURCES: dict[str, list[str]] = {
     "r": ["sdks/r/R/client.R", "sdks/r/R/errors.R", "sdks/r/R/meta.R"],
     "go": ["sdks/go/client.go", "sdks/go/errors.go", "sdks/go/meta.go"],
 }
+
+# These SDKs own their HTTP transport rather than delegating it to a vendor or
+# sibling package. Every supported operation must therefore appear in their
+# executable source. This is a source-level cross-language gate; each SDK's own
+# wire tests prove that the named helper sends the path correctly.
+FIRST_PARTY_NATIVE = {"go", "kotlin", "swift", "rust", "dart", "r"}
+
+# Canonical operation names come from the spec. Every native SDK uses the same
+# conceptual helper name, translated only into that language's naming style.
+# Requiring the symbol as well as the path prevents `/videos/{id}/content` from
+# accidentally satisfying the check for a deleted `/videos/{id}` helper.
+HELPER_BASENAMES = {
+    "chat.completions.create()": "chatCompletions",
+    "completions.create()": "completions",
+    "embeddings.create()": "embeddings",
+    "images.generate()": "imagesGenerations",
+    "videos.create()": "createVideo",
+    "audio.speech.create()": "audioSpeech",
+    "audio.transcriptions.create()": "audioTranscriptions",
+    "models.list()": "models",
+    "models.retrieve()": "model",
+    "messages.create()": "messages",
+    "messages.count_tokens()": "countTokens",
+    "responses.create()": "responses",
+    "audio.translations.create()": "audioTranslations",
+    "videos.retrieve()": "retrieveVideo",
+    "videos.download_content()": "downloadVideoContent",
+}
+
+
+def snake_case(value: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", value).lower()
+
+
+def native_helper_pattern(sdk: str, basename: str) -> str:
+    snake = snake_case(basename)
+    patterns = {
+        "go": rf"func\s+\(c \*Client\)\s+{basename[0].upper() + basename[1:]}\(",
+        "kotlin": rf"public\s+suspend\s+fun\s+{basename}\(",
+        "swift": rf"public\s+func\s+{basename}\(",
+        "rust": rf"pub\s+async\s+fn\s+{snake}\(",
+        "dart": rf"Future<NRouter[^>]*>\s+{basename}\(",
+        "r": rf"nrouter_{snake}\s*<-\s*function\(",
+    }
+    return patterns[sdk]
 
 # An SDK that only wraps a vendor client does not restate every constant: the
 # vendor SDK owns the transport, so headers and error codes live in the wrapper
@@ -278,6 +326,29 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
             if code not in blob:
                 failures.append(f"{sdk}: error code {code!r} is not mapped")
 
+        if sdk in FIRST_PARTY_NATIVE:
+            for endpoint in spec["supported_endpoints"]:
+                basename = HELPER_BASENAMES.get(endpoint["sdk"])
+                if basename is None:
+                    failures.append(
+                        f"conformance gate: no native helper mapping for "
+                        f"{endpoint['sdk']} ({endpoint['method']} {endpoint['path']})"
+                    )
+                    continue
+                wire_path = endpoint["path"].removeprefix("/v1")
+                if "{" in wire_path:
+                    prefix, remainder = wire_path.split("{", 1)
+                    suffix = remainder.split("}", 1)[1]
+                    present = prefix in blob and (not suffix or suffix in blob)
+                else:
+                    present = wire_path in blob
+                has_helper = re.search(native_helper_pattern(sdk, basename), blob) is not None
+                if not present or not has_helper:
+                    failures.append(
+                        f"{sdk}: supported endpoint {endpoint['method']} "
+                        f"{endpoint['path']} has no executable native helper"
+                    )
+
         # The code STRINGS are only half the error contract: the spec also fixes
         # each code's HTTP status, and the gateway's main error path sends no
         # code at all, so status dispatch is the ordinary route rather than a
@@ -376,6 +447,23 @@ def self_test() -> int:
             problems.append("deleting a real header from a real SDK did not fail the check")
         victim.write_text(text)
 
+        # Delete a real native helper while leaving its path string behind.
+        # A path-only gate would miss this because the generic transport can
+        # still send arbitrary paths; completeness requires the public helper.
+        victim = fake_root / "sdks/go/client.go"
+        text = victim.read_text()
+        victim.write_text(
+            text.replace(
+                "func (c *Client) ImagesGenerations",
+                "func (c *Client) RemovedImagesGenerations",
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/images/generations" in f and "go" in f for f in failures):
+            problems.append("deleting a real native endpoint helper did not fail the check")
+        victim.write_text(text)
+
         # Delete an error code this SDK really maps.
         victim = fake_root / "sdks/dart/lib/src/errors.dart"
         text = victim.read_text()
@@ -431,7 +519,8 @@ def self_test() -> int:
         return 1
     print(
         "self-test ok: red on spec drift (base_url, env_var, header, code) AND on a "
-        "real SDK losing a header, a code, a file, or gaining a retired spelling"
+        "real SDK losing an endpoint helper, a header, a code, a file, or gaining "
+        "a retired spelling"
     )
     return 0
 

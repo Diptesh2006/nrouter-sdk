@@ -241,6 +241,36 @@ nrouter_chat_completions <- function(client, body) {
   nrouter_request(client, "/chat/completions", body)
 }
 
+# Build the path for one named gateway operation. Keeping dynamic IDs here
+# makes every public wrapper use the same segment-only escaping rule.
+nrouter_endpoint_path <- function(operation, id = NULL) {
+  segment <- function(value) utils::URLencode(value, reserved = TRUE)
+  model_id <- function(value) {
+    parts <- strsplit(value, "/", fixed = TRUE)[[1]]
+    paste(vapply(parts, segment, character(1)), collapse = "/")
+  }
+  switch(
+    operation,
+    completions = "/completions",
+    images_generations = "/images/generations",
+    count_tokens = "/messages/count_tokens",
+    model = paste0("/models/", model_id(id)),
+    create_video = "/videos",
+    retrieve_video = paste0("/videos/", segment(id)),
+    audio_speech = "/audio/speech",
+    download_video_content = paste0("/videos/", segment(id), "/content"),
+    stop(nrouter_configuration_condition(paste("Unknown gateway operation:", operation)))
+  )
+}
+
+#' POST /completions — the legacy text-completions wire
+#' @inheritParams nrouter_chat_completions
+#' @return A list with \code{body}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_completions <- function(client, body) {
+  nrouter_request(client, nrouter_endpoint_path("completions"), body)
+}
+
 #' POST /embeddings
 #' @inheritParams nrouter_chat_completions
 #' @return A list with \code{body}, \code{meta} and \code{status_code}.
@@ -263,6 +293,22 @@ nrouter_messages <- function(client, body) {
 #' @export
 nrouter_responses <- function(client, body) {
   nrouter_request(client, "/responses", body)
+}
+
+#' POST /images/generations
+#' @inheritParams nrouter_chat_completions
+#' @return A list with \code{body}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_images_generations <- function(client, body) {
+  nrouter_request(client, nrouter_endpoint_path("images_generations"), body)
+}
+
+#' POST /messages/count_tokens — counts input without generating
+#' @inheritParams nrouter_chat_completions
+#' @return A list with \code{body}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_count_tokens <- function(client, body) {
+  nrouter_request(client, nrouter_endpoint_path("count_tokens"), body)
 }
 
 #' Send a multipart request to the nRouter gateway
@@ -328,12 +374,54 @@ nrouter_audio_translations <- function(client, file_path, fields = list()) {
   nrouter_multipart(client, "/audio/translations", file_path, fields)
 }
 
+#' POST /audio/speech — generated audio bytes plus response metadata
+#' @inheritParams nrouter_chat_completions
+#' @return A list with \code{bytes}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_audio_speech <- function(client, body) {
+  nrouter_bytes(client, nrouter_endpoint_path("audio_speech"), body)
+}
+
 #' GET /models — what this key is allowed to route to
 #' @param client An \code{nrouter_client}.
 #' @return A list with \code{body}, \code{meta} and \code{status_code}.
 #' @export
 nrouter_models <- function(client) {
   nrouter_request(client, "/models")
+}
+
+#' GET /models/(model_id)
+#' @param client An \code{nrouter_client}.
+#' @param model_id Model identifier. It is encoded as one URL path segment.
+#' @return A list with \code{body}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_model <- function(client, model_id) {
+  nrouter_request(client, nrouter_endpoint_path("model", model_id))
+}
+
+#' POST /videos — starts a video generation job
+#' @inheritParams nrouter_chat_completions
+#' @return A list with \code{body}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_create_video <- function(client, body) {
+  nrouter_request(client, nrouter_endpoint_path("create_video"), body)
+}
+
+#' GET /videos/(id) — polls a video generation job
+#' @param client An \code{nrouter_client}.
+#' @param video_id Video job identifier. It is encoded as one URL path segment.
+#' @return A list with \code{body}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_retrieve_video <- function(client, video_id) {
+  nrouter_request(client, nrouter_endpoint_path("retrieve_video", video_id))
+}
+
+#' GET /videos/(id)/content — downloads generated video bytes
+#' @inheritParams nrouter_retrieve_video
+#' @return A list with \code{bytes}, \code{meta} and \code{status_code}.
+#' @export
+nrouter_download_video_content <- function(client, video_id) {
+  nrouter_bytes(client, nrouter_endpoint_path("download_video_content", video_id))
 }
 
 #' Send a chat completion request (convenience wrapper)

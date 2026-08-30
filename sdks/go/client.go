@@ -32,6 +32,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -187,7 +188,11 @@ func (c *Client) Models(ctx context.Context) (*Response[map[string]any], error) 
 
 // Model gets /models/{id}.
 func (c *Client) Model(ctx context.Context, id string) (*Response[map[string]any], error) {
-	return c.Get(ctx, "/models/"+id)
+	parts := strings.Split(id, "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	return c.Get(ctx, "/models/"+strings.Join(parts, "/"))
 }
 
 // AudioTranscriptions posts multipart to /audio/transcriptions.
@@ -201,6 +206,26 @@ func (c *Client) AudioTranscriptions(ctx context.Context, file []byte, fileName 
 // AudioTranslations posts multipart to /audio/translations.
 func (c *Client) AudioTranslations(ctx context.Context, file []byte, fileName string, fields map[string]string) (*Response[map[string]any], error) {
 	return c.Multipart(ctx, "/audio/translations", file, fileName, fields)
+}
+
+// AudioSpeech generates speech and returns its raw encoded audio bytes.
+func (c *Client) AudioSpeech(ctx context.Context, body any) (*Response[[]byte], error) {
+	return c.Bytes(ctx, http.MethodPost, "/audio/speech", body)
+}
+
+// CreateVideo starts a video generation job.
+func (c *Client) CreateVideo(ctx context.Context, body any) (*Response[map[string]any], error) {
+	return c.Post(ctx, "/videos", body)
+}
+
+// RetrieveVideo gets one video generation job without charging it again.
+func (c *Client) RetrieveVideo(ctx context.Context, id string) (*Response[map[string]any], error) {
+	return c.Get(ctx, "/videos/"+url.PathEscape(id))
+}
+
+// DownloadVideoContent returns the generated video's raw bytes.
+func (c *Client) DownloadVideoContent(ctx context.Context, id string) (*Response[[]byte], error) {
+	return c.Bytes(ctx, http.MethodGet, "/videos/"+url.PathEscape(id)+"/content", nil)
 }
 
 // Post sends any JSON POST under the gateway's /v1 root.

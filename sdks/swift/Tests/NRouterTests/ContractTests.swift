@@ -354,6 +354,34 @@ final class ContractTests: XCTestCase {
             session: URLSession(configuration: config)
         )
 
+        _ = try await client.completions(["model": "legacy"])
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/completions")
+
+        _ = try await client.imagesGenerations(["model": "image-1"])
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/images/generations")
+
+        _ = try await client.countTokens(["model": "claude-sonnet", "messages": []])
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/messages/count_tokens")
+
+        _ = try await client.model("provider/model one")
+        XCTAssertEqual(URLComponents(url: StubProtocol.captured!.url!, resolvingAgainstBaseURL: false)?.percentEncodedPath, "/v1/models/provider/model%20one")
+
+        _ = try await client.createVideo(["model": "video-1", "prompt": "ocean"])
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/videos")
+
+        _ = try await client.retrieveVideo("video/one")
+        XCTAssertEqual(URLComponents(url: StubProtocol.captured!.url!, resolvingAgainstBaseURL: false)?.percentEncodedPath, "/v1/videos/video%2Fone")
+
+        StubProtocol.response = (200, ["content-type": "audio/mpeg"], Data("audio".utf8))
+        _ = try await client.audioSpeech(["model": "tts-1", "input": "hi"])
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/audio/speech")
+
+        StubProtocol.response = (200, ["content-type": "video/mp4"], Data("video".utf8))
+        _ = try await client.downloadVideoContent("video/one")
+        XCTAssertEqual(URLComponents(url: StubProtocol.captured!.url!, resolvingAgainstBaseURL: false)?.percentEncodedPath, "/v1/videos/video%2Fone/content")
+
+        StubProtocol.response = (200, ["content-type": "application/json"], Data(#"{"status":"ok"}"#.utf8))
+
         _ = try await client.embeddings(["model": "text-embedding-3", "input": "hi"])
         XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/embeddings")
 

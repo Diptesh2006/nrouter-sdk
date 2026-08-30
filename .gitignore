@@ -41,7 +41,6 @@ sdks/rust/target/
 
 # --- dart ---
 sdks/dart/.dart_tool/
-sdks/dart/pubspec.lock
 
 # --- r ---
 # `R CMD check` drops a full second copy of the sources beside the package.

@@ -42,6 +42,14 @@ step "cross-SDK conformance and mutation proof"
 "$PYTHON_BIN" "$ROOT/conformance/check_conformance.py"
 "$PYTHON_BIN" "$ROOT/conformance/check_conformance.py" --self-test
 
+step "repository contract and catalog guards"
+(cd "$ROOT" && "$PYTHON_BIN" -m unittest tests/test_sdk_contract.py)
+bash "$ROOT/tests/sdk-static-catalog-count.test.sh"
+bash "$ROOT/tests/demo-e2e-record.test.sh"
+
+step "dependency security audit"
+"$ROOT/scripts/security-audit.sh"
+
 step "JavaScript / TypeScript"
 (cd "$ROOT/sdks/js" && npm test)
 

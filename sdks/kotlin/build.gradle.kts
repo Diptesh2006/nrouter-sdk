@@ -12,6 +12,8 @@ kotlin {
 
 repositories { mavenCentral() }
 
+dependencyLocking { lockAllConfigurations() }
+
 dependencies {
     api("com.squareup.okhttp3:okhttp:4.12.0")
     api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")

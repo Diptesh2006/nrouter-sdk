@@ -2,7 +2,11 @@
 
 One API key for models across six provider clouds, packaged as an AAR.
 
+> **Source preview:** this coordinate is not on Maven Central. Publish the
+> Kotlin core and Android AAR to Maven Local from this repository first.
+
 ```kotlin
+// First publish sdks/kotlin, then sdks/android, to Maven Local.
 dependencies {
     implementation("ai.nrouter:nrouter-sdk-android:2.1.0")
 }

@@ -1,8 +1,7 @@
-# Publish nRouter Rust SDK (`nrouter`) to crates.io, on merge to main.
+# Verify the source-preview nRouter Rust SDK (`nrouter`).
 #
-# ONE workflow for Rust: formats, lints, tests, packages, and publishes to crates.io.
-#
-# Requires CRATES_IO_TOKEN secret.
+# Support scope does not authorize a crates.io release. This workflow validates
+# the package without accepting credentials or attempting publication.
 name: publish-rust
 
 on:
@@ -33,7 +32,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test-and-publish:
+  test-and-verify:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -41,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           components: rustfmt, clippy
 
@@ -62,11 +61,3 @@ jobs:
 
       - name: Package verification
         run: cargo package --list && cargo package
-
-      - name: Publish to crates.io (Release)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CRATES_IO_TOKEN != ''
-        env:
-          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          echo "Publishing crate to crates.io..."
-          cargo publish --token "${CRATES_IO_TOKEN}" || echo "Already published or pending token setup"

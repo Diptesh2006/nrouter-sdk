@@ -4,10 +4,7 @@ One API key for models across six provider clouds. There is no official OpenAI
 SDK for R, so this package calls the gateway's HTTP API directly via `httr`.
 
 ```r
-# From R-universe (binaries for macOS and Windows)
-install.packages("nrouter", repos = "https://nrouterai.r-universe.dev")
-
-# Or from source
+# Source install; no R-universe or CRAN binary is advertised yet.
 remotes::install_github("nRouterAI/nrouter-sdk", subdir = "sdks/r")
 ```
 

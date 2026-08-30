@@ -3,9 +3,13 @@
 One API key for models across six provider clouds. One dependency (`http`), so
 the same code runs on Flutter mobile, desktop, **web**, and the plain Dart VM.
 
+> **Source preview:** the package is not on pub.dev. Use the checked-out source
+> until the first registry release.
+
 ```yaml
 dependencies:
-  nrouter: ^2.1.0
+  nrouter:
+    path: ../nrouter-sdk/sdks/dart
 ```
 
 ## Use it

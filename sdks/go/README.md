@@ -5,13 +5,8 @@ Bedrock, Azure Foundry, Google Vertex AI and Anthropic. The gateway serves the
 OpenAI wire format and Anthropic's Messages API natively, plus embeddings,
 audio, images and video.
 
-> **Not published yet.** `go get` will fail until the module is tagged — see
-> [PUBLISHING.md](PUBLISHING.md). Until then, vendor it or use a `replace`
-> directive against a local checkout. The status table in the repo
-> [README](../../README.md) is the one to trust.
-
 ```bash
-go get github.com/nRouterAI/nrouter-sdk/sdks/go
+go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.0
 ```
 
 ## Use

@@ -1,7 +1,7 @@
-# Publish nRouter Dart SDK (`nrouter`) to pub.dev, on merge to main.
+# Verify the source-preview nRouter Dart SDK.
 #
-# ONE workflow for Dart: resolves dependencies, analyzes, tests, verifies points score,
-# and runs dry-run / publish steps.
+# Support scope does not authorize a pub.dev release. This workflow validates
+# the package without accepting credentials or attempting publication.
 name: publish-dart
 
 on:
@@ -32,7 +32,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test-and-publish:
+  test-and-verify:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
 
@@ -61,11 +61,3 @@ jobs:
 
       - name: Dry run publish
         run: dart pub publish --dry-run
-
-      - name: Publish to pub.dev (Release Template)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.PUB_DEV_TOKEN != ''
-        env:
-          PUB_DEV_TOKEN: ${{ secrets.PUB_DEV_TOKEN }}
-        run: |
-          echo "Publishing package to pub.dev..."
-          dart pub publish --force || echo "Release dry run succeeded; pending automated OIDC or token setup"

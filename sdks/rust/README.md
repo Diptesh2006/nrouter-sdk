@@ -2,9 +2,12 @@
 
 One API key for models across six provider clouds.
 
+> **Source preview:** the crate is not on crates.io. Use the repository checkout
+> as a path dependency until the first registry release.
+
 ```toml
 [dependencies]
-nrouter = "2.1"
+nrouter = { path = "../nrouter-sdk/sdks/rust" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -14,7 +17,9 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 gateway, so every OpenAI-shaped call you already write keeps working:
 
 ```rust
-use async_openai::types::{ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs};
+use async_openai::types::chat::{
+    ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
+};
 
 let client = nrouter::client()?;               // reads NROUTER_API_KEY
 let request = CreateChatCompletionRequestArgs::default()

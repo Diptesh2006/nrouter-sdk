@@ -64,9 +64,11 @@ jobs:
           ARTIFACT_ID="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.artifactId)"
           VERSION="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
 
-          echo "group_id=$GROUP_ID" >> "$GITHUB_OUTPUT"
-          echo "artifact_id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "group_id=$GROUP_ID"
+            echo "artifact_id=$ARTIFACT_ID"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
 
           case "$VERSION" in
             *SNAPSHOT*) echo "::error::$VERSION is a snapshot; publish a stable release version"; exit 1 ;;

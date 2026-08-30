@@ -28,6 +28,10 @@ jobs:
         with:
           python-version: '3.11'
 
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 'stable'
+
       - name: Install Python dependencies for contract testing
         run: |
           python3 -m pip install --upgrade pip
@@ -44,6 +48,14 @@ jobs:
 
       - name: SDK contract tests
         run: python3 -m pytest tests/test_sdk_contract.py
+
+      - name: Install pinned security scanners
+        run: |
+          python3 -m pip install pip-audit==2.10.0
+          go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.5.1
+
+      - name: Dependency security audit
+        run: bash scripts/security-audit.sh
 
   typescript-js:
     name: TypeScript & JavaScript SDK

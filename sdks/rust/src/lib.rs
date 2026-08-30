@@ -10,7 +10,9 @@
 //!
 //! ```no_run
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! use async_openai::types::{ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs};
+//! use async_openai::types::chat::{
+//!     ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
+//! };
 //!
 //! let client = nrouter::client()?; // reads NROUTER_API_KEY
 //! let request = CreateChatCompletionRequestArgs::default()

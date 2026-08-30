@@ -78,10 +78,8 @@ badge — which is the point.
 remotes::install_github("nRouterAI/nrouter-sdk", subdir = "sdks/r")
 ```
 
-`subdir` is required — the package is not at the repository root. It is
-`sdks/r`, NOT `nrouter-sdk/sdks/r`: the public repo is a `git subtree split` of
-this repo's `nrouter-sdk/` directory, so that prefix is already stripped and
-`sdks/` sits at the public root. Derive it rather than assuming:
+`subdir` is required because the package lives at `sdks/r` inside the public
+repository rather than at its root. Derive it rather than assuming:
 
 ```bash
 git ls-tree --name-only <public-repo-ref>

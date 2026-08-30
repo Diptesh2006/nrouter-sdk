@@ -5,6 +5,8 @@ plugins {
     signing
 }
 
+dependencyLocking { lockAllConfigurations() }
+
 android {
     namespace = "ai.nrouter.sdk.android"
     compileSdk = 34
@@ -45,7 +47,11 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
-    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("org.robolectric:robolectric:4.16.1")
+    // Robolectric's transitive floor has shipped vulnerable Bouncy Castle
+    // versions. Pin the test runtime to the current fixed line; the dependency
+    // lock and security audit prevent a future downgrade.
+    testImplementation("org.bouncycastle:bcprov-jdk18on:1.85.2")
     testImplementation("androidx.test:core:1.6.1")
 }
 

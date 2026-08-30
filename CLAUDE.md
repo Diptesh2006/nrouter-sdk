@@ -4,13 +4,13 @@ Ten SDKs for the nRouter gateway, and the gate that keeps them speaking one
 contract. **The only PUBLIC repo in the workspace** — everything committed here
 is world-readable. Treat every file as published.
 
-## ⛔ SCOPE: npm, PyPI and Maven only — owner decision 2026-08-29, reviewed monthly
+## ⛔ SUPPORT SCOPE: npm, PyPI and Maven — owner decision 2026-08-29, reviewed monthly
 
-**Ten SDKs exist here; THREE are released and supported.** Work that ships to a
-customer goes to `sdks/{js,python,java}`. The other seven —
-`{kotlin,android,go,rust,swift,dart,r}` — build from this repo and are held to
-the same conformance gate, but have **no registry release and no support
-commitment until this scope is revisited**.
+**Ten SDKs exist here; THREE are registry-released and supported.** Work that
+ships as a supported package goes to `sdks/{js,python,java}`. Swift and Go also
+have immutable source-resolution tags, but no registry release or support
+commitment. The remaining five — `{kotlin,android,rust,dart,r}` — build from
+this repo and are held to the same conformance gate without a registry release.
 
 | supported | registry | package |
 |---|---|---|
@@ -26,11 +26,11 @@ curl -s https://pypi.org/pypi/nrouter-sdk/json  | python3 -c "import sys,json;pr
 curl -s https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk/maven-metadata.xml | grep -oE '<release>[^<]+</release>'
 ```
 
-**This narrows what ships, NOT what must stay correct.** The seven unreleased
-SDKs still run in `conformance/check_conformance.py`, and a contract change
-still has to land in all ten — a spec edit that leaves seven behind turns a
-green gate into a lie the day one of them is released. Fix them; just do not
-publish them.
+**This narrows what is supported, NOT what must stay correct.** All ten SDKs
+still run in `conformance/check_conformance.py`, and a contract change still has
+to land in all ten — a spec edit that leaves seven behind turns a green gate
+into a lie the day one of them is supported. Source tags do not broaden the
+support commitment.
 
 ⚠️ Three published surfaces means THREE immutable version lines and three
 release workflows. A breaking change is breaking per registry: `guardrailIds`
@@ -61,7 +61,6 @@ them automatically; Codex, Gemini CLI and Antigravity do not and must open:
 Package.swift        # the SHIPPING Swift manifest — SwiftPM reads the REPO ROOT
 spec/                # nrouter-sdk-spec.json — the SoT under Rule #14
 conformance/         # the cross-SDK gate; run it before every release
-open-issues.csv      # the backlog, each row recording how it was verified
 sdks/{python,js,java,kotlin,android,swift,rust,dart,r,go}/
 examples/            # canonical snippets nrouter-app imports (Rule #14)
 ```
@@ -98,8 +97,8 @@ plainly what the gate cannot catch.
 
 ## Publishing
 
-Per SDK, in its own `PUBLISHING.md`. Registry status is a fact — check it, do
-not trust the README: `open-issues.csv` tracks what is unpublished.
+Per SDK, in its own `PUBLISHING.md`. Registry status is a fact — query the
+registry immediately before a release rather than trusting prose.
 
 ⚠️ **This repo is public.** No credentials, no internal hostnames, no customer
 data, no engine name (Rule #29). A secret committed here is a secret disclosed.

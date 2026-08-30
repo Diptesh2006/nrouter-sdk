@@ -12,8 +12,9 @@ SDK and code examples for the [nRouter](https://nrouter.ai) LLM gateway.
 ## Supported today: JavaScript/TypeScript, Python, Java
 
 **Owner scope decision, 2026-08-29 — reviewed monthly.** Three SDKs are
-published and supported; the other seven build from this repository, are held
-to the same conformance gate, and are **not yet released**.
+registry-published and supported. Swift and Go have immutable source-resolution
+tags. The other five build from this repository. All ten are held to the same
+conformance and security gates.
 
 | SDK | Registry | Package | Version |
 |---|---|---|---|
@@ -24,8 +25,9 @@ to the same conformance gate, and are **not yet released**.
 `sdks/{kotlin,android,go,rust,swift,dart,r}` are held to the same public wire
 contract. The six first-party native transports expose named helpers for all
 15 supported gateway operations; Android delegates that exact surface to
-Kotlin. They simply have no registry release, so treat them as buildable from
-source rather than as something to `install`.
+Kotlin. Swift and Go resolve from their tagged source releases; treat the other
+five as source previews rather than registry packages. These seven do not carry
+the support commitment of the three registry-published SDKs.
 
 Read those versions off the registries rather than this table if the difference
 would matter; the badges above are live and this text is not.
@@ -117,11 +119,11 @@ let res = try await client.chatCompletions([
 print(res.meta.isPriced ? "Cost: $\(res.meta.cost!)" : "Cost: unpriced")
 ```
 
-### Kotlin
-```kotlin
-// Gradle
-implementation("ai.nrouter:nrouter-sdk-kotlin:2.1.0")
-```
+### Kotlin source preview
+
+The Kotlin artifact is not released to Maven Central. Build `sdks/kotlin`
+from this repository; do not add a coordinate that Central cannot resolve.
+
 ```kotlin
 import ai.nrouter.sdk.NRouter
 import org.json.JSONObject
@@ -144,22 +146,22 @@ not exist in a Flutter web build, so an environment fallback would silently reso
 nothing):
 
 > **Published status is a fact, not an intention.** Only the packages marked
-> PUBLISHED below resolve today (checked 2026-08-26). The rest are complete and
+> PUBLISHED below resolve today. The rest are complete and
 > tested in this repo but not yet on their registry, so their install command
-> will fail — build from source until each is released. Each SDK's
-> `PUBLISHING.md` has the steps; the backlog is [`open-issues.csv`](open-issues.csv).
+> is deliberately not advertised — build from source until each is released.
+> Each SDK's `PUBLISHING.md` has the release procedure.
 
 | Language | Install | Registry status | Package | Typed errors | `x-nr-*` metadata |
 |----------|---------|---|---------|---|---|
 | **TypeScript / JS** | `npm install @nrouter_ai/sdk` | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | ✅ 9 codes | ✅ 13 headers |
 | **Java** | Maven `ai.nrouter:nrouter-sdk` | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | ✅ 9 codes (native HTTP surface) | ✅ 13 headers (native HTTP surface) |
-| **Kotlin** | Maven `ai.nrouter:nrouter-sdk-kotlin` | ⛔ not published | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
-| **Android** | Maven `ai.nrouter:nrouter-sdk-android` | ⛔ not published | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
-| **Swift** | SwiftPM, this repo's URL | ⛔ not published (needs a semver tag) | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
-| **Rust** | `cargo add nrouter` | ⛔ not published | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
-| **Dart / Flutter** | `dart pub add nrouter` | ⛔ not published | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
-| **R** | `install.packages("nrouter", repos = "https://nrouterai.r-universe.dev")` | ⛔ not published | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
-| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go` | ⛔ not published (needs a `sdks/go/vX.Y.Z` tag) | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
+| **Kotlin** | Build from `sdks/kotlin` | ⛔ source preview | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
+| **Android** | Build from `sdks/android` | ⛔ source preview | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
+| **Swift** | SwiftPM, this repo's URL | ✅ git tag `2.1.0` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
+| **Rust** | Build from `sdks/rust` | ⛔ source preview | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
+| **Dart / Flutter** | Build from `sdks/dart` | ⛔ source preview | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
+| **R** | `remotes::install_github(..., subdir="sdks/r")` | ✅ source install | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
+| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.0` | ✅ git tag `sdks/go/v1.0.0` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
 
 Verify any row rather than trusting it:
 
@@ -197,6 +199,11 @@ proof—with:
 ```bash
 scripts/test-all.sh
 ```
+
+The same command runs `scripts/security-audit.sh` and fails on known advisories
+across npm, PyPI, Maven/Gradle, Cargo and Dart dependency graphs. Install
+`osv-scanner` and `pip-audit`; missing security tooling fails loudly rather
+than silently skipping the audit.
 
 The opt-in live tests are intentionally excluded unless `NROUTER_LIVE=1` is
 set, because they make billed inference calls.
@@ -286,10 +293,10 @@ example for any of these without first adding the route to the gateway and the s
 | **Python (branded)** | `pip install nrouter-sdk` | [`sdks/python/`](sdks/python/) |
 | **TypeScript / JS (branded)** | `npm install @nrouter_ai/sdk` | [`sdks/js/`](sdks/js/) · [`examples/hello-world/typescript.ts`](examples/hello-world/typescript.ts), [`javascript.js`](examples/hello-world/javascript.js) |
 | **Java (branded)** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) · [`examples/hello-world/java.java`](examples/hello-world/java.java) |
-| **Rust (branded)** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) · [`examples/hello-world/rust.rs`](examples/hello-world/rust.rs) |
-| **R (branded)** | `remotes::install_github(..., subdir = "nrouter-sdk/sdks/r")` | [`sdks/r/`](sdks/r/) · [`examples/hello-world/r.R`](examples/hello-world/r.R) |
+| **Rust (branded)** | Build from `sdks/rust` | [`sdks/rust/`](sdks/rust/) · [`examples/hello-world/rust.rs`](examples/hello-world/rust.rs) |
+| **R (branded)** | `remotes::install_github(..., subdir = "sdks/r")` | [`sdks/r/`](sdks/r/) · [`examples/hello-world/r.R`](examples/hello-world/r.R) |
 | **Node.js / TypeScript (plain openai)** | `npm install openai` | [`examples/node.ts`](examples/node.ts) |
-| **Go** | `go get github.com/openai/openai-go`, or the branded [`sdks/go/`](sdks/go/) | [`examples/go.go`](examples/go.go) |
+| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.0`, or plain `openai-go` | [`examples/go.go`](examples/go.go) |
 | **Java (plain openai-java)** | `com.openai:openai-java` | [`examples/java.java`](examples/java.java) |
 | **Ruby** | `gem install ruby-openai` | [`examples/ruby.rb`](examples/ruby.rb) |
 | **PHP** | `composer require openai-php/client` | [`examples/php.php`](examples/php.php) |
@@ -339,8 +346,7 @@ Python SDK captures these automatically in `client.last_response`. Other languag
 
 ## Structure
 
-This repo's own path is `nrouter-sdk/` (`04-nroutersdk/` is only the name it takes when
-`nrouter-app` vendors it via `git subtree --squash` — see the note at the top of this file):
+This is the standalone public `nRouterAI/nrouter-sdk` repository:
 
 ```
 nrouter-sdk/
@@ -351,8 +357,12 @@ nrouter-sdk/
 │   ├── python/                      ← Branded SDK → pip install nrouter-sdk
 │   ├── js/                          ← Branded SDK → npm install @nrouter_ai/sdk
 │   ├── java/                        ← Branded SDK → Maven ai.nrouter:nrouter-sdk
-│   ├── rust/                        ← Branded SDK → cargo add nrouter
-│   ├── go/                          ← Branded SDK → go get .../sdks/go
+│   ├── kotlin/                      ← Source-preview Kotlin SDK
+│   ├── android/                     ← Source-preview Android AAR
+│   ├── swift/                       ← SwiftPM package from the root git tag
+│   ├── rust/                        ← Source-preview Rust SDK
+│   ├── dart/                        ← Source-preview Dart/Flutter SDK
+│   ├── go/                          ← Branded SDK → tagged Go module
 │   └── r/                           ← Branded SDK → remotes::install_github(...)
 └── examples/
     ├── curl.sh                      ← cURL

@@ -18,8 +18,8 @@ keywords = ["llm", "ai", "openai", "gateway", "anthropic"]
 categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
-async-openai = "0.25"
-reqwest = { version = "0.12", features = ["json", "multipart"] }
+async-openai = { version = "0.41.3", features = ["full"] }
+reqwest = { version = "0.13.4", features = ["json", "multipart", "stream"] }
 serde_json = "1"
 
 [dev-dependencies]

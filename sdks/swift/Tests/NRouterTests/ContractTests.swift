@@ -364,6 +364,29 @@ final class ContractTests: XCTestCase {
         XCTAssertTrue(body.contains("\\\""), body)
     }
 
+    func testMultipartRejectsHeaderInjectionThroughBoundary() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(
+            apiKey: "sk-nrouter-test",
+            session: URLSession(configuration: config)
+        )
+
+        do {
+            _ = try await client.multipart(
+                "/audio/transcriptions",
+                file: Data("audio".utf8),
+                fileName: "speech.mp3",
+                boundary: "safe\r\nX-Injected: true"
+            )
+            XCTFail("a boundary containing CR/LF reached URLSession")
+        } catch let NRouterError.configuration(message) {
+            XCTAssertTrue(message.contains("boundary"), message)
+        } catch {
+            XCTFail("wrong error for hostile multipart boundary: \(error)")
+        }
+    }
+
     func testANonJSONOrMalformedTwoHundredIsAFailure() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubProtocol.self]

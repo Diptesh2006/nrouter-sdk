@@ -12,8 +12,7 @@ the checks below happen before the tag, not after.
 SwiftPM does impose one real constraint: it reads `Package.swift` from the
 **repository root** and offers no way to point a dependency at a subdirectory.
 That is satisfied by [`Package.swift`](../../Package.swift) at the root of this
-SDK tree — which is the public repo's root, since that repo is a subtree split
-of it. The manifest uses `path:` to reach `sdks/swift/Sources/NRouter`, so the
+public repository. The manifest uses `path:` to reach `sdks/swift/Sources/NRouter`, so the
 sources stay beside the other eight SDKs and nothing was relocated.
 
 `sdks/swift/Package.swift` still exists for the local loop (`cd sdks/swift &&
@@ -40,7 +39,7 @@ Paths are absolute on purpose: this runbook must work from whatever directory
 you happen to be in.
 
 ```bash
-SDK=~/nr/nrouter-brain/nrouter-ent-ai-hub/nrouter-sdk
+SDK=~/nr/nrouter-brain/nrouter-sdk
 
 # 1. Prove it green. There is no staging step after this.
 cd "$SDK"                      # the SDK root, where the SHIPPING manifest lives
@@ -49,45 +48,19 @@ swift build -Xswiftc -strict-concurrency=complete    # Swift 6 readiness
 python3 conformance/check_conformance.py
 ```
 
-### 2. Get the code onto the PUBLIC repo — two steps, not one
-
-`scripts/publish-sdk-subtree.sh` splits `nrouter-sdk/` onto a `sdk-only` branch
-and pushes it to **this repository's** origin (`nrouter-ent-ai-hub`). Read its
-last line: `git push -f origin "$BRANCH"`. It does **not** touch
-`nRouterAI/nrouter-sdk`. Tagging the public repo without doing that second step
-tags whatever was there before — for Swift that means a tag with no root
-`Package.swift`, so `from: "2.1.0"` resolves a package SwiftPM cannot see, and a
-tag is immutable in practice.
+### 2. Prove public main is the exact tested tree
 
 ```bash
-cd ~/nr/nrouter-brain/nrouter-ent-ai-hub
-bash scripts/publish-sdk-subtree.sh          # -> sdk-only on ent-ai-hub's origin
-
-# Then, separately, onto the public repo:
-git push git@github.com:nRouterAI/nrouter-sdk.git origin/sdk-only:main
+git status --short                           # expect empty
+git fetch origin main
+git rev-list --left-right --count HEAD...origin/main   # expect 0 0
+test -f Package.swift
 ```
-
-> ⚠️ **That second push rewrites the public repo's `main` and needs a human
-> decision, every time.** The split branch has NO shared ancestry with the
-> public history (`git merge-base` between them is empty), so the push is a
-> force push in effect, and the public repo carries merged outside
-> contributions. Before running it: confirm every commit on public `main` is
-> represented in the split — the outside PRs merged there were brought into this
-> repo by hand, and anything newer would be destroyed. Check first:
->
-> ```bash
-> git fetch git@github.com:nRouterAI/nrouter-sdk.git main:refs/tmp/pub
-> git log --oneline refs/tmp/pub | head -20     # anything not in our tree?
-> ```
 
 ### 3. Tag the public repo — the tag IS the release
 
 ```bash
-git ls-remote --tags git@github.com:nRouterAI/nrouter-sdk.git   # what exists
-SCRATCH=~/nr/nrouter-brain/.scratch/sdk-swift-release            # Rule #18
-mkdir -p "$SCRATCH" && git clone git@github.com:nRouterAI/nrouter-sdk.git "$SCRATCH/repo"
-cd "$SCRATCH/repo"
-test -f Package.swift || { echo "no root manifest on public main — step 2 did not land"; exit 1; }
+git ls-remote --tags origin
 git tag 2.1.0                  # bare semver, no `v` — see the trap below
 git push origin 2.1.0
 ```
@@ -122,17 +95,16 @@ swift package resolve
 - **`from: "2.1.0"` matches the tag `2.1.0`, not `v2.1.0`.** SwiftPM accepts a
   `v` prefix, but mixing the two across releases makes version ranges resolve in
   ways nobody expects. Pick bare semver and keep it.
-- **The publish script does not publish to the public repo.** Its name says
-  publish and its final line pushes to `origin`, which is the AUTHORING repo.
-  The public repo is a second, deliberate push.
+- **Tag only clean, pushed `main`.** SwiftPM resolves the immutable tag, not
+  whatever happens to be in the working tree.
 - **A tag is immutable in practice.** SwiftPM caches aggressively and consumers
   pin by tag, so moving one ships different code under a version somebody
   already resolved. Bump instead; never re-tag.
 - **The version in `Package.swift` is not a version** — a Swift manifest has no
   version field at all. The git tag is the only place a Swift package version
   exists, which is why tagging is the release and not an afterthought.
-- **The two manifests drift silently.** Nothing checks that the root and nested
-  manifests agree; a target added to one and not the other builds locally and
-  fails for consumers, or vice versa.
+- **The two manifests are independently executable.** The conformance gate
+  checks target, product and platform parity, and the release workflow builds
+  both; keep both declarations aligned.
 - **Platform floors are a promise.** Raising `platforms:` in a patch release
   breaks consumers on the old floor; that is a major-version change.

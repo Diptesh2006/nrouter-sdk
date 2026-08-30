@@ -222,6 +222,17 @@ public struct NRouter: Sendable {
         boundary: String? = nil
     ) async throws -> Response {
         let boundary = boundary ?? "nrouter-\(UUID().uuidString)"
+        let boundaryPunctuation = CharacterSet(charactersIn: "'()+_,-./:=?")
+        let validBoundaryCharacters = CharacterSet.alphanumerics.union(boundaryPunctuation)
+        guard !boundary.isEmpty,
+              boundary.utf8.count <= 70,
+              boundary.unicodeScalars.allSatisfy({
+                  $0.isASCII && validBoundaryCharacters.contains($0)
+              }) else {
+            throw NRouterError.configuration(
+                "multipart boundary must be 1...70 safe ASCII characters"
+            )
+        }
         var body = Data()
 
         // A Unix filename may legally contain a quote, and CR/LF would end the

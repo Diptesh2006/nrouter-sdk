@@ -3,7 +3,11 @@
 One API key for models across six provider clouds. The gateway speaks the OpenAI
 wire format, so the bodies are the shapes you already know.
 
+> **Source preview:** this coordinate is not on Maven Central. Build and install
+> it locally before using the dependency below.
+
 ```kotlin
+// First: ./gradlew publishToMavenLocal in sdks/kotlin
 dependencies {
     implementation("ai.nrouter:nrouter-sdk-kotlin:2.1.0")
 }

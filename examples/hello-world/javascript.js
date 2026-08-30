@@ -1,18 +1,24 @@
-// nRouter — JavaScript hello world
-// npm install openai
+// nRouter JavaScript hello world
+//
+// npm install @nrouter_ai/sdk
+// set NROUTER_API_KEY before running.
 
-const OpenAI = require("openai");
+const { nRouter } = require("@nrouter_ai/sdk");
 
-const client = new OpenAI({
-  apiKey: process.env.NROUTER_API_KEY,
-  baseURL: "https://api.nrouter.ai/v1",
-});
+const client = new nRouter();
 
 (async () => {
-  const response = await client.chat.completions.create({
-    model: "anthropic/claude-sonnet-4-5-20250929",
-    messages: [{ role: "user", content: "Hello, nRouter!" }],
+  const response = await client.nr.chat({
+    model: "claude-sonnet-4-5-20250929",
+    prompt: "Reply with one short sentence saying hello from nRouter.",
+    maxTokens: 32,
   });
 
-  console.log(response.choices[0].message.content);
+  console.log(client.nr.text(response));
+  console.log({
+    requestId: response.meta.requestId,
+    model: response.meta.model,
+    cost: response.meta.cost,
+    costStatus: response.meta.costStatus,
+  });
 })();

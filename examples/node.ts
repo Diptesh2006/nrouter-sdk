@@ -1,90 +1,148 @@
-// nRouter — Node.js / TypeScript
-// OpenAI SDK + guardrails + prompt templates + cache + cost tracking.
+// nRouter Node.js / TypeScript example.
 //
-// npm install openai
+// npm install @nrouter_ai/sdk
+// npx tsx examples/node.ts
+// set NROUTER_API_KEY before running.
 
-import OpenAI from "openai";
+import {
+  nRouter,
+  createMemory,
+  promptTemplate,
+  systemVariableConflicts,
+} from "@nrouter_ai/sdk";
 
-const NROUTER_BASE = "https://api.nrouter.ai";
-const NROUTER_KEY = process.env.NROUTER_API_KEY;
-if (!NROUTER_KEY) {
-  console.error("Set NROUTER_API_KEY environment variable. Get your key at https://nrouter.ai/keys");
-  process.exit(1);
-}
-const headers = { Authorization: `Bearer ${NROUTER_KEY}` };
+const MODEL = "claude-sonnet-4-5-20250929";
+const client = new nRouter();
 
-const client = new OpenAI({ apiKey: NROUTER_KEY, baseURL: `${NROUTER_BASE}/v1` });
-
-// Guardrails, prompt templates, rate limits and budgets are configured in the
-// dashboard and enforced server-side on every request. There is deliberately no
-// endpoint to list or override them: a request cannot opt out of its org policy.
-// Balances and spend history live at https://app.nrouter.ai — org billing data,
-// not inference. Per-request cost arrives on the x-nr-request-cost header.
-// ━━━ 1. BASIC CALL (org defaults auto-apply) ━━━━━━━━━━━━━━━
-// Guardrails, cache, and rate limits are all enforced server-side.
-// No extra code needed — just call the API normally.
-const response = await client.chat.completions.create({
-  model: "anthropic/claude-sonnet-4-5-20250929",
-  messages: [{ role: "user", content: "Hello!" }],
-});
-console.log(response.choices[0].message.content);
-
-// ━━━ 2. WITH PROMPT TEMPLATE + VARIABLES ━━━━━━━━━━━━━━━━━━━
-// Prompt templates are opt-in: pass the template ID + Jinja2 variables.
-// The template's system prompt is injected server-side before the LLM call.
-const withPrompt = await client.chat.completions.create({
-  model: "anthropic/claude-sonnet-4-5-20250929",
-  messages: [{ role: "user", content: "Q1 revenue was $4.2M..." }],
-  // @ts-expect-error nRouter-specific fields
-  nrouter_prompt_template_id: "your-summarizer-id",
-  nrouter_prompt_variables: { language: "Spanish", max_length: "100" },
-});
-
-// ━━━ 3. DISABLE CACHE (per-request opt-out) ━━━━━━━━━━━━━━━━
-// Cache is enabled by default. Pass nrouter_cache: false for fresh responses.
-const noCacheResponse = await client.chat.completions.create({
-  model: "anthropic/claude-sonnet-4-5-20250929",
-  messages: [{ role: "user", content: "What's the latest news?" }],
-  // @ts-expect-error nRouter-specific fields
-  nrouter_cache: false,
-});
-
-// ━━━ 4. READ COST + METADATA FROM RESPONSE ━━━━━━━━━━━━━━━━━
-const raw = await client.chat.completions
-  .create({ model: "anthropic/claude-sonnet-4-5-20250929", messages: [{ role: "user", content: "Hi" }] })
-  .asResponse();
-const cost = raw.headers.get("x-nr-request-cost");
-const costStatus = raw.headers.get("x-nr-cost-status");
-console.log(cost === null ? `Cost status: ${costStatus}` : `Cost: $${cost}`);
-console.log(`Model: ${raw.headers.get("x-nr-model")}`);
-console.log(`Total tokens: ${raw.headers.get("x-nr-total-tokens")}`);
-
-// ━━━ 5. HANDLE ERRORS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-try {
-  await client.chat.completions.create({
-    model: "anthropic/claude-sonnet-4-5-20250929",
-    messages: [{ role: "user", content: "My SSN is 123-45-6789" }],
+function printResult(name: string, result: Awaited<ReturnType<typeof client.nr.chat>>) {
+  console.log(`\n${name}`);
+  console.log(client.nr.text(result));
+  console.log({
+    requestId: result.meta.requestId,
+    model: result.meta.model,
+    cost: result.meta.cost,
+    costStatus: result.meta.costStatus,
+    inputTokens: result.meta.inputTokens,
+    outputTokens: result.meta.outputTokens,
+    responseCache: result.meta.responseCache,
   });
-} catch (e: any) {
-  if (e.status === 400) console.log(`Guardrail blocked: ${e.message}`);
-  if (e.status === 402) console.log(`Insufficient credits: ${e.message}`);
-  if (e.status === 429) console.log(`Rate limited: ${e.message}`);
 }
 
-// ━━━ 6. STREAMING + EMBEDDINGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const stream = await client.chat.completions.create({
-  model: "anthropic/claude-sonnet-4-5-20250929", messages: [{ role: "user", content: "Write a haiku" }], stream: true,
-});
-for await (const chunk of stream) {
-  process.stdout.write(chunk.choices[0]?.delta?.content || "");
+async function main() {
+  const models = await client.nrouterModels.list();
+  console.log("available models");
+  console.log(models.data.map((model) => model.id).slice(0, 5));
+
+  // Basic Claude call. nr.chat() selects /messages for Claude models and
+  // translates the response back to an OpenAI-style completion.
+  const chat = await client.nr.chat({
+    model: MODEL,
+    prompt: "Reply exactly: basic-ok",
+    maxTokens: 16,
+    cache: false,
+  });
+  printResult("basic chat", chat);
+
+  // Cache metadata. Same prompt twice should normally show miss then hit.
+  const cacheA = await client.nr.messages({
+    model: MODEL,
+    messages: [{ role: "user", content: "Reply exactly: cache-ok" }],
+    max_tokens: 16,
+  });
+  const cacheB = await client.nr.messages({
+    model: MODEL,
+    messages: [{ role: "user", content: "Reply exactly: cache-ok" }],
+    max_tokens: 16,
+  });
+  console.log("\ncache");
+  console.log({
+    first: cacheA.meta.responseCache,
+    second: cacheB.meta.responseCache,
+    secondAge: cacheB.meta.responseCacheAge,
+  });
+
+  // Count tokens. This endpoint is not billed.
+  const count = await client.nr.countTokens({
+    model: MODEL,
+    messages: [{ role: "user", content: "Count this short sentence." }],
+  });
+  console.log("\ncount tokens");
+  console.log(count.body);
+
+  // Streaming. Use .text() to drain the SDK stream helper.
+  const stream = await client.nr.stream({
+    model: MODEL,
+    prompt: "Reply exactly: stream-ok",
+    maxTokens: 16,
+    cache: false,
+  });
+  console.log("\nstream");
+  console.log(await stream.text());
+  console.log({ requestId: stream.meta.requestId, costStatus: stream.meta.costStatus });
+
+  // Compare two visible models. Results stay in the same order as the input
+  // model list.
+  const compared = await client.nr.compare(
+    {
+      prompt: "Reply with exactly one word: ok",
+      maxTokens: 12,
+      cache: false,
+    },
+    ["claude-haiku-4-5-20251001", MODEL],
+  );
+  console.log("\ncompare");
+  console.log(compared.map((result) => client.nr.text(result)));
+
+  // Client-side memory. The gateway stores no conversation state; this just
+  // keeps local messages you explicitly pass back in.
+  const memory = createMemory();
+  await memory.add({ role: "user", content: "Reply exactly: memory-ok" });
+  const remembered = await client.nr.chat({
+    model: MODEL,
+    messages: await memory.messages(),
+    maxTokens: 16,
+    cache: false,
+  });
+  printResult("memory", remembered);
+
+  // Optional prompt template. Set NROUTER_PROMPT_TEMPLATE_ID to exercise a real
+  // template; the example skips this instead of sending a placeholder.
+  if (process.env.NROUTER_PROMPT_TEMPLATE_ID) {
+    const selection = promptTemplate(process.env.NROUTER_PROMPT_TEMPLATE_ID, {
+      language: "English",
+    });
+    const prompted = await client.nr.chat({
+      model: MODEL,
+      prompt: "Reply exactly: prompt-ok",
+      maxTokens: 16,
+      promptTemplateId: selection.templateId,
+      promptVariables: selection.variables,
+      cache: false,
+    });
+    printResult("prompt template", prompted);
+  } else {
+    console.log("\nprompt template skipped: set NROUTER_PROMPT_TEMPLATE_ID to test it");
+  }
+
+  // Guardrails run server-side from dashboard policy. There is no per-request
+  // guardrail override; this local refusal proves callers cannot pretend there is.
+  try {
+    await client.nr.chat({
+      model: MODEL,
+      prompt: "This should fail before the network.",
+      maxTokens: 16,
+      guardrailIds: ["gr_test"],
+    });
+  } catch (error) {
+    console.log("\nguardrailIds local refusal");
+    console.log(error instanceof Error ? error.message : error);
+  }
+
+  console.log("\nsystem variable conflicts");
+  console.log(systemVariableConflicts({ model: "fake", org_name: "fake" }));
 }
 
-const embed = await client.embeddings.create({
-// NOTE: embeddings and image generation are MOUNTED endpoints, but the model
-// must be enabled for your org before it will answer. Measured on 2026-08-25 the
-// served catalogue carried no embedding and no image model, so the names below
-// are illustrative. Check what YOUR key can reach first:
-//     print([m.id for m in client.models.list().data])
-  model: "text-embedding-3-small", input: "Hello world",
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
 });
-

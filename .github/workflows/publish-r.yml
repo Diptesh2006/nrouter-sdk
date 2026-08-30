@@ -43,9 +43,11 @@ jobs:
 
       - uses: r-lib/actions/setup-pandoc@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2
 
-      - name: Install R dependencies
-        run: |
-          Rscript -e 'install.packages(c("curl", "httr", "jsonlite", "testthat", "webfakes", "roxygen2", "rcmdcheck"), repos="https://cloud.r-project.org")'
+      - uses: r-lib/actions/setup-r-dependencies@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2
+        with:
+          working-directory: sdks/r
+          extra-packages: any::rcmdcheck
+          needs: check
 
       - name: Run cross-SDK conformance check
         run: |

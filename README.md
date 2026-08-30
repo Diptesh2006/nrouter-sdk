@@ -106,7 +106,7 @@ System.out.println(res.choices().get(0).message().content());
 ### Swift
 ```swift
 // Swift Package Manager
-.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.1.0")
+.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.1.1")
 ```
 ```swift
 import NRouter
@@ -157,11 +157,11 @@ nothing):
 | **Java** | Maven `ai.nrouter:nrouter-sdk` | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | ✅ 9 codes (native HTTP surface) | ✅ 13 headers (native HTTP surface) |
 | **Kotlin** | Build from `sdks/kotlin` | ⛔ source preview | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
 | **Android** | Build from `sdks/android` | ⛔ source preview | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
-| **Swift** | SwiftPM, this repo's URL | ✅ git tag `2.1.0` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
+| **Swift** | SwiftPM, this repo's URL | ✅ git tag `2.1.1` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
 | **Rust** | Build from `sdks/rust` | ⛔ source preview | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
 | **Dart / Flutter** | Build from `sdks/dart` | ⛔ source preview | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
 | **R** | `remotes::install_github(..., subdir="sdks/r")` | ✅ source install | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
-| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.0` | ✅ git tag `sdks/go/v1.0.0` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
+| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1` | ✅ git tag `sdks/go/v1.0.1` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
 
 Verify any row rather than trusting it:
 
@@ -217,7 +217,7 @@ public `nrouter-sdk` repo, and the manifest uses `path:` to reach
 `sdks/swift/`, so the Swift sources stay beside the other eight. Consumers use:
 
 ```swift
-.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.1.0")
+.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.1.1")
 ```
 
 ### Any Other Language (OpenAI SDK)
@@ -296,7 +296,7 @@ example for any of these without first adding the route to the gateway and the s
 | **Rust (branded)** | Build from `sdks/rust` | [`sdks/rust/`](sdks/rust/) · [`examples/hello-world/rust.rs`](examples/hello-world/rust.rs) |
 | **R (branded)** | `remotes::install_github(..., subdir = "sdks/r")` | [`sdks/r/`](sdks/r/) · [`examples/hello-world/r.R`](examples/hello-world/r.R) |
 | **Node.js / TypeScript (plain openai)** | `npm install openai` | [`examples/node.ts`](examples/node.ts) |
-| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.0`, or plain `openai-go` | [`examples/go.go`](examples/go.go) |
+| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1`, or plain `openai-go` | [`examples/go.go`](examples/go.go) |
 | **Java (plain openai-java)** | `com.openai:openai-java` | [`examples/java.java`](examples/java.java) |
 | **Ruby** | `gem install ruby-openai` | [`examples/ruby.rb`](examples/ruby.rb) |
 | **PHP** | `composer require openai-php/client` | [`examples/php.php`](examples/php.php) |

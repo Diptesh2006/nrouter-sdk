@@ -7,6 +7,7 @@
 //! [`ResponseMeta`].
 
 use serde_json::Value;
+use std::net::IpAddr;
 
 use crate::errors::{ErrorBody, NRouterError};
 use crate::meta::ResponseMeta;
@@ -108,6 +109,41 @@ fn redacted(api_key: &str) -> String {
     format!("{}...{}", crate::KEY_PREFIX, tail)
 }
 
+/// Parse and enforce the transport boundary before an API key is attached.
+/// Plain HTTP is reserved for a gateway on the same machine; every remote
+/// gateway must authenticate and encrypt the connection with HTTPS.
+fn validate_gateway_base_url(value: &str) -> Result<reqwest::Url, NRouterError> {
+    let mut url = reqwest::Url::parse(value).map_err(|error| {
+        NRouterError::Configuration(format!("invalid nRouter gateway URL: {error}"))
+    })?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(NRouterError::Configuration(
+            "nRouter gateway URL must not contain credentials".into(),
+        ));
+    }
+
+    let host = url.host_str().ok_or_else(|| {
+        NRouterError::Configuration("nRouter gateway URL must include a host".into())
+    })?;
+    let normalized_host = host.trim_start_matches('[').trim_end_matches(']');
+    let is_loopback = normalized_host.eq_ignore_ascii_case("localhost")
+        || normalized_host
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback());
+    if url.scheme() != "https" && !(url.scheme() == "http" && is_loopback) {
+        return Err(NRouterError::Configuration(
+            "nRouter gateway URL must use HTTPS; HTTP is allowed only for loopback development"
+                .into(),
+        ));
+    }
+
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    Ok(url)
+}
+
 impl Client {
     /// Build a client, reading `NROUTER_API_KEY` from the environment.
     pub fn from_env() -> Result<Self, NRouterError> {
@@ -125,6 +161,7 @@ impl Client {
     }
 
     /// Point the client at a different gateway (stage, or a local run).
+    /// Requests require HTTPS except for `localhost` and loopback IPs.
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into().trim_end_matches('/').to_string();
         self
@@ -246,7 +283,7 @@ impl Client {
 
         let req = self
             .http
-            .post(self.url(path))
+            .post(self.url(path)?)
             .bearer_auth(&self.api_key)
             .multipart(form);
         self.send(req).await
@@ -291,7 +328,7 @@ impl Client {
     pub async fn post(&self, path: &str, body: &Value) -> Result<Response<Value>, NRouterError> {
         let req = self
             .http
-            .post(self.url(path))
+            .post(self.url(path)?)
             .bearer_auth(&self.api_key)
             .json(body);
         self.send(req).await
@@ -307,7 +344,7 @@ impl Client {
         object.insert("stream".into(), Value::Bool(true));
         let response = self
             .http
-            .post(self.url(path))
+            .post(self.url(path)?)
             .bearer_auth(&self.api_key)
             .header(reqwest::header::ACCEPT, "text/event-stream")
             .json(&streamed)
@@ -355,7 +392,7 @@ impl Client {
 
     /// Any `GET` path under the gateway's `/v1` root.
     pub async fn get(&self, path: &str) -> Result<Response<Value>, NRouterError> {
-        let req = self.http.get(self.url(path)).bearer_auth(&self.api_key);
+        let req = self.http.get(self.url(path)?).bearer_auth(&self.api_key);
         self.send(req).await
     }
 
@@ -372,8 +409,8 @@ impl Client {
         body: Option<&Value>,
     ) -> Result<Response<Vec<u8>>, NRouterError> {
         let mut req = match method.to_ascii_uppercase().as_str() {
-            "GET" => self.http.get(self.url(path)),
-            _ => self.http.post(self.url(path)),
+            "GET" => self.http.get(self.url(path)?),
+            _ => self.http.post(self.url(path)?),
         }
         .bearer_auth(&self.api_key);
         if let Some(json) = body {
@@ -411,8 +448,11 @@ impl Client {
         )))
     }
 
-    fn url(&self, path: &str) -> String {
-        format!("{}/{}", self.base_url, path.trim_start_matches('/'))
+    fn url(&self, path: &str) -> Result<reqwest::Url, NRouterError> {
+        let base = validate_gateway_base_url(&self.base_url)?;
+        base.join(path.trim_start_matches('/')).map_err(|error| {
+            NRouterError::Configuration(format!("invalid nRouter gateway path: {error}"))
+        })
     }
 
     async fn send(&self, req: reqwest::RequestBuilder) -> Result<Response<Value>, NRouterError> {
@@ -648,5 +688,39 @@ fn error_body(
         limit_source: meta.limit_source.clone(),
         auth_reason: meta.auth_reason.clone(),
         retry_after,
+    }
+}
+
+#[cfg(test)]
+mod transport_security_tests {
+    use super::validate_gateway_base_url;
+    use crate::errors::NRouterError;
+
+    #[test]
+    fn cleartext_is_limited_to_loopback_development_gateways() {
+        for allowed in [
+            "http://127.0.0.1:4000/v1",
+            "http://[::1]:4000/v1",
+            "http://localhost:4000/v1",
+            "https://api.nrouter.ai/v1",
+        ] {
+            validate_gateway_base_url(allowed).expect(allowed);
+        }
+
+        for refused in [
+            "http://api.nrouter.ai/v1",
+            "http://192.0.2.10:4000/v1",
+            "ftp://127.0.0.1/v1",
+            "https://user:pass@api.nrouter.ai/v1",
+            "not-a-url",
+        ] {
+            assert!(
+                matches!(
+                    validate_gateway_base_url(refused),
+                    Err(NRouterError::Configuration(_))
+                ),
+                "cleartext credential transport was accepted: {refused}"
+            );
+        }
     }
 }

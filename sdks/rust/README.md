@@ -35,6 +35,10 @@ metadata. `async-openai` discards the raw response, so per-request cost, token
 counts and cache outcome are unreachable through it — that is the whole reason
 this second path exists:
 
+Custom gateway URLs must use HTTPS. Plain HTTP is accepted only for
+`localhost` or a loopback IP so local development remains possible without
+ever sending an API key unencrypted to a remote host.
+
 ```rust
 use serde_json::json;
 

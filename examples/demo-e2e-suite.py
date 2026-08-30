@@ -60,7 +60,10 @@ class MockGatewayHandler(BaseHTTPRequestHandler):
             self.send_header("x-nr-request-id", "req-demo-001")
             self.send_header("x-nr-request-cost", "0.002450")
             self.send_header("x-nr-cost-status", "exact")
-            self.send_header("x-nr-model", payload.get("model", "openai/gpt-5"))
+            # This mock certifies one fixed model. Never reflect request data
+            # into a header: CR/LF there would create a response-splitting
+            # primitive in what is meant to be a safe copyable example.
+            self.send_header("x-nr-model", "openai/gpt-5")
             self.send_header("x-nr-input-tokens", "42")
             self.send_header("x-nr-output-tokens", "18")
             self.send_header("x-nr-total-tokens", "60")

@@ -6,7 +6,7 @@ OpenAI wire format and Anthropic's Messages API natively, plus embeddings,
 audio, images and video.
 
 ```bash
-go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.0
+go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1
 ```
 
 ## Use

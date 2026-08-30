@@ -10,8 +10,8 @@ This module lives in a subdirectory of a multi-module repo, so Go requires the
 tag to carry the subdirectory prefix:
 
 ```
-sdks/go/v1.0.0        ✅  resolves github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.0
-v1.0.0                ❌  resolves the repo ROOT, which is not a Go module
+sdks/go/v1.0.1        ✅  resolves github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1
+v1.0.1                ❌  resolves the repo ROOT, which is not a Go module
 ```
 
 Getting this wrong does not fail loudly — `go get` reports the module as
@@ -33,8 +33,8 @@ grep '^module' go.mod             # github.com/nRouterAI/nrouter-sdk/sdks/go
 
 # 3. Tag from a clean main that is already pushed.
 git -C ../.. status --short       # expect empty
-git -C ../.. tag sdks/go/v1.0.0
-git -C ../.. push origin sdks/go/v1.0.0
+git -C ../.. tag sdks/go/v1.0.1
+git -C ../.. push origin sdks/go/v1.0.1
 
 # 4. Prove the proxy actually serves it — this is the only real check.
 #    Allow a minute; the proxy fetches lazily on first request.

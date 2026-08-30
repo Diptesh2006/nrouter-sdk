@@ -45,7 +45,7 @@ jobs:
 
       - name: Install R dependencies
         run: |
-          Rscript -e 'install.packages(c("curl", "jsonlite", "testthat", "roxygen2", "rcmdcheck"), repos="https://cloud.r-project.org")'
+          Rscript -e 'install.packages(c("curl", "httr", "jsonlite", "testthat", "webfakes", "roxygen2", "rcmdcheck"), repos="https://cloud.r-project.org")'
 
       - name: Run cross-SDK conformance check
         run: |

@@ -6,7 +6,7 @@ URLSession and async/await only.
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/nRouterAI/nrouter-sdk-swift.git", from: "2.1.0")
+    .package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.1.0")
 ]
 ```
 

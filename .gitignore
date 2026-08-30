@@ -13,6 +13,9 @@
 sdks/python/dist/
 sdks/python/*.egg-info/
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # --- js ---
 sdks/js/node_modules/

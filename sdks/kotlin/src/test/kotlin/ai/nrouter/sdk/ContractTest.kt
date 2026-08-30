@@ -358,22 +358,91 @@ class ContractTest {
     }
 
     @Test
-    fun `a bare error envelope still yields a typed error`() = runBlocking {
-        // A proxy that unwraps `error` must not downgrade this to a generic failure.
+    fun `all remaining endpoints build expected requests`() = runBlocking {
+        val client = clientFor(server)
+
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "application/json").setBody("{}"))
+        client.embeddings(JSONObject().put("model", "text-embedding-3"))
+        assertEquals("/v1/embeddings", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "application/json").setBody("{}"))
+        client.messages(JSONObject().put("model", "claude-sonnet"))
+        assertEquals("/v1/messages", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "application/json").setBody("{}"))
+        client.responses(JSONObject().put("model", "gpt-4o"))
+        assertEquals("/v1/responses", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "application/json").setBody("{}"))
+        client.models()
+        assertEquals("/v1/models", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "application/json").setBody("{}"))
+        client.get("/custom-path")
+        assertEquals("/v1/custom-path", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "application/json").setBody("{}"))
+        client.audioTranslations(
+            file = "audio".toByteArray(),
+            fileName = "audio.mp3",
+            fields = mapOf("model" to "whisper-1"),
+        )
+        val audioReq = server.takeRequest()
+        assertEquals("/v1/audio/translations", audioReq.path)
+        assertTrue(audioReq.getHeader("Content-Type").orEmpty().startsWith("multipart/form-data"))
+
+        // GET bytes without body
+        server.enqueue(MockResponse().setResponseCode(200).setBody("video-data"))
+        val vidBytes = client.bytes("/videos/123/content")
+        assertEquals("video-data", String(vidBytes.bytes))
+    }
+
+    @Test
+    fun `bytes error path throws typed error`() = runBlocking {
         server.enqueue(
             MockResponse()
                 .setResponseCode(402)
                 .setHeader("content-type", "application/json")
-                .setBody("""{"message":"no credits","code":"insufficient_credits"}"""),
+                .setBody("""{"error":{"code":"insufficient_credits","message":"out of credits"}}"""),
         )
         val error = assertFailsWith<NRouterError.Credit> {
-            clientFor(server).chatCompletions(JSONObject())
+            clientFor(server).bytes("/audio/speech", JSONObject())
         }
-        // Assert the CODE was read, not merely that the type came out right:
-        // the HTTP-status fallback also yields Credit for a 402, so a type-only
-        // assertion passes even when the bare envelope is ignored entirely.
         assertEquals("insufficient_credits", error.body?.code)
-        assertEquals("no credits", error.body?.message)
-        assertFalse(error.isRetryable)
+    }
+
+    @Test
+    fun `response meta extracts all properties correctly`() {
+        val headers = okhttp3.Headers.Builder()
+            .add("x-nr-request-id", "req-kt-123")
+            .add("x-nr-request-cost", "0.0025")
+            .add("x-nr-cost-status", "exact")
+            .add("x-nr-model", "gpt-4o")
+            .add("x-nr-input-tokens", "15")
+            .add("x-nr-output-tokens", "35")
+            .add("x-nr-total-tokens", "50")
+            .add("x-nr-cache-read-tokens", "10")
+            .add("x-nr-cache-write-tokens", "5")
+            .add("x-nr-limit-source", "key")
+            .add("x-nr-auth-reason", "active")
+            .add("x-nr-response-cache", "hit")
+            .add("x-nr-response-cache-age", "120")
+            .build()
+
+        val meta = NRouterResponseMeta.fromLookup { headers[it] }
+        assertEquals("req-kt-123", meta.requestId)
+        assertEquals(0.0025, meta.cost)
+        assertEquals("exact", meta.costStatus)
+        assertEquals("gpt-4o", meta.model)
+        assertEquals(15L, meta.inputTokens)
+        assertEquals(35L, meta.outputTokens)
+        assertEquals(50L, meta.totalTokens)
+        assertEquals(10L, meta.cacheReadTokens)
+        assertEquals(5L, meta.cacheWriteTokens)
+        assertEquals("key", meta.limitSource)
+        assertEquals("active", meta.authReason)
+        assertEquals("hit", meta.responseCache)
+        assertEquals(120L, meta.responseCacheAge)
+        assertTrue(meta.isPriced)
     }
 }

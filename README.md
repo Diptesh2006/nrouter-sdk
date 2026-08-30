@@ -43,7 +43,23 @@ model returned by your own `/v1/models` response before spending.
 
 ## Quick Start
 
-### Python (Branded SDK)
+### TypeScript / JavaScript
+```bash
+npm install @nrouter_ai/sdk
+```
+```typescript
+import { nRouter } from "@nrouter_ai/sdk";
+
+const client = new nRouter(); // reads NROUTER_API_KEY from environment
+const res = await client.nr.chat({
+  model: "claude-sonnet-4-5-20250929",
+  prompt: "Hello from TypeScript!",
+});
+console.log(client.nr.text(res));
+console.log(`Cost: $${res.meta.cost ?? "unpriced"}`);
+```
+
+### Python
 ```bash
 pip install nrouter-sdk
 ```
@@ -56,10 +72,69 @@ response = client.chat.completions.create(
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)
-print(f"Cost: ${client.last_response.cost}")
+print(f"Cost: ${client.last_response.cost}" if client.last_response.cost else "Cost: unpriced")
 ```
 
-### Other Branded SDKs
+### Java
+```xml
+<dependency>
+    <groupId>ai.nrouter</groupId>
+    <artifactId>nrouter-sdk</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+```java
+import ai.nrouter.sdk.NRouter;
+import com.openai.client.OpenAIClient;
+import com.openai.models.chat.completions.*;
+
+OpenAIClient client = NRouter.create(); // reads NROUTER_API_KEY
+ChatCompletion res = client.chat().completions().create(
+    ChatCompletionCreateParams.builder()
+        .model("claude-sonnet-4-5-20250929")
+        .addMessage(ChatCompletionMessageParam.ofUser(
+            ChatCompletionUserMessageParam.builder().content("Hello!").build()
+        ))
+        .build()
+);
+System.out.println(res.choices().get(0).message().content());
+```
+
+### Swift
+```swift
+// Swift Package Manager
+.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.1.0")
+```
+```swift
+import NRouter
+
+let client = try NRouter() // reads NROUTER_API_KEY
+let res = try await client.chatCompletions([
+    "model": "claude-sonnet-4-5-20250929",
+    "messages": [["role": "user", "content": "Hello!"]]
+])
+print(res.meta.isPriced ? "Cost: $\(res.meta.cost!)" : "Cost: unpriced")
+```
+
+### Kotlin
+```kotlin
+// Gradle
+implementation("ai.nrouter:nrouter-sdk-kotlin:2.1.0")
+```
+```kotlin
+import ai.nrouter.sdk.NRouter
+import org.json.JSONObject
+
+val client = NRouter() // reads NROUTER_API_KEY
+val res = client.chatCompletions(
+    JSONObject()
+        .put("model", "claude-sonnet-4-5-20250929")
+        .put("messages", listOf(mapOf("role" to "user", "content" to "Hello!")))
+)
+println("Cost: ${res.meta.cost?.let { "$$it" } ?: "unpriced"}")
+```
+
+### SDK Ecosystem & Status
 
 Nine more branded packages, each pre-configured for nRouter. Every one validates the
 `sk-nrouter-` prefix before any request and points at `https://api.nrouter.ai/v1`; all

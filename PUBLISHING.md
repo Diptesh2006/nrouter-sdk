@@ -2,11 +2,17 @@
 
 One workflow per published language, all merge-triggered:
 
-| package | workflow | version lives in |
-|---|---|---|
-| `@nrouter_ai/sdk` (npm) | `.github/workflows/publish-npm.yml` | `sdks/js/package.json` |
-| `nrouter-sdk` (PyPI) | `.github/workflows/publish-pypi.yml` | `sdks/python/pyproject.toml` |
-| `ai.nrouter:nrouter-sdk` (Maven Central) | `.github/workflows/publish-maven.yml` | `sdks/java/pom.xml` |
+| package / target | registry | workflow | version lives in |
+|---|---|---|---|
+| `@nrouter_ai/sdk` (TypeScript / JS) | [npmjs.org](https://www.npmjs.com/package/@nrouter_ai/sdk) | `.github/workflows/publish-npm.yml` | `sdks/js/package.json` |
+| `nrouter-sdk` (Python) | [pypi.org](https://pypi.org/project/nrouter-sdk/) | `.github/workflows/publish-pypi.yml` | `sdks/python/pyproject.toml` |
+| `ai.nrouter:nrouter-sdk` (Java) | [Maven Central](https://central.sonatype.com/) | `.github/workflows/publish-maven.yml` | `sdks/java/pom.xml` |
+| `ai.nrouter:nrouter-sdk-kotlin` (Kotlin) | [Maven Central / Sonatype](https://central.sonatype.com/) | `.github/workflows/publish-kotlin.yml` | `sdks/kotlin/build.gradle.kts` |
+| `NRouter` (Swift) | [Swift Package Index](https://swiftpackageindex.com/) | `.github/workflows/publish-swift.yml` | `Package.swift` |
+| `nrouter` (Rust) | [crates.io](https://crates.io/crates/nrouter) | `.github/workflows/publish-rust.yml` | `sdks/rust/Cargo.toml` |
+| `github.com/nRouterAI/nrouter-sdk/sdks/go` (Go) | [proxy.golang.org](https://proxy.golang.org/) | `.github/workflows/publish-go.yml` | `sdks/go/go.mod` (tag `sdks/go/v*`) |
+| `nrouter` (Dart) | [pub.dev](https://pub.dev/packages/nrouter) | `.github/workflows/publish-dart.yml` | `sdks/dart/pubspec.yaml` |
+| `nrouter` (R) | [CRAN / R-universe](https://nrouterai.r-universe.dev) | `.github/workflows/publish-r.yml` | `sdks/r/DESCRIPTION` |
 
 ## To release
 

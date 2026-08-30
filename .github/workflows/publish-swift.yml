@@ -1,0 +1,62 @@
+# Test and publish nRouter Swift SDK (SwiftPM / Swift Package Index), on merge to main.
+#
+# ONE workflow for Swift: it tests on macOS runner with Xcode / Swift toolchain,
+# validates the SPM package manifest parity, and validates release tagging for Swift Package Index.
+name: publish-swift
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdks/swift/**'
+      - 'Package.swift'
+      - 'spec/**'
+      - 'conformance/**'
+      - 'tests/**'
+      - 'examples/**'
+      - '.github/workflows/publish-swift.yml'
+  pull_request:
+    paths:
+      - 'sdks/swift/**'
+      - 'Package.swift'
+      - 'spec/**'
+      - 'conformance/**'
+      - 'tests/**'
+      - 'examples/**'
+      - '.github/workflows/publish-swift.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-verify:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app || sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Test Root Package Manifest
+        run: swift test --enable-code-coverage
+
+      - name: Test Nested SDK Package Manifest
+        working-directory: sdks/swift
+        run: swift test --enable-code-coverage
+
+      - name: Run cross-SDK conformance check
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 conformance/check_conformance.py
+
+      - name: Validate Swift Package Index Compatibility (Release Template)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "Validating SwiftPM package metadata and documentation targets..."
+          swift package dump-package > /dev/null
+          echo "Package is ready for Swift Package Index indexing upon semver git tag push."

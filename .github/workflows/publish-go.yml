@@ -1,0 +1,72 @@
+# Test and publish nRouter Go SDK (`github.com/nRouterAI/nrouter-sdk/sdks/go`), on merge to main.
+#
+# ONE workflow for Go: formats, vets, tests with race detector, runs conformance,
+# and verifies proxy.golang.org tag readiness.
+name: publish-go
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdks/go/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - 'tests/**'
+      - 'examples/**'
+      - '.github/workflows/publish-go.yml'
+  pull_request:
+    paths:
+      - 'sdks/go/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - 'tests/**'
+      - 'examples/**'
+      - '.github/workflows/publish-go.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Format check
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "Unformatted Go files:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      - name: Go Vet
+        run: go vet ./...
+
+      - name: Go Test
+        run: go test -v -race -count=1 ./...
+
+      - name: Run cross-SDK conformance check
+        working-directory: .
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 conformance/check_conformance.py
+
+      - name: Verify Module Path & Proxy Format (Release Template)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          grep '^module github.com/nRouterAI/nrouter-sdk/sdks/go' go.mod
+          echo "Go module is configured for proxy.golang.org resolution via sdks/go/v* tags."

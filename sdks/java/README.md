@@ -41,13 +41,25 @@ System.out.println(response.choices().get(0).message().content());
 `NRouter.create()` returns a real `OpenAIClient`, so every resource `openai-java`
 supports works unmodified.
 
-## Basic only, for now
+## Features & Capabilities
 
-This is a minimal wrapper: API key resolution/validation (`sk-nrouter-...`) and a
-default base URL of `https://api.nrouter.ai/v1`. It doesn't yet have the typed errors,
-automatic cost-header capture, or `credits`/`guardrails`/`prompts` namespaces that
-[`sdks/python/`](../python/) has — see that package for the fuller pattern this one will
-grow into.
+- **Key Validation & Base URL**: Auto-reads `NROUTER_API_KEY`, enforces `sk-nrouter-` prefix, defaults to `https://api.nrouter.ai/v1`.
+- **Client-Side Memory**: `NRouterMemory` provides in-memory turn management that ensures safe conversation history formatting and prevents tenancy header leaks.
+- **Prompt Templates & Variables**: `NRouter.promptTemplate(templateId, variables)` and `NRouter.promptVariables(variables)` build canonical wire payloads for nRouter prompt templates.
+- **Sampling Controls**: `NRouter.buildSamplingParams(...)` enforces gateway sampling policies (such as Claude temperature/top_p mutual exclusivity).
+
+### Conversation Memory Example
+
+```java
+import ai.nrouter.sdk.NRouterMemory;
+import java.util.Map;
+
+NRouterMemory memory = NRouterMemory.createMemory();
+memory.add(Map.of("role", "user", "content", "Hello!"));
+memory.add(Map.of("role", "assistant", "content", "Hi! How can I help you today?"));
+
+System.out.println("Stored messages: " + memory.messages().size());
+```
 
 ## How guardrails, budgets and routing work
 

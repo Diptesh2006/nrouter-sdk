@@ -191,3 +191,71 @@ test('a 2xx that is not JSON is permanent, not retryable — a retry re-bills it
     },
   );
 });
+
+test('jsonRequest throws transport error on malformed JSON with 2xx application/json', async () => {
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    fetch: async () =>
+      new Response('{ invalid json', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+  });
+
+  await assert.rejects(
+    () => client.nr.responses({ model: 'm', input: 'hi' }),
+    nRouterTransportError,
+  );
+});
+
+test('jsonRequest throws transport error when 2xx returns JSON that is not an object', async () => {
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    fetch: async () =>
+      new Response('["array", "not", "object"]', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+  });
+
+  await assert.rejects(
+    () => client.nr.responses({ model: 'm', input: 'hi' }),
+    nRouterTransportError,
+  );
+});
+
+test('jsonRequest throws classified error when 2xx carries an error envelope', async () => {
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    fetch: async () =>
+      new Response(JSON.stringify({ error: { code: 'guardrail_blocked', message: 'blocked' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+  });
+
+  await assert.rejects(
+    () => client.nr.responses({ model: 'm', input: 'hi' }),
+    nRouterGuardrailBlockedError,
+  );
+});
+
+test('jsonRequest classifies non-JSON 500 error response', async () => {
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    fetch: async () =>
+      new Response('Internal Server Error Plain Text', {
+        status: 500,
+        headers: { 'content-type': 'text/plain' },
+      }),
+  });
+
+  await assert.rejects(
+    () => client.nr.responses({ model: 'm', input: 'hi' }),
+    (err) => {
+      assert.equal(err.status, 500);
+      assert.ok(err.message.contains ? err.message.contains('Internal Server Error') : err.message.includes('Internal Server Error'));
+      return true;
+    },
+  );
+});

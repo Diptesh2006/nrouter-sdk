@@ -339,6 +339,102 @@ final class ContractTests: XCTestCase {
         let raw = try await client.bytes("/audio/speech", [:])
         XCTAssertEqual(String(data: raw.data, encoding: .utf8), "binary-audio")
         XCTAssertEqual(raw.statusCode, 200)
+
+        // GET bytes without body
+        let rawGet = try await client.bytes("/videos/123/content")
+        XCTAssertEqual(rawGet.statusCode, 200)
+    }
+
+    func testAllRemainingEndpoints() async throws {
+        StubProtocol.response = (200, ["content-type": "application/json"], Data(#"{"status":"ok"}"#.utf8))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(
+            apiKey: "sk-nrouter-test",
+            session: URLSession(configuration: config)
+        )
+
+        _ = try await client.embeddings(["model": "text-embedding-3", "input": "hi"])
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/embeddings")
+
+        _ = try await client.messages(["model": "claude-sonnet", "messages": []])
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/messages")
+
+        _ = try await client.responses(["model": "gpt-4o", "input": "hi"])
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/responses")
+
+        _ = try await client.models()
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/models")
+
+        _ = try await client.get("/custom-get")
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/custom-get")
+
+        _ = try await client.audioTranslations(file: Data("speech".utf8), fileName: "speech.mp3")
+        XCTAssertEqual(StubProtocol.captured?.url?.path, "/v1/audio/translations")
+    }
+
+    func testBytesErrorPathThrowsTypedError() async throws {
+        StubProtocol.response = (
+            402,
+            ["content-type": "application/json"],
+            Data(#"{"error":{"code":"insufficient_credits","message":"out of credits"}}"#.utf8)
+        )
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(
+            apiKey: "sk-nrouter-test",
+            session: URLSession(configuration: config)
+        )
+
+        do {
+            _ = try await client.bytes("/audio/speech", [:])
+            XCTFail("bytes did not throw on 402")
+        } catch let error as NRouterError {
+            if case .credit(let body) = error {
+                XCTAssertEqual(body.code, "insufficient_credits")
+            } else {
+                XCTFail("wrong error case: \(error)")
+            }
+        }
+    }
+
+    func testResponseMetaAllFieldsAndDebugDescription() {
+        let headers: [String: String] = [
+            "x-nr-request-id": "req-123",
+            "x-nr-request-cost": "0.005",
+            "x-nr-cost-status": "exact",
+            "x-nr-model": "gpt-4o",
+            "x-nr-input-tokens": "10",
+            "x-nr-output-tokens": "20",
+            "x-nr-total-tokens": "30",
+            "x-nr-cache-read-tokens": "5",
+            "x-nr-cache-write-tokens": "2",
+            "x-nr-limit-source": "key",
+            "x-nr-auth-reason": "active",
+            "x-nr-response-cache": "hit",
+            "x-nr-response-cache-age": "60",
+        ]
+        let http = HTTPURLResponse(
+            url: URL(string: "https://api.nrouter.ai/v1/chat/completions")!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: headers
+        )!
+        let meta = NRouterResponseMeta(response: http)
+        XCTAssertEqual(meta.requestID, "req-123")
+        XCTAssertEqual(meta.cost, 0.005)
+        XCTAssertEqual(meta.costStatus, "exact")
+        XCTAssertEqual(meta.model, "gpt-4o")
+        XCTAssertEqual(meta.inputTokens, 10)
+        XCTAssertEqual(meta.outputTokens, 20)
+        XCTAssertEqual(meta.totalTokens, 30)
+        XCTAssertEqual(meta.cacheReadTokens, 5)
+        XCTAssertEqual(meta.cacheWriteTokens, 2)
+        XCTAssertEqual(meta.limitSource, "key")
+        XCTAssertEqual(meta.authReason, "active")
+        XCTAssertEqual(meta.responseCache, "hit")
+        XCTAssertEqual(meta.responseCacheAge, 60)
+        XCTAssertTrue(meta.isPriced)
     }
 
     func testBaseURLTrailingSlashIsNormalised() throws {

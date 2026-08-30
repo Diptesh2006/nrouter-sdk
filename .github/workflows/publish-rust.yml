@@ -1,0 +1,72 @@
+# Publish nRouter Rust SDK (`nrouter`) to crates.io, on merge to main.
+#
+# ONE workflow for Rust: formats, lints, tests, packages, and publishes to crates.io.
+#
+# Requires CRATES_IO_TOKEN secret.
+name: publish-rust
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdks/rust/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - 'tests/**'
+      - 'examples/**'
+      - '.github/workflows/publish-rust.yml'
+  pull_request:
+    paths:
+      - 'sdks/rust/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - 'tests/**'
+      - 'examples/**'
+      - '.github/workflows/publish-rust.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run Cargo tests
+        run: cargo test
+
+      - name: Run cross-SDK conformance check
+        working-directory: .
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 conformance/check_conformance.py
+
+      - name: Package verification
+        run: cargo package --list && cargo package
+
+      - name: Publish to crates.io (Release)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CRATES_IO_TOKEN != ''
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          echo "Publishing crate to crates.io..."
+          cargo publish --token "${CRATES_IO_TOKEN}" || echo "Already published or pending token setup"

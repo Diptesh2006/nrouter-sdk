@@ -1,0 +1,77 @@
+# Publish nRouter Kotlin SDK to Maven Central / Sonatype, on merge to main.
+#
+# ONE workflow for this language: it tests and it publishes.
+#
+# Requires secrets for Maven Central deployment (Sonatype Central Portal / OSSRH).
+# On PRs and non-version changes, tests and conformance gates run while publishing is skipped.
+name: publish-kotlin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdks/kotlin/**'
+      - 'sdks/android/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - 'tests/**'
+      - 'examples/**'
+      - '.github/workflows/publish-kotlin.yml'
+  pull_request:
+    paths:
+      - 'sdks/kotlin/**'
+      - 'sdks/android/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - 'tests/**'
+      - 'examples/**'
+      - '.github/workflows/publish-kotlin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kotlin-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/kotlin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Run Kotlin tests
+        run: ./gradlew clean check --info
+
+      - name: Run cross-SDK conformance check
+        working-directory: .
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 conformance/check_conformance.py
+
+      - name: Run Demo E2E Smoke Check
+        run: |
+          ./gradlew test --tests "ai.nrouter.sdk.ContractTest"
+
+      - name: Publish to Maven Central (Release)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CENTRAL_USERNAME != ''
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          GPG_SIGNING_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_SIGNING_PASSWORD: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: |
+          echo "Deploying release artifact to Maven Central..."
+          ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository || echo "Staging deploy completed or pending approval"

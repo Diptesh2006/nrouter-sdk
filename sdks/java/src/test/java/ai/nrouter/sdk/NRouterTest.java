@@ -74,5 +74,33 @@ class NRouterTest {
         assertEquals(
                 Arrays.asList("org_name", "model"),
                 NRouter.systemVariableConflicts(Map.of("model", "fake", "org_name", "fake")));
+        assertEquals(Collections.emptyList(), NRouter.systemVariableConflicts(null));
+        assertEquals(Collections.emptyList(), NRouter.systemVariableConflicts(Collections.emptyMap()));
+    }
+
+    @Test
+    void promptVariablesAndWithVariablesWorkAsExpected() {
+        NRouter.PromptSelection vars = NRouter.promptVariables(Map.of("a", "1"));
+        assertEquals(Map.of("nrouter_prompt_variables", Map.of("a", "1")), NRouter.promptExtraBody(vars));
+
+        NRouter.PromptSelection merged = NRouter.withVariables(vars, Map.of("b", "2"));
+        assertEquals(Map.of("a", "1", "b", "2"), merged.variables());
+
+        assertThrows(IllegalArgumentException.class, () -> NRouter.promptTemplate(""));
+        assertThrows(IllegalArgumentException.class, () -> NRouter.promptTemplate(null));
+    }
+
+    @Test
+    void vetExtraRejectsProtoAndAllowsNull() {
+        NRouter.vetExtra(null);
+        NRouter.vetExtra(Collections.emptyMap());
+        assertThrows(IllegalArgumentException.class, () -> NRouter.vetExtra(Map.of("__proto__", "pollute")));
+    }
+
+    @Test
+    void samplingRejectsInvalidValues() {
+        assertThrows(IllegalArgumentException.class, () -> NRouter.buildSamplingParams(true, "gpt-4", null, -0.5, 0.5));
+        assertThrows(IllegalArgumentException.class, () -> NRouter.buildSamplingParams(true, "gpt-4", null, 0.7, -0.1));
+        assertThrows(IllegalArgumentException.class, () -> NRouter.buildSamplingParams(true, "gpt-4", null, Double.NaN, 0.5));
     }
 }

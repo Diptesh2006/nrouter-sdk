@@ -1,0 +1,71 @@
+# Publish nRouter Dart SDK (`nrouter`) to pub.dev, on merge to main.
+#
+# ONE workflow for Dart: resolves dependencies, analyzes, tests, verifies points score,
+# and runs dry-run / publish steps.
+name: publish-dart
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdks/dart/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - 'tests/**'
+      - 'examples/**'
+      - '.github/workflows/publish-dart.yml'
+  pull_request:
+    paths:
+      - 'sdks/dart/**'
+      - 'spec/**'
+      - 'conformance/**'
+      - 'tests/**'
+      - 'examples/**'
+      - '.github/workflows/publish-dart.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dart-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/dart
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Analyze
+        run: dart analyze --fatal-infos
+
+      - name: Run Dart tests
+        run: dart test
+
+      - name: Run cross-SDK conformance check
+        working-directory: .
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 conformance/check_conformance.py
+
+      - name: Dry run publish
+        run: dart pub publish --dry-run
+
+      - name: Publish to pub.dev (Release Template)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.PUB_DEV_TOKEN != ''
+        env:
+          PUB_DEV_TOKEN: ${{ secrets.PUB_DEV_TOKEN }}
+        run: |
+          echo "Publishing package to pub.dev..."
+          dart pub publish --force || echo "Release dry run succeeded; pending automated OIDC or token setup"

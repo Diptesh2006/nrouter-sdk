@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 nRouter Multi-Language SDK Demo E2E Certification Script
-Identity: demo@nrouter.ai / demo-prod@nrouter.ai
 
 This script demonstrates and records end-to-end execution of the nRouter SDK using
 a demo configuration / demo key, validating:
@@ -58,7 +57,7 @@ class MockGatewayHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/chat/completions":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("x-nr-request-id", "req-demo-prod-001")
+            self.send_header("x-nr-request-id", "req-demo-001")
             self.send_header("x-nr-request-cost", "0.002450")
             self.send_header("x-nr-cost-status", "exact")
             self.send_header("x-nr-model", payload.get("model", "openai/gpt-5"))
@@ -77,7 +76,7 @@ class MockGatewayHandler(BaseHTTPRequestHandler):
                         "index": 0,
                         "message": {
                             "role": "assistant",
-                            "content": f"Hello demo@nrouter.ai! Your query processed successfully through nRouter Gateway.",
+                            "content": "Hello! Your query processed successfully through nRouter Gateway.",
                         },
                         "finish_reason": "stop",
                     }
@@ -93,7 +92,6 @@ class MockGatewayHandler(BaseHTTPRequestHandler):
 def run_demo_e2e() -> int:
     print("=" * 70)
     print("nRouter SDK End-to-End Demo Certification")
-    print("Test Identity: demo@nrouter.ai / demo-prod@nrouter.ai")
     print("=" * 70)
 
     # 1. Start local mock gateway server to emulate live gateway response headers
@@ -106,7 +104,6 @@ def run_demo_e2e() -> int:
     demo_key = "sk-nrouter-demo0000000000000000000000000000000000"
 
     print(f"\n[1/4] Initializing nRouter client with Demo credentials...")
-    print(f"      Identity : demo@nrouter.ai")
     print(f"      Endpoint : {base_url}")
     print(f"      Key Prefix: {demo_key[:12]}...")
 
@@ -114,7 +111,7 @@ def run_demo_e2e() -> int:
 
     # 2. Execute chat completion with prompt selection & sampling
     print(f"\n[2/4] Executing chat completion with prompt template and sampling...")
-    prompt_sel = prompt_template("welcome-template", {"user_email": "demo@nrouter.ai"})
+    prompt_sel = prompt_template("welcome-template", {"user_email": "demo@example.com"})
     sampling = build_sampling_params(advanced=True, model="openai/gpt-5", temperature=0.7, top_p=0.9)
 
     completion = client.chat.completions.create(
@@ -144,7 +141,7 @@ def run_demo_e2e() -> int:
     print(f"      Tokens       : {meta.input_tokens} in / {meta.output_tokens} out (Total: {meta.total_tokens})")
     print(f"      Cache Status : {meta.response_cache}")
 
-    assert meta.request_id == "req-demo-prod-001"
+    assert meta.request_id == "req-demo-001"
     assert meta.cost == 0.00245
     assert meta.cost_status == "exact"
     assert meta.total_tokens == 60
@@ -155,38 +152,16 @@ def run_demo_e2e() -> int:
 
     async def test_mem():
         mem = create_memory()
-        await mem.add({"role": "user", "content": "My account is demo@nrouter.ai"})
-        await mem.add({"role": "assistant", "content": "Account recognized: demo@nrouter.ai"})
+        await mem.add({"role": "user", "content": "Hello from demo"})
+        await mem.add({"role": "assistant", "content": "Hello! How can I help?"})
         msgs = await mem.messages()
         assert len(msgs) == 2
         print(f"      Stored {len(msgs)} turns in memory store successfully.")
 
     asyncio.run(test_mem())
 
-    # Record output
-    record = {
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "identity": "demo@nrouter.ai",
-        "key_prefix": demo_key[:12],
-        "request_id": meta.request_id,
-        "cost_usd": meta.cost,
-        "cost_status": meta.cost_status,
-        "model": meta.model,
-        "tokens": {
-            "input": meta.input_tokens,
-            "output": meta.output_tokens,
-            "total": meta.total_tokens,
-        },
-        "status": "CERTIFIED_PASS",
-    }
-
-    record_path = os.path.join(os.path.dirname(__file__), "demo-e2e-record.json")
-    with open(record_path, "w") as fp:
-        json.dump(record, fp, indent=2)
-
     print(f"\n" + "=" * 70)
-    print(f"DEMO E2E CERTIFICATION RECORD WRITTEN: {record_path}")
-    print(f"Result: PASS (All checks certified for demo@nrouter.ai)")
+    print(f"Result: PASS (All checks certified)")
     print("=" * 70)
 
     server.shutdown()

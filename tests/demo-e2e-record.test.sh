@@ -2,14 +2,13 @@
 set -euo pipefail
 
 # nRouter Multi-Language SDK End-to-End Demo Certification Test
-# Verifies all active SDKs against demo key configuration and records test results for demo@nrouter.ai
+# Verifies all active SDKs against demo key configuration
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 echo "======================================================================"
 echo "nRouter SDK Multi-Language Demo & End-to-End Test Suite"
-echo "Test Identity: demo@nrouter.ai / demo-prod@nrouter.ai"
 echo "======================================================================"
 
 # 1. Run Python Demo E2E
@@ -41,5 +40,6 @@ echo ">>> [5/5] Executing Java SDK Contract & Wire Suite..."
 
 echo ""
 echo "======================================================================"
-echo "ALL SDK DEMO & END-TO-END VERIFICATIONS PASSED (Identity: demo@nrouter.ai)"
+echo "ALL SDK DEMO & END-TO-END VERIFICATIONS PASSED"
 echo "======================================================================"
+

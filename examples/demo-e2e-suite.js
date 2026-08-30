@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
  * nRouter TypeScript/Node.js SDK Demo E2E Certification Script
- * Identity: demo@nrouter.ai / demo-prod@nrouter.ai
  */
 
 const http = require('node:http');
@@ -14,7 +13,6 @@ const { nRouter, createMemory, promptTemplate, buildSamplingParams } = require('
 async function main() {
   console.log('======================================================================');
   console.log('nRouter JS/TS SDK End-to-End Demo Certification');
-  console.log('Test Identity: demo@nrouter.ai / demo-prod@nrouter.ai');
   console.log('======================================================================');
 
   // 1. Local mock gateway server
@@ -50,7 +48,7 @@ async function main() {
           {
             message: {
               role: 'assistant',
-              content: 'Hello demo@nrouter.ai from TypeScript SDK!',
+              content: 'Hello from TypeScript SDK demo!',
             },
           },
         ],
@@ -66,7 +64,6 @@ async function main() {
 
   console.log('\n[1/3] Initializing TypeScript client...');
   console.log(`      Endpoint : ${baseUrl}`);
-  console.log(`      Identity : demo@nrouter.ai`);
 
   const client = new nRouter({
     apiKey: demoKey,
@@ -74,7 +71,7 @@ async function main() {
   });
 
   console.log('\n[2/3] Calling client.chat() with prompt template and sampling...');
-  const promptSel = promptTemplate('support-bot', { email: 'demo@nrouter.ai' });
+  const promptSel = promptTemplate('support-bot', { email: 'demo@example.com' });
   const sampling = buildSamplingParams({
     model: 'anthropic/claude-sonnet-4-5',
     temperature: 0.7,
@@ -84,7 +81,7 @@ async function main() {
 
   const response = await client.nr.chat({
     model: 'anthropic/claude-sonnet-4-5',
-    messages: [{ role: 'user', content: 'Authenticate demo@nrouter.ai' }],
+    messages: [{ role: 'user', content: 'Demo test query' }],
     promptTemplateId: promptSel.templateId,
     promptVariables: promptSel.variables,
     ...sampling,

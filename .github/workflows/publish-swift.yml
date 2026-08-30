@@ -50,9 +50,7 @@ jobs:
         run: swift test --enable-code-coverage
 
       - name: Run cross-SDK conformance check
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 conformance/check_conformance.py
+        run: python3 conformance/check_conformance.py
 
       - name: Validate Swift Package Index Compatibility (Release Template)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

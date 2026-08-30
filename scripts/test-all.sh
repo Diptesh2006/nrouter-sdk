@@ -69,13 +69,13 @@ step "Go"
 (cd "$ROOT/sdks/go" && go test ./... && go test -race ./... && go vet ./...)
 
 step "Rust"
-(cd "$ROOT/sdks/rust" && cargo test --all-features && cargo clippy --all-targets --all-features -- -D warnings)
+(cd "$ROOT/sdks/rust" && cargo fmt --check && cargo test --all-features && cargo clippy --all-targets --all-features -- -D warnings)
 
 step "Swift"
 (cd "$ROOT/sdks/swift" && swift test && swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors)
 
 step "Dart"
-(cd "$ROOT/sdks/dart" && dart analyze && dart test)
+(cd "$ROOT/sdks/dart" && dart analyze && dart test && dart pub publish --dry-run)
 
 step "R"
 (cd "$ROOT/sdks/r" && Rscript -e 'testthat::test_local(".", reporter="summary")')

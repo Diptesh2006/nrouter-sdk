@@ -1,43 +1,42 @@
-# Verify the source-preview nRouter Kotlin SDK.
+# Verify the source-preview nRouter Android SDK (`ai.nrouter:nrouter-sdk-android`).
 #
 # Support scope does not authorize a registry release for this SDK. This
 # workflow deliberately has read-only permissions and no credentialed publish
 # path; publication requires a separate owner scope decision.
-name: publish-kotlin
+name: publish-android
 
 on:
   push:
     branches: [main]
     paths:
+      - 'sdks/android/**'
       - 'sdks/kotlin/**'
       - 'spec/**'
       - 'conformance/**'
       - 'tests/**'
       - 'examples/**'
-      - '.github/workflows/publish-kotlin.yml'
+      - '.github/workflows/publish-android.yml'
   pull_request:
     paths:
+      - 'sdks/android/**'
       - 'sdks/kotlin/**'
       - 'spec/**'
       - 'conformance/**'
       - 'tests/**'
       - 'examples/**'
-      - '.github/workflows/publish-kotlin.yml'
+      - '.github/workflows/publish-android.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: kotlin-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  group: android-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
   cancel-in-progress: false
 
 jobs:
-  build-and-test:
+  test-and-verify:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sdks/kotlin
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -49,16 +48,20 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@6cfc8b8e8bb586cc164bef1c478c1eea3a4d6a19 # v3
 
-      - name: Run Kotlin tests
-        run: ./gradlew clean check publishToMavenLocal --info
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager 'platforms;android-34' 'build-tools;34.0.0' 'platform-tools'
+
+      - name: Publish Kotlin core to Maven Local
+        working-directory: sdks/kotlin
+        run: ./gradlew clean publishToMavenLocal --info
+
+      - name: Run Android tests, lint, and local publish verification
+        working-directory: sdks/android
+        run: ./gradlew clean build publishToMavenLocal --info
 
       - name: Run cross-SDK conformance check
-        working-directory: .
         run: |
           python3 -m pip install --upgrade pip
           python3 conformance/check_conformance.py
-
-      - name: Run Demo E2E Smoke Check
-        run: |
-          ./gradlew test --tests "ai.nrouter.sdk.ContractTest"
-

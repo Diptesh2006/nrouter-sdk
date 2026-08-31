@@ -21,7 +21,7 @@ release. All ten remain subject to the same conformance gate.
 | `sdks/java` | Maven Central | `ai.nrouter:nrouter-sdk` |
 
 Public preview distribution: `sdks/r` is available from
-`https://nrouterai.r-universe.dev` as package `nrouter`. Preview publication is
+`https://nrouterai.r-universe.dev/nrouter` as package `nrouter`. Preview publication is
 not a support commitment.
 
 Derive the live versions; never quote one from prose:

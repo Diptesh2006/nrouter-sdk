@@ -6,6 +6,8 @@
 One API key for models across six provider clouds. There is no official OpenAI
 SDK for R, so this package calls the gateway's HTTP API directly via `httr`.
 
+**Package Page:** [https://nrouterai.r-universe.dev/nrouter](https://nrouterai.r-universe.dev/nrouter)
+
 ```r
 # Public preview from R-universe.
 install.packages(

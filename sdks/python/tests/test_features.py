@@ -59,12 +59,15 @@ def test_extra_body_tenancy_fields_are_refused():
 
 
 def test_sampling_policy_matches_claude_top_p_rule():
-    assert build_sampling_params(
-        advanced=False,
-        model="anthropic/claude-sonnet",
-        temperature=0.7,
-        top_p=0.5,
-    ) == {}
+    assert (
+        build_sampling_params(
+            advanced=False,
+            model="anthropic/claude-sonnet",
+            temperature=0.7,
+            top_p=0.5,
+        )
+        == {}
+    )
     assert build_sampling_params(
         advanced=True,
         model="anthropic/claude-sonnet",
@@ -86,11 +89,14 @@ def test_sampling_policy_matches_claude_top_p_rule():
 
 
 def test_bad_sampling_values_are_refused_only_when_advanced():
-    assert build_sampling_params(
-        advanced=False,
-        model="x",
-        top_p=2,
-    ) == {}
+    assert (
+        build_sampling_params(
+            advanced=False,
+            model="x",
+            top_p=2,
+        )
+        == {}
+    )
     with pytest.raises(nRouterRequestError):
         build_sampling_params(advanced=True, model="x", top_p=2)
 

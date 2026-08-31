@@ -4,21 +4,20 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Dict, Optional
 
 from nroutersdk._errors import nRouterRequestError
 
 _NEUTRAL_TOP_P = 1.0
 
 
-def is_claude_model(model: str, provider: Optional[str] = None) -> bool:
+def is_claude_model(model: str, provider: str | None = None) -> bool:
     """Return true when the model belongs to the Claude family."""
-    return bool(re.search("claude", model or "", re.I)) or bool(
-        re.search("anthropic", provider or "", re.I)
+    return bool(re.search("claude", model or "", re.IGNORECASE)) or bool(
+        re.search("anthropic", provider or "", re.IGNORECASE)
     )
 
 
-def _require_usable(name: str, value: float, maximum: Optional[float] = None) -> None:
+def _require_usable(name: str, value: float, maximum: float | None = None) -> None:
     if not math.isfinite(value):
         raise nRouterRequestError(
             f"{name} must be a finite number; sent as-is it serializes to JSON null."
@@ -35,10 +34,10 @@ def build_sampling_params(
     *,
     advanced: bool,
     model: str,
-    provider: Optional[str] = None,
-    temperature: Optional[float] = None,
-    top_p: Optional[float] = None,
-) -> Dict[str, float]:
+    provider: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+) -> dict[str, float]:
     """Build the wire sampling fields.
 
     With advanced sampling off, nothing is sent. For Claude-family models,
@@ -56,7 +55,7 @@ def build_sampling_params(
     top_p_set = top_p is not None and top_p != _NEUTRAL_TOP_P
     suppress_temperature = top_p_set and is_claude_model(model, provider)
 
-    out: Dict[str, float] = {}
+    out: dict[str, float] = {}
     if temperature is not None and not suppress_temperature:
         out["temperature"] = temperature
     if top_p_set and top_p is not None:

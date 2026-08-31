@@ -10,7 +10,7 @@ CRAN and R-universe both start here, and so does anyone installing from GitHub.
 ```bash
 cd sdks
 R CMD build r
-R CMD check nrouter_2.2.0.tar.gz --as-cran
+R CMD check nrouter_2.2.1.tar.gz --as-cran
 ```
 
 **Status: OK is the bar**, with exactly two NOTEs that are not defects and
@@ -102,7 +102,7 @@ commitment: a package that breaks under a future R release gets an email with a
 deadline, and missing it means archival.
 
 ```bash
-R CMD check nrouter_2.2.0.tar.gz --as-cran     # must be OK, zero NOTEs
+R CMD check nrouter_2.2.1.tar.gz --as-cran     # must be OK, zero NOTEs
 # then submit the tarball at https://cran.r-project.org/submit.html
 ```
 
@@ -123,6 +123,6 @@ that reason — CRAN runs examples on their machines, without a key.
 ## Tagging
 
 ```bash
-git tag -s sdk-r-v2.2.0 -m "r sdk 2.2.0"
-git push origin sdk-r-v2.2.0     # SSH remote; HTTPS git fails here
+git tag -s sdk-r-v2.2.1 -m "r sdk 2.2.1"
+git push origin sdk-r-v2.2.1     # SSH remote; HTTPS git fails here
 ```

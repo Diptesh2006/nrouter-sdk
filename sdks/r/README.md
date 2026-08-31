@@ -8,7 +8,7 @@ One API key for models across six provider clouds. There is no official OpenAI
 SDK for R, so this package calls the gateway's HTTP API directly via `httr`.
 
 **Registry & Package URL:** [https://nrouterai.r-universe.dev/nrouter](https://nrouterai.r-universe.dev/nrouter)  
-**Registry Status:** 🧪 Public Preview on R-universe (Package `nrouter` v2.2.0)
+**Registry Status:** 🧪 Public Preview on R-universe (Package `nrouter` v2.2.1)
 
 ```r
 # Public preview from R-universe.
@@ -178,7 +178,7 @@ request you were billed for.
 
 ```bash
 cd sdks
-R CMD build r && R CMD check nrouter_2.2.0.tar.gz --as-cran   # Status: OK
+R CMD build r && R CMD check nrouter_2.2.1.tar.gz --as-cran   # Status: OK
 ```
 
 Publishing: [PUBLISHING.md](PUBLISHING.md).

@@ -12,8 +12,6 @@ the pairing in both directions.
 
 from __future__ import annotations
 
-from typing import Optional
-
 
 class nRouterError(Exception):
     """Base error for all nRouter SDK errors."""
@@ -21,15 +19,15 @@ class nRouterError(Exception):
     #: Stable wire code, mirroring `api-contract.ts`.
     code: str = "nrouter_error"
     #: HTTP status this error is raised for.
-    status_code: Optional[int] = None
+    status_code: int | None = None
 
     def __init__(
         self,
         message: str,
         *,
-        code: Optional[str] = None,
-        request_id: Optional[str] = None,
-        status_code: Optional[int] = None,
+        code: str | None = None,
+        request_id: str | None = None,
+        status_code: int | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -64,8 +62,8 @@ class nRouterGuardrailBlockedError(nRouterError):
         self,
         message: str,
         *,
-        request_id: Optional[str] = None,
-        guardrail_name: Optional[str] = None,
+        request_id: str | None = None,
+        guardrail_name: str | None = None,
     ) -> None:
         super().__init__(message, request_id=request_id)
         self.guardrail_name = guardrail_name
@@ -88,8 +86,8 @@ class nRouterAuthenticationError(nRouterError):
         self,
         message: str,
         *,
-        request_id: Optional[str] = None,
-        auth_reason: Optional[str] = None,
+        request_id: str | None = None,
+        auth_reason: str | None = None,
     ) -> None:
         super().__init__(message, request_id=request_id)
         self.auth_reason = auth_reason
@@ -109,7 +107,7 @@ class nRouterCreditError(nRouterError):
         self,
         message: str = "Insufficient credits. Please top up your balance.",
         *,
-        request_id: Optional[str] = None,
+        request_id: str | None = None,
     ) -> None:
         super().__init__(message, request_id=request_id)
 
@@ -172,10 +170,10 @@ class nRouterRateLimitError(nRouterError):
         self,
         message: str,
         *,
-        request_id: Optional[str] = None,
-        limit_source: Optional[str] = None,
-        retry_after: Optional[int] = None,
-        code: Optional[str] = None,
+        request_id: str | None = None,
+        limit_source: str | None = None,
+        retry_after: int | None = None,
+        code: str | None = None,
     ) -> None:
         # Both `rate_limit_exceeded` and `tpm_limit_exceeded` are 429 and both
         # raise this class, so dispatching on status is correct. But the class
@@ -199,13 +197,13 @@ class nRouterServiceError(nRouterError):
 
 
 __all__ = [
-    "nRouterError",
-    "nRouterRequestError",
-    "nRouterGuardrailBlockedError",
     "nRouterAuthenticationError",
-    "nRouterCreditError",
     "nRouterBudgetExceededError",
+    "nRouterCreditError",
+    "nRouterError",
+    "nRouterGuardrailBlockedError",
     "nRouterNotFoundError",
     "nRouterRateLimitError",
+    "nRouterRequestError",
     "nRouterServiceError",
 ]

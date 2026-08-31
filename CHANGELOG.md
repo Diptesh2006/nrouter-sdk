@@ -9,6 +9,15 @@ Dates are the registry upload date, which is the only date a consumer can
 observe. Versions are immutable once published; nothing here is ever rewritten
 to correct a release, only appended to.
 
+## Coordinated SDK release — 2.2.1 — 2026-08-31
+
+- Migrates the Python SDK to OpenAI 3.6's `httpx2` transport contract and pins
+  the tested OpenAI/httpx2 compatibility floors.
+- Eliminates all Python mypy and Ruff findings under the current clean-runner
+  toolchain without suppressing either gate.
+- Advances every SDK together so all registries and source tags remain on the
+  same immutable release train; non-Python wire behavior is unchanged.
+
 ## Coordinated SDK release — 2.2.0 — 2026-08-31
 
 - Aligns JavaScript, Python, Java, Kotlin, Android, Rust, Swift, Dart, R and Go

@@ -363,7 +363,7 @@ func main() {
 <dependency>
     <groupId>com.openai</groupId>
     <artifactId>openai-java</artifactId>
-    <version>2.2.0</version>
+    <version>2.2.1</version>
 </dependency>
 ```
 
@@ -603,7 +603,7 @@ async fn main() {
 
 ```kotlin
 // build.gradle.kts
-implementation("ai.nrouter:nrouter-sdk-kotlin:2.2.0")
+implementation("ai.nrouter:nrouter-sdk-kotlin:2.2.1")
 ```
 
 ```kotlin
@@ -655,7 +655,7 @@ println(response.choices[0].message.content)
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.2.0")
+.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.2.1")
 ```
 
 ```swift
@@ -701,7 +701,7 @@ print(result.choices[0].message.content ?? "")
 
 ```yaml
 dependencies:
-  nrouter: ^2.2.0
+  nrouter: ^2.2.1
 ```
 
 ```dart

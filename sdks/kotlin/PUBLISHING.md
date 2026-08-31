@@ -38,7 +38,7 @@ export SIGNING_PASSWORD=...       # the key's passphrase
 ```bash
 # 1. Version. gradle.properties is the only place it lives.
 #    Central refuses to overwrite a released version — bump, never re-push.
-$EDITOR gradle.properties          # version=2.2.0
+$EDITOR gradle.properties          # version=2.2.1
 
 # 2. Prove it green first. A published version cannot be withdrawn.
 ./gradlew build
@@ -65,8 +65,8 @@ UI shows *PUBLISHED* first.
 ## Tagging
 
 ```bash
-git tag -s sdk-kotlin-v2.2.0 -m "kotlin sdk 2.2.0"
-git push origin sdk-kotlin-v2.2.0     # SSH remote; HTTPS git fails here
+git tag -s sdk-kotlin-v2.2.1 -m "kotlin sdk 2.2.1"
+git push origin sdk-kotlin-v2.2.1     # SSH remote; HTTPS git fails here
 ```
 
 ## Traps

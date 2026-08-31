@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar, Optional, Tuple
+from typing import ClassVar
 
 
 @dataclass(frozen=True)
@@ -32,19 +32,19 @@ class nRouterResponseMeta:
         response_cache_age: Age in seconds of a response-cache hit.
     """
 
-    request_id: Optional[str] = None
-    cost: Optional[float] = None
-    cost_status: Optional[str] = None
-    model: Optional[str] = None
-    input_tokens: Optional[int] = None
-    output_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
-    cache_read_tokens: Optional[int] = None
-    cache_write_tokens: Optional[int] = None
-    limit_source: Optional[str] = None
-    auth_reason: Optional[str] = None
-    response_cache: Optional[str] = None
-    response_cache_age: Optional[int] = None
+    request_id: str | None = None
+    cost: float | None = None
+    cost_status: str | None = None
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    limit_source: str | None = None
+    auth_reason: str | None = None
+    response_cache: str | None = None
+    response_cache_age: int | None = None
 
     #: Every response header this SDK reads, exactly as
     #: ``spec/nrouter-sdk-spec.json`` names them. Published so a caller (and the
@@ -54,7 +54,7 @@ class nRouterResponseMeta:
     #: INSTANCE FIELD, so it becomes a constructor parameter, joins ``repr``,
     #: ``==`` and ``asdict()`` — putting the whole header registry inside every
     #: serialized response — and can be overridden per instance.
-    HEADER_NAMES: ClassVar[Tuple[str, ...]] = (
+    HEADER_NAMES: ClassVar[tuple[str, ...]] = (
         "x-nr-request-id",
         "x-nr-request-cost",
         "x-nr-cost-status",
@@ -71,12 +71,12 @@ class nRouterResponseMeta:
     )
 
     @classmethod
-    def from_headers(cls, headers: dict) -> "nRouterResponseMeta":
+    def from_headers(cls, headers: dict) -> nRouterResponseMeta:
         """Parse nRouter response headers into metadata."""
         cost_str = headers.get("x-nr-request-cost")
         cost = float(cost_str) if cost_str else None
 
-        def optional_int(name: str) -> Optional[int]:
+        def optional_int(name: str) -> int | None:
             value = headers.get(name)
             return int(value) if value else None
 

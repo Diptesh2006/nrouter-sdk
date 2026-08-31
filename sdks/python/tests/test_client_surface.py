@@ -81,5 +81,7 @@ def test_the_default_base_url_is_the_canonical_production_host(cls):
 def test_sync_and_async_clients_expose_the_same_nrouter_surface():
     sync = nRouter(api_key=KEY)
     async_ = AsyncnRouter(api_key=KEY)
-    surface = lambda c: {n for n in ("nrouter", "nrouter_models", "messages", "videos") if hasattr(c, n)}
+    surface = lambda c: {
+        n for n in ("nrouter", "nrouter_models", "messages", "videos") if hasattr(c, n)
+    }
     assert surface(sync) == surface(async_)

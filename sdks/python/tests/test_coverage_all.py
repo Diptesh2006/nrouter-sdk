@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
-import httpx
+import httpx2 as httpx
 import pytest
 
 from nroutersdk import AsyncnRouter, nRouter
@@ -15,7 +15,12 @@ from nroutersdk._errors import (
 from nroutersdk._options import build_extra_body, vet_extra
 from nroutersdk.client import _maybe_raise_nrouter_error
 from nroutersdk.memory import ArrayMemoryStore, MemoryStore, create_array_store, create_memory
-from nroutersdk.prompts import prompt_template, prompt_variables, system_variable_conflicts, with_variables
+from nroutersdk.prompts import (
+    prompt_template,
+    prompt_variables,
+    system_variable_conflicts,
+    with_variables,
+)
 from nroutersdk.sampling import build_sampling_params, is_claude_model
 
 
@@ -92,11 +97,13 @@ async def test_memory_store_edges():
         await memory.add("not a dict")  # type: ignore
 
     # Nested array and dict copying
-    await memory.add({
-        "role": "user",
-        "content": [{"type": "text", "text": "hello"}],
-        "metadata": {"nested": [1, 2, 3]},
-    })
+    await memory.add(
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "hello"}],
+            "metadata": {"nested": [1, 2, 3]},
+        }
+    )
     msgs = await memory.messages()
     assert len(msgs) == 1
 
@@ -104,6 +111,7 @@ async def test_memory_store_edges():
     class BadStore(MemoryStore):
         def load(self):
             return "not a list"
+
         def save(self, msgs):
             pass
 
@@ -304,15 +312,27 @@ def test_client_nrouter_helpers_sync_and_async(monkeypatch):
     client = nRouter(api_key="sk-nrouter-test")
     async_client = AsyncnRouter(api_key="sk-nrouter-test")
 
-    json_resp = httpx.Response(status_code=200, json={"status": "ok"}, request=httpx.Request("GET", "https://api.nrouter.ai/v1/models"))
-    bytes_resp = httpx.Response(status_code=200, content=b"bytes_content", request=httpx.Request("GET", "https://api.nrouter.ai/v1/models"))
+    json_resp = httpx.Response(
+        status_code=200,
+        json={"status": "ok"},
+        request=httpx.Request("GET", "https://api.nrouter.ai/v1/models"),
+    )
+    bytes_resp = httpx.Response(
+        status_code=200,
+        content=b"bytes_content",
+        request=httpx.Request("GET", "https://api.nrouter.ai/v1/models"),
+    )
 
     # Test _raise_for_status on success
     client._raise_for_status(json_resp)
     async_client._raise_for_status(json_resp)
 
     # Test direct _nrouter_get / _nrouter_post on client._client
-    monkeypatch.setattr(client._client, "get", lambda path, **kwargs: bytes_resp if "content" in path or "bytes" in path else json_resp)
+    monkeypatch.setattr(
+        client._client,
+        "get",
+        lambda path, **kwargs: bytes_resp if "content" in path or "bytes" in path else json_resp,
+    )
     monkeypatch.setattr(client._client, "post", lambda path, **kwargs: json_resp)
 
     assert client._nrouter_get("/test") == {"status": "ok"}
@@ -330,6 +350,7 @@ def test_client_nrouter_helpers_sync_and_async(monkeypatch):
     monkeypatch.setattr(async_client._client, "post", async_post)
 
     import asyncio
+
     assert asyncio.run(async_client._nrouter_get("/test")) == {"status": "ok"}
     assert asyncio.run(async_client._nrouter_post("/test", json={"a": 1})) == {"status": "ok"}
     assert asyncio.run(async_client._nrouter_get_bytes("/test/content")) == b"bytes_content"

@@ -16,7 +16,7 @@ cd sdks/rust
 
 # 1. Version lives in Cargo.toml and nowhere else.
 #    crates.io refuses to overwrite a version — bump, never re-push.
-$EDITOR Cargo.toml               # version = "2.2.0"
+$EDITOR Cargo.toml               # version = "2.2.1"
 
 # 2. Prove it green. A published version cannot be deleted.
 cargo fmt --check
@@ -64,6 +64,6 @@ check <https://docs.rs/nrouter> after publishing rather than assuming.
 ## Tagging
 
 ```bash
-git tag -s sdk-rust-v2.2.0 -m "rust sdk 2.2.0"
-git push origin sdk-rust-v2.2.0     # SSH remote; HTTPS git fails here
+git tag -s sdk-rust-v2.2.1 -m "rust sdk 2.2.1"
+git push origin sdk-rust-v2.2.1     # SSH remote; HTTPS git fails here
 ```

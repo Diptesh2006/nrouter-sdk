@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Dict, Mapping, Optional
 
 from nroutersdk._errors import nRouterRequestError
 from nroutersdk._options import (
@@ -20,12 +20,12 @@ SYSTEM_VARIABLE_NAMES = ("org_name", "model", "timestamp", "user_id")
 class PromptSelection:
     """One request's prompt selection."""
 
-    template_id: Optional[str] = None
-    variables: Optional[Dict[str, str]] = None
+    template_id: str | None = None
+    variables: dict[str, str] | None = None
 
 
 def prompt_template(
-    template_id: str, variables: Optional[Mapping[str, str]] = None
+    template_id: str, variables: Mapping[str, str] | None = None
 ) -> PromptSelection:
     """Select a specific prompt template for one request."""
     if not isinstance(template_id, str) or not template_id.strip():
@@ -45,9 +45,7 @@ def prompt_variables(variables: Mapping[str, str]) -> PromptSelection:
     return PromptSelection(variables=dict(variables))
 
 
-def with_variables(
-    selection: PromptSelection, more: Mapping[str, str]
-) -> PromptSelection:
+def with_variables(selection: PromptSelection, more: Mapping[str, str]) -> PromptSelection:
     """Return a new selection with extra variables, later values winning."""
     return PromptSelection(
         template_id=selection.template_id,
@@ -55,7 +53,7 @@ def with_variables(
     )
 
 
-def prompt_extra_body(selection: PromptSelection) -> Dict[str, object]:
+def prompt_extra_body(selection: PromptSelection) -> dict[str, object]:
     """Map a prompt selection to nRouter's request body fields."""
     return build_extra_body(
         prompt_template_id=selection.template_id,
@@ -63,7 +61,7 @@ def prompt_extra_body(selection: PromptSelection) -> Dict[str, object]:
     )
 
 
-def apply_prompt(options: Dict[str, object], selection: PromptSelection) -> Dict[str, object]:
+def apply_prompt(options: dict[str, object], selection: PromptSelection) -> dict[str, object]:
     """Return a new options dict with the prompt selection applied."""
     next_options = dict(options)
     if selection.template_id:
@@ -76,7 +74,7 @@ def apply_prompt(options: Dict[str, object], selection: PromptSelection) -> Dict
     return next_options
 
 
-def system_variable_conflicts(variables: Optional[Mapping[str, str]]) -> list[str]:
+def system_variable_conflicts(variables: Mapping[str, str] | None) -> list[str]:
     """Names the caller supplied that the gateway will overwrite."""
     if not variables:
         return []

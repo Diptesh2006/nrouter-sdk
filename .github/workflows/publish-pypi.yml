@@ -73,7 +73,7 @@ jobs:
           python-version: '3.10'   # the floor declared in pyproject.toml
 
       # INSTALL THE PACKAGE, not just the build tools. The first run failed
-      # here: the suite imports httpx (a real runtime dependency) and needs
+      # here: the suite imports httpx2 (a real runtime dependency) and needs
       # pytest-asyncio for `asyncio_mode = auto`, and a bare `pip install
       # pytest` gives you neither. It passed locally only because this machine
       # had them globally — the runner is clean, which is the point of running

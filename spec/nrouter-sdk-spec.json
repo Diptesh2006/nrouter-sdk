@@ -1,6 +1,6 @@
 {
   "$schema": "https://nrouter.ai/sdk-spec/v1",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "base_url": "https://api.nrouter.ai/v1",
   "env_var": "NROUTER_API_KEY",
   "response_headers": {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.1
+
+- Keeps Dart aligned with the coordinated nRouter SDK patch release; Dart wire
+  behavior is unchanged.
+
 ## 2.2.0
 
 - Joins the coordinated 2.2.0 release train shared by all nRouter SDKs.

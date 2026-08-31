@@ -9,7 +9,7 @@ One API key for models across six provider clouds, packaged as an AAR.
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("ai.nrouter:nrouter-sdk-android:2.2.0")
+    implementation("ai.nrouter:nrouter-sdk-android:2.2.1")
 }
 ```
 

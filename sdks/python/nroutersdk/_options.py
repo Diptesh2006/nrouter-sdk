@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from nroutersdk._errors import nRouterRequestError
 
@@ -24,11 +25,11 @@ def _configuration_error(message: str) -> nRouterRequestError:
 
 def build_extra_body(
     *,
-    prompt_template_id: Optional[str] = None,
-    prompt_variables: Optional[Mapping[str, str]] = None,
-    guardrail_ids: Optional[Sequence[str]] = None,
-    cache: Optional[bool] = None,
-) -> Dict[str, Any]:
+    prompt_template_id: str | None = None,
+    prompt_variables: Mapping[str, str] | None = None,
+    guardrail_ids: Sequence[str] | None = None,
+    cache: bool | None = None,
+) -> dict[str, Any]:
     """Map Python options to the exact nRouter gateway body fields.
 
     Guardrails are configured per key, team, or organization in nRouter. The
@@ -42,7 +43,7 @@ def build_extra_body(
             "automatically to every call. Remove guardrail_ids to use them."
         )
 
-    extra: Dict[str, Any] = {}
+    extra: dict[str, Any] = {}
     if prompt_template_id:
         extra[PROMPT_TEMPLATE_ID_FIELD] = prompt_template_id
     if prompt_variables:
@@ -62,6 +63,4 @@ def vet_extra(extra: Mapping[str, Any]) -> None:
                 "authenticated API key alone."
             )
         if key == "__proto__":
-            raise _configuration_error(
-                'extra_body must not carry a "__proto__" key; remove it.'
-            )
+            raise _configuration_error('extra_body must not carry a "__proto__" key; remove it.')

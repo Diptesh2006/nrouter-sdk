@@ -29,10 +29,10 @@ POM. After all hosted workflows are green, create the Swift and Go tags from
 that exact commit.
 
 ```bash
-$EDITOR spec/nrouter-sdk-spec.json    # "version": "2.2.0"
-$EDITOR sdks/js/package.json          # "version": "2.2.0"
-$EDITOR sdks/python/pyproject.toml    # version = "2.2.0"
-$EDITOR sdks/java/pom.xml             # <version>2.2.0</version>
+$EDITOR spec/nrouter-sdk-spec.json    # "version": "2.2.1"
+$EDITOR sdks/js/package.json          # "version": "2.2.1"
+$EDITOR sdks/python/pyproject.toml    # version = "2.2.1"
+$EDITOR sdks/java/pom.xml             # <version>2.2.1</version>
 # ...open a PR, get it merged...
 ```
 
@@ -140,12 +140,12 @@ cd sdks/python && python -m pytest -q
 python3 ../../conformance/check_conformance.py
 python -m build && python -m twine check dist/*
 python -m twine upload dist/*
-curl -s -o /dev/null -w '%{http_code}\n' https://pypi.org/pypi/nrouter-sdk/2.2.0/json
+curl -s -o /dev/null -w '%{http_code}\n' https://pypi.org/pypi/nrouter-sdk/2.2.1/json
 ```
 
 ```bash
 cd sdks/java && mvn -B clean verify
 python3 ../../conformance/check_conformance.py
 mvn -B clean deploy -P release
-curl -s -o /dev/null -w '%{http_code}\n' https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk/2.2.0/nrouter-sdk-2.2.0.pom
+curl -s -o /dev/null -w '%{http_code}\n' https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk/2.2.1/nrouter-sdk-2.2.1.pom
 ```

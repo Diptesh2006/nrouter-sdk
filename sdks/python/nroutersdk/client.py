@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
-import httpx
-from openai import APIStatusError, AsyncOpenAI as _AsyncOpenAI, OpenAI as _OpenAI
+import httpx2 as httpx
+from openai import APIStatusError
+from openai import AsyncOpenAI as _AsyncOpenAI
+from openai import OpenAI as _OpenAI
 
 from nroutersdk._errors import (
     nRouterAuthenticationError,
@@ -25,6 +27,9 @@ from nroutersdk._response import nRouterResponseMeta
 from nroutersdk._unsupported import UNSUPPORTED
 from nroutersdk.sampling import build_sampling_params
 
+if TYPE_CHECKING:
+    from typing_extensions import Self
+
 _DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 _ENV_KEY = "NROUTER_API_KEY"
 _ENV_BASE_URL = "NROUTER_BASE_URL"
@@ -38,17 +43,16 @@ _KEY_PREFIX = "sk-nrouter-"
 DEFAULT_MODEL = "anthropic/claude-sonnet-4-5-20250929"
 
 
-def _resolve_api_key(api_key: Optional[str]) -> str:
+def _resolve_api_key(api_key: str | None) -> str:
     resolved_key = api_key or os.environ.get(_ENV_KEY)
     if not resolved_key or not resolved_key.startswith(_KEY_PREFIX):
         raise ValueError(
-            f"nRouter API keys must start with {_KEY_PREFIX!r}; "
-            f"pass api_key or set {_ENV_KEY}."
+            f"nRouter API keys must start with {_KEY_PREFIX!r}; pass api_key or set {_ENV_KEY}."
         )
     return resolved_key
 
 
-def _resolve_base_url(base_url: Optional[str]) -> str:
+def _resolve_base_url(base_url: str | None) -> str:
     """Resolve API base URL from parameter, NROUTER_BASE_URL env, or default."""
     return base_url or os.environ.get(_ENV_BASE_URL) or _DEFAULT_BASE_URL
 
@@ -56,6 +60,7 @@ def _resolve_base_url(base_url: Optional[str]) -> str:
 # ---------------------------------------------------------------------------
 # Helper: convert OpenAI APIStatusError into typed nRouter errors
 # ---------------------------------------------------------------------------
+
 
 def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
     """Re-raise an OpenAI ``APIStatusError`` as the matching nRouter error.
@@ -84,7 +89,7 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
     """
     try:
         body = err.response.json()
-    except Exception:
+    except (TypeError, ValueError):
         return
     if not isinstance(body, dict):
         return
@@ -142,9 +147,7 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             request_id=request_id,
             limit_source=headers.get("x-nr-limit-source"),
             retry_after=(
-                int(retry_after_hdr)
-                if retry_after_hdr and retry_after_hdr.isdigit()
-                else None
+                int(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
             ),
             code=gateway_code,
         ) from err
@@ -204,14 +207,13 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
         ) from err
 
     if status == 500 or status == 503:
-        raise nRouterServiceError(
-            message, request_id=request_id, status_code=status
-        ) from err
+        raise nRouterServiceError(message, request_id=request_id, status_code=status) from err
 
 
 # ---------------------------------------------------------------------------
 # nRouter-specific resource namespaces
 # ---------------------------------------------------------------------------
+
 
 class _nRouterModels:
     """List the models this key can reach."""
@@ -221,7 +223,7 @@ class _nRouterModels:
 
     def list(self) -> dict:
         """List all models available through nRouter."""
-        return self._c._nrouter_get("/v1/models")
+        return cast(dict, self._c._nrouter_get("/v1/models"))
 
 
 class _Messages:
@@ -240,7 +242,7 @@ class _Messages:
         self,
         *,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         max_tokens: int,
         stream: bool = False,
         **kwargs,
@@ -249,26 +251,29 @@ class _Messages:
             raise NotImplementedError(
                 "messages.create(stream=True) is not available until the SDK SSE stream contract is tested"
             )
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "max_tokens": max_tokens,
             "stream": False,
             **kwargs,
         }
-        return self._c._nrouter_post("/v1/messages", json=payload)
+        return cast(dict, self._c._nrouter_post("/v1/messages", json=payload))
 
     def count_tokens(
         self,
         *,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         **kwargs,
     ) -> dict:
         """Count input tokens without generating a response."""
-        return self._c._nrouter_post(
-            "/v1/messages/count_tokens",
-            json={"model": model, "messages": messages, **kwargs},
+        return cast(
+            dict,
+            self._c._nrouter_post(
+                "/v1/messages/count_tokens",
+                json={"model": model, "messages": messages, **kwargs},
+            ),
         )
 
 
@@ -282,7 +287,7 @@ class _AsyncMessages:
         self,
         *,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         max_tokens: int,
         stream: bool = False,
         **kwargs,
@@ -291,26 +296,29 @@ class _AsyncMessages:
             raise NotImplementedError(
                 "messages.create(stream=True) is not available until the SDK SSE stream contract is tested"
             )
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "max_tokens": max_tokens,
             "stream": False,
             **kwargs,
         }
-        return await self._c._nrouter_post("/v1/messages", json=payload)
+        return cast(dict, await self._c._nrouter_post("/v1/messages", json=payload))
 
     async def count_tokens(
         self,
         *,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         **kwargs,
     ) -> dict:
         """Count input tokens without generating a response."""
-        return await self._c._nrouter_post(
-            "/v1/messages/count_tokens",
-            json={"model": model, "messages": messages, **kwargs},
+        return cast(
+            dict,
+            await self._c._nrouter_post(
+                "/v1/messages/count_tokens",
+                json={"model": model, "messages": messages, **kwargs},
+            ),
         )
 
 
@@ -321,17 +329,21 @@ class _Videos:
         self._c = client
 
     def create(self, *, model: str, prompt: str, **kwargs) -> dict:
-        return self._c._nrouter_post(
-            "/v1/videos",
-            json={"model": model, "prompt": prompt, **kwargs},
+        return cast(
+            dict,
+            self._c._nrouter_post(
+                "/v1/videos",
+                json={"model": model, "prompt": prompt, **kwargs},
+            ),
         )
 
     def retrieve(self, video_id: str) -> dict:
-        return self._c._nrouter_get(f"/v1/videos/{quote(video_id, safe='')}")
+        return cast(dict, self._c._nrouter_get(f"/v1/videos/{quote(video_id, safe='')}"))
 
     def download_content(self, video_id: str) -> bytes:
-        return self._c._nrouter_get_bytes(
-            f"/v1/videos/{quote(video_id, safe='')}/content"
+        return cast(
+            bytes,
+            self._c._nrouter_get_bytes(f"/v1/videos/{quote(video_id, safe='')}/content"),
         )
 
 
@@ -342,23 +354,31 @@ class _AsyncVideos:
         self._c = client
 
     async def create(self, *, model: str, prompt: str, **kwargs) -> dict:
-        return await self._c._nrouter_post(
-            "/v1/videos",
-            json={"model": model, "prompt": prompt, **kwargs},
+        return cast(
+            dict,
+            await self._c._nrouter_post(
+                "/v1/videos",
+                json={"model": model, "prompt": prompt, **kwargs},
+            ),
         )
 
     async def retrieve(self, video_id: str) -> dict:
-        return await self._c._nrouter_get(f"/v1/videos/{quote(video_id, safe='')}")
+        return cast(
+            dict,
+            await self._c._nrouter_get(f"/v1/videos/{quote(video_id, safe='')}"),
+        )
 
     async def download_content(self, video_id: str) -> bytes:
-        return await self._c._nrouter_get_bytes(
-            f"/v1/videos/{quote(video_id, safe='')}/content"
+        return cast(
+            bytes,
+            await self._c._nrouter_get_bytes(f"/v1/videos/{quote(video_id, safe='')}/content"),
         )
 
 
 # ---------------------------------------------------------------------------
 # Chat wrapper with nRouter features
 # ---------------------------------------------------------------------------
+
 
 class _nRouterChat:
     """Extended chat with prompt template support + response metadata."""
@@ -368,17 +388,17 @@ class _nRouterChat:
 
     def chat(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str = DEFAULT_MODEL,
         *,
-        prompt_template_id: Optional[str] = None,
-        prompt_variables: Optional[Dict[str, str]] = None,
-        guardrail_ids: Optional[List[str]] = None,
-        cache: Optional[bool] = None,
+        prompt_template_id: str | None = None,
+        prompt_variables: dict[str, str] | None = None,
+        guardrail_ids: list[str] | None = None,
+        cache: bool | None = None,
         advanced_sampling: bool = False,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        model_provider: Optional[str] = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        model_provider: str | None = None,
         stream: bool = False,
         **kwargs,
     ):
@@ -399,7 +419,7 @@ class _nRouterChat:
             ChatCompletion. After the call, ``client.last_response`` has
             cost, cost status, model, token counts, and request ID.
         """
-        extra_body: Dict[str, Any] = kwargs.pop("extra_body", {}) or {}
+        extra_body: dict[str, Any] = kwargs.pop("extra_body", {}) or {}
         vet_extra(extra_body)
 
         extra_body.update(
@@ -432,6 +452,7 @@ class _nRouterChat:
 # ---------------------------------------------------------------------------
 # Sync client
 # ---------------------------------------------------------------------------
+
 
 class nRouter(_OpenAI):
     """OpenAI-compatible client pre-configured for nRouter.
@@ -470,12 +491,12 @@ class nRouter(_OpenAI):
     messages: _Messages
     videos: _Videos  # type: ignore[assignment]
     nrouter: _nRouterChat
-    last_response: Optional[nRouterResponseMeta]
+    last_response: nRouterResponseMeta | None
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
         **kwargs,
     ) -> None:
         """Initialize the nRouter client.
@@ -511,7 +532,7 @@ class nRouter(_OpenAI):
         # Hook into httpx to capture response headers automatically
         self._client.event_hooks["response"].append(self._capture_nrouter_headers)
 
-    def __enter__(self) -> "nRouter":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -522,7 +543,6 @@ class nRouter(_OpenAI):
         headers = dict(response.headers)
         if any(k.startswith("x-nr-") for k in headers):
             self.last_response = nRouterResponseMeta.from_headers(headers)
-
 
     # -- error typing ------------------------------------------------------
 
@@ -541,7 +561,9 @@ class nRouter(_OpenAI):
         would raise on the first attempt and defeat the retry entirely.
         """
         try:
-            _maybe_raise_nrouter_error(super()._make_status_error(err_msg, body=body, response=response))
+            _maybe_raise_nrouter_error(
+                super()._make_status_error(err_msg, body=body, response=response)
+            )
         except nRouterError as typed:
             return typed
         return super()._make_status_error(err_msg, body=body, response=response)
@@ -563,16 +585,16 @@ class nRouter(_OpenAI):
     def _nrouter_get(self, path: str) -> dict:
         r = self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
         self._raise_for_status(r)
-        return r.json()
+        return cast(dict, r.json())
 
-    def _nrouter_post(self, path: str, json: Optional[dict] = None) -> dict:
+    def _nrouter_post(self, path: str, json: dict | None = None) -> dict:
         r = self._client.post(
             f"{self._nrouter_base}{path}",
             headers=self._nrouter_headers,
             json=json,
         )
         self._raise_for_status(r)
-        return r.json()
+        return cast(dict, r.json())
 
     def _nrouter_get_bytes(self, path: str) -> bytes:
         r = self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
@@ -583,6 +605,7 @@ class nRouter(_OpenAI):
 # ---------------------------------------------------------------------------
 # Async client
 # ---------------------------------------------------------------------------
+
 
 class AsyncnRouter(_AsyncOpenAI):
     """Async version of :class:`nRouter`. Same API surface."""
@@ -603,12 +626,12 @@ class AsyncnRouter(_AsyncOpenAI):
     messages: _AsyncMessages
     videos: _AsyncVideos  # type: ignore[assignment]
     nrouter: _nRouterChat
-    last_response: Optional[nRouterResponseMeta]
+    last_response: nRouterResponseMeta | None
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
         **kwargs,
     ) -> None:
         """Initialize the AsyncnRouter client.
@@ -641,7 +664,7 @@ class AsyncnRouter(_AsyncOpenAI):
         # Hook into httpx to capture response headers automatically
         self._client.event_hooks["response"].append(self._capture_nrouter_headers)
 
-    async def __aenter__(self) -> "AsyncnRouter":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -652,7 +675,6 @@ class AsyncnRouter(_AsyncOpenAI):
         headers = dict(response.headers)
         if any(k.startswith("x-nr-") for k in headers):
             self.last_response = nRouterResponseMeta.from_headers(headers)
-
 
     # -- error typing ------------------------------------------------------
 
@@ -671,7 +693,9 @@ class AsyncnRouter(_AsyncOpenAI):
         would raise on the first attempt and defeat the retry entirely.
         """
         try:
-            _maybe_raise_nrouter_error(super()._make_status_error(err_msg, body=body, response=response))
+            _maybe_raise_nrouter_error(
+                super()._make_status_error(err_msg, body=body, response=response)
+            )
         except nRouterError as typed:
             return typed
         return super()._make_status_error(err_msg, body=body, response=response)
@@ -685,16 +709,16 @@ class AsyncnRouter(_AsyncOpenAI):
     async def _nrouter_get(self, path: str) -> dict:
         r = await self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
         self._raise_for_status(r)
-        return r.json()
+        return cast(dict, r.json())
 
-    async def _nrouter_post(self, path: str, json: Optional[dict] = None) -> dict:
+    async def _nrouter_post(self, path: str, json: dict | None = None) -> dict:
         r = await self._client.post(
             f"{self._nrouter_base}{path}",
             headers=self._nrouter_headers,
             json=json,
         )
         self._raise_for_status(r)
-        return r.json()
+        return cast(dict, r.json())
 
     async def _nrouter_get_bytes(self, path: str) -> bytes:
         r = await self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)

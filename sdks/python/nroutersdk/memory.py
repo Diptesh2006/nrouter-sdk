@@ -8,37 +8,37 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Protocol
 
 from nroutersdk._errors import nRouterRequestError
 
-ChatMessage = Dict[str, Any]
+ChatMessage = dict[str, Any]
 _ROLES = {"system", "user", "assistant"}
 _TENANCY_KEYS = {"organizationid", "orgid", "teamid", "userid", "nrouterorg"}
 
 
 class MemoryStore(Protocol):
-    def load(self) -> List[ChatMessage]: ...
-    def save(self, messages: List[ChatMessage]) -> None: ...
+    def load(self) -> list[ChatMessage]: ...
+    def save(self, messages: list[ChatMessage]) -> None: ...
 
 
 class ArrayMemoryStore:
     """In-process memory store. It writes nowhere by default."""
 
-    def __init__(self, seed: Optional[List[ChatMessage]] = None) -> None:
+    def __init__(self, seed: list[ChatMessage] | None = None) -> None:
         self._messages = [_clone_message(m) for m in (seed or [])]
 
-    def load(self) -> List[ChatMessage]:
+    def load(self) -> list[ChatMessage]:
         return [_clone_message(m) for m in self._messages]
 
-    def save(self, messages: List[ChatMessage]) -> None:
+    def save(self, messages: list[ChatMessage]) -> None:
         self._messages = [_clone_message(m) for m in messages]
 
 
 class Memory:
     """A small async-safe wrapper around a message store."""
 
-    def __init__(self, store: Optional[MemoryStore] = None) -> None:
+    def __init__(self, store: MemoryStore | None = None) -> None:
         self._store = store or ArrayMemoryStore()
         self._lock = asyncio.Lock()
 
@@ -49,7 +49,7 @@ class Memory:
             current.append(clean)
             self._write(current)
 
-    async def messages(self) -> List[ChatMessage]:
+    async def messages(self) -> list[ChatMessage]:
         async with self._lock:
             return self._read()
 
@@ -57,21 +57,21 @@ class Memory:
         async with self._lock:
             self._write([])
 
-    def _read(self) -> List[ChatMessage]:
+    def _read(self) -> list[ChatMessage]:
         raw = self._store.load()
         if not isinstance(raw, list):
             raise nRouterRequestError("MemoryStore.load() must return a list of messages.")
         return [_validate_message(m, f"MemoryStore.load()[{i}]") for i, m in enumerate(raw)]
 
-    def _write(self, messages: List[ChatMessage]) -> None:
+    def _write(self, messages: list[ChatMessage]) -> None:
         self._store.save([_clone_message(m) for m in messages])
 
 
-def create_array_store(seed: Optional[List[ChatMessage]] = None) -> ArrayMemoryStore:
+def create_array_store(seed: list[ChatMessage] | None = None) -> ArrayMemoryStore:
     return ArrayMemoryStore(seed)
 
 
-def create_memory(store: Optional[MemoryStore] = None) -> Memory:
+def create_memory(store: MemoryStore | None = None) -> Memory:
     return Memory(store)
 
 

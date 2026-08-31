@@ -13,7 +13,7 @@ audio, images and video.
 ## Installation
 
 ```bash
-go get github.com/nRouterAI/nrouter-sdk/sdks/go/v2@v2.2.0
+go get github.com/nRouterAI/nrouter-sdk/sdks/go/v2@v2.2.1
 ```
 
 ## Authentication & Setup

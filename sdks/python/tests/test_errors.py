@@ -14,7 +14,7 @@ from anywhere either.
 
 from __future__ import annotations
 
-import httpx
+import httpx2 as httpx
 import pytest
 from openai import APIStatusError
 
@@ -67,7 +67,11 @@ def status_error(
         # are budget ceilings, whose fix is to RAISE THE BUDGET — telling that
         # caller to add funds sends them to the wrong place entirely.
         (402, "budget exceeded: spent 5.0000 of 5.0000", nRouterBudgetExceededError),
-        (402, "budget 'team-cap' (team) exceeded: spent 5.0000 of 5.0000", nRouterBudgetExceededError),
+        (
+            402,
+            "budget 'team-cap' (team) exceeded: spent 5.0000 of 5.0000",
+            nRouterBudgetExceededError,
+        ),
         (404, "unknown model: gpt-9", nRouterNotFoundError),
         # 404 also covers a missing video job, an unknown MCP server and an
         # unknown agent run. Reporting those as a missing MODEL is a wrong
@@ -132,7 +136,10 @@ def test_an_unmapped_status_is_left_for_the_openai_sdk():
 def test_a_non_json_body_does_not_mask_the_original_error():
     request = httpx.Request("POST", "https://api.nrouter.ai/v1/chat/completions")
     response = httpx.Response(502, request=request, text="<html>gateway</html>")
-    assert _maybe_raise_nrouter_error(APIStatusError("bad gateway", response=response, body=None)) is None
+    assert (
+        _maybe_raise_nrouter_error(APIStatusError("bad gateway", response=response, body=None))
+        is None
+    )
 
 
 def test_every_error_class_the_api_contract_names_is_importable():

@@ -42,13 +42,11 @@ class _Blocked:
 UNSUPPORTED = {
     "files": _Blocked(
         "client.files",
-        "File management is not available via nRouter. "
-        "Use your provider's file API directly.",
+        "File management is not available via nRouter. Use your provider's file API directly.",
     ),
     "fine_tuning": _Blocked(
         "client.fine_tuning",
-        "Fine-tuning is not available via nRouter. "
-        "Use your provider's fine-tuning API directly.",
+        "Fine-tuning is not available via nRouter. Use your provider's fine-tuning API directly.",
     ),
     "batches": _Blocked(
         "client.batches",

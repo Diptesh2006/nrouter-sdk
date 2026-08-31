@@ -5,6 +5,7 @@ set -euo pipefail
 # Verifies all active SDKs against demo key configuration
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 cd "$ROOT_DIR"
 
 echo "======================================================================"
@@ -14,7 +15,7 @@ echo "======================================================================"
 # 1. Run Python Demo E2E
 echo ""
 echo ">>> [1/5] Executing Python SDK Demo E2E..."
-python3 examples/python/demo_e2e_suite.py
+"$PYTHON_BIN" examples/python/demo_e2e_suite.py
 
 # 2. Run TypeScript/Node Demo E2E
 echo ""
@@ -42,4 +43,3 @@ echo ""
 echo "======================================================================"
 echo "ALL SDK DEMO & END-TO-END VERIFICATIONS PASSED"
 echo "======================================================================"
-

@@ -5,7 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
-import httpx
+import httpx2 as httpx
 
 
 # The SDK is this repo now, not a subdirectory of nrouter-ent-ai-hub. It moved
@@ -46,7 +46,9 @@ class SpecContractTests(unittest.TestCase):
         )
         self.assertEqual(response_headers, set(generated_contract["headers"]))
 
-        gateway_contract = ROOT.parent / "nrouter-rust-gateway" / "src" / "http" / "nr_headers.rs"
+        gateway_contract = (
+            ROOT.parent / "nrouter-rust-gateway" / "src" / "http" / "nr_headers.rs"
+        )
         try:
             if gateway_contract.exists():
                 emitted_headers = set(
@@ -89,7 +91,9 @@ class SpecContractTests(unittest.TestCase):
             f"{sorted(spec_error_names - exported_error_names)}",
         )
 
-    def test_spec_advertises_cache_only_on_executable_buffered_text_routes(self) -> None:
+    def test_spec_advertises_cache_only_on_executable_buffered_text_routes(
+        self,
+    ) -> None:
         spec = json.loads((SDK_ROOT / "spec" / "nrouter-sdk-spec.json").read_text())
         cached = {
             "/v1/chat/completions",
@@ -98,7 +102,9 @@ class SpecContractTests(unittest.TestCase):
             "/v1/responses",
         }
         for endpoint in spec["supported_endpoints"]:
-            self.assertEqual("cache" in endpoint["features"], endpoint["path"] in cached)
+            self.assertEqual(
+                "cache" in endpoint["features"], endpoint["path"] in cached
+            )
         self.assertIn(
             "nrouter_cache",
             spec["extra_body_fields"],
@@ -268,7 +274,9 @@ class ClientContractTests(unittest.TestCase):
             model="claude-sonnet-4-5",
             messages=[{"role": "user", "content": "Hello"}],
         )
-        self.assertEqual(seen["url"], "https://gateway.example/v1/messages/count_tokens")
+        self.assertEqual(
+            seen["url"], "https://gateway.example/v1/messages/count_tokens"
+        )
         self.assertEqual(seen["body"]["model"], "claude-sonnet-4-5")
         self.assertEqual(result, {"input_tokens": 123})
 
@@ -323,14 +331,18 @@ class ClientContractTests(unittest.TestCase):
         self.assertEqual(seen["body"]["input"], "Hello")
         self.assertEqual(response.id, "resp_1")
 
-    def test_video_collection_has_real_create_retrieve_and_binary_download_methods(self) -> None:
+    def test_video_collection_has_real_create_retrieve_and_binary_download_methods(
+        self,
+    ) -> None:
         seen = []
         video_bytes = b"\x00\x00\x00\x18ftypmp42\xff\x00"
 
         def handler(request: httpx.Request) -> httpx.Response:
             seen.append((request.method, str(request.url)))
             if request.url.path.endswith("/content"):
-                return httpx.Response(200, content=video_bytes, headers={"content-type": "video/mp4"})
+                return httpx.Response(
+                    200, content=video_bytes, headers={"content-type": "video/mp4"}
+                )
             return httpx.Response(200, json={"id": "video_1", "status": "queued"})
 
         client = nRouter(
@@ -339,7 +351,9 @@ class ClientContractTests(unittest.TestCase):
             http_client=httpx.Client(transport=httpx.MockTransport(handler)),
         )
         self.addCleanup(client.close)
-        self.assertEqual(client.videos.create(model="sora", prompt="ocean")["id"], "video_1")
+        self.assertEqual(
+            client.videos.create(model="sora", prompt="ocean")["id"], "video_1"
+        )
         self.assertEqual(client.videos.retrieve("video_1")["status"], "queued")
         self.assertEqual(client.videos.download_content("video_1"), video_bytes)
         self.assertEqual(
@@ -370,25 +384,39 @@ class ClientContractTests(unittest.TestCase):
             "https://gateway.example/v1/videos/..%2F..%2Fapi%2Fproviders",
         )
 
-    def test_openai_compatible_embedding_image_and_audio_namespaces_reach_the_gateway(self) -> None:
+    def test_openai_compatible_embedding_image_and_audio_namespaces_reach_the_gateway(
+        self,
+    ) -> None:
         seen = []
 
         def handler(request: httpx.Request) -> httpx.Response:
-            seen.append((request.method, request.url.path, request.headers.get("content-type", "")))
+            seen.append(
+                (
+                    request.method,
+                    request.url.path,
+                    request.headers.get("content-type", ""),
+                )
+            )
             if request.url.path.endswith("/embeddings"):
                 return httpx.Response(
                     200,
                     json={
                         "object": "list",
                         "model": "text-embedding-3-small",
-                        "data": [{"object": "embedding", "index": 0, "embedding": [0.1]}],
+                        "data": [
+                            {"object": "embedding", "index": 0, "embedding": [0.1]}
+                        ],
                         "usage": {"prompt_tokens": 1, "total_tokens": 1},
                     },
                 )
             if request.url.path.endswith("/images/generations"):
-                return httpx.Response(200, json={"created": 1, "data": [{"b64_json": "aGVsbG8="}]})
+                return httpx.Response(
+                    200, json={"created": 1, "data": [{"b64_json": "aGVsbG8="}]}
+                )
             if request.url.path.endswith("/audio/speech"):
-                return httpx.Response(200, content=b"audio", headers={"content-type": "audio/mpeg"})
+                return httpx.Response(
+                    200, content=b"audio", headers={"content-type": "audio/mpeg"}
+                )
             return httpx.Response(200, json={"text": "transcript"})
 
         client = nRouter(
@@ -397,9 +425,13 @@ class ClientContractTests(unittest.TestCase):
             http_client=httpx.Client(transport=httpx.MockTransport(handler)),
         )
         self.addCleanup(client.close)
-        embedding = client.embeddings.create(model="text-embedding-3-small", input="hello")
+        embedding = client.embeddings.create(
+            model="text-embedding-3-small", input="hello"
+        )
         image = client.images.generate(model="gpt-image-1", prompt="ocean")
-        speech = client.audio.speech.create(model="gpt-4o-mini-tts", voice="alloy", input="hello")
+        speech = client.audio.speech.create(
+            model="gpt-4o-mini-tts", voice="alloy", input="hello"
+        )
         transcription = client.audio.transcriptions.create(
             model="whisper-1", file=("audio.wav", b"RIFFdata", "audio/wav")
         )
@@ -457,7 +489,9 @@ class AsyncClientContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["id"], "msg_async")
         self.assertEqual(client.last_response.request_id, "req_async_messages")
 
-    async def test_async_count_tokens_responses_and_video_collection_use_async_transport(self) -> None:
+    async def test_async_count_tokens_responses_and_video_collection_use_async_transport(
+        self,
+    ) -> None:
         seen = []
 
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -465,11 +499,20 @@ class AsyncClientContractTests(unittest.IsolatedAsyncioTestCase):
             if request.url.path.endswith("/count_tokens"):
                 return httpx.Response(200, json={"input_tokens": 7})
             if request.url.path.endswith("/content"):
-                return httpx.Response(200, content=b"video", headers={"content-type": "video/mp4"})
+                return httpx.Response(
+                    200, content=b"video", headers={"content-type": "video/mp4"}
+                )
             if request.url.path.endswith("/responses"):
                 return httpx.Response(
                     200,
-                    json={"id": "resp_async", "object": "response", "created_at": 1, "status": "completed", "model": "gpt-4o-mini", "output": []},
+                    json={
+                        "id": "resp_async",
+                        "object": "response",
+                        "created_at": 1,
+                        "status": "completed",
+                        "model": "gpt-4o-mini",
+                        "output": [],
+                    },
                 )
             return httpx.Response(200, json={"id": "video_async", "status": "queued"})
 
@@ -490,8 +533,6 @@ class AsyncClientContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(retrieved["status"], "queued")
         self.assertEqual(content, b"video")
         self.assertEqual(len(seen), 5)
-
-
 
 
 class PackagingContractTests(unittest.TestCase):
@@ -544,6 +585,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertGreaterEqual(
             tuple(int(part) for part in floor.split(".")), (1, 66, 0), openai_req
         )
+
 
 class ShellExampleContractTests(unittest.TestCase):
     """A comment inside a line continuation is VALID shell that runs the wrong
@@ -617,9 +659,7 @@ class ExampleBodyFieldContractTests(unittest.TestCase):
                 )
             )
             for field in sorted(found - allowed):
-                offenders.setdefault(field, []).append(
-                    str(path.relative_to(SDK_ROOT))
-                )
+                offenders.setdefault(field, []).append(str(path.relative_to(SDK_ROOT)))
         self.assertEqual(
             offenders,
             {},
@@ -652,7 +692,9 @@ class ExampleBodyFieldContractTests(unittest.TestCase):
 
             # Explicit base_url overrides environment variable
             override_base = "https://custom.nrouter.ai/v1"
-            client_override = nRouter(api_key="sk-nrouter-test-key", base_url=override_base)
+            client_override = nRouter(
+                api_key="sk-nrouter-test-key", base_url=override_base
+            )
             self.assertEqual(str(client_override.base_url).rstrip("/"), override_base)
             self.assertEqual(client_override._nrouter_base, "https://custom.nrouter.ai")
         finally:

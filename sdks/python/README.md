@@ -311,10 +311,10 @@ with nRouter() as client:
 
 ### Custom Proxy, SSL Certificates & Timeouts
 
-Pass custom `httpx.Client` or timeout configurations for corporate networks:
+Pass custom `httpx2.Client` or timeout configurations for corporate networks:
 
 ```python
-import httpx
+import httpx2 as httpx
 from nroutersdk import nRouter
 
 # Configure proxy, custom SSL context, and timeouts

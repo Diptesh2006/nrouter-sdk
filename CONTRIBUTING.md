@@ -65,14 +65,22 @@ do run are advisory, not required status checks.
 
 `main` is the release branch and merging is the release action. A merge that
 changes a version field **publishes immediately**, and a published version is
-immutable — it cannot be unpublished, corrected, or reused. There are three
-such files, one per registry:
+immutable — it cannot be unpublished, corrected, or reused. All ten SDKs use
+the canonical version in `spec/nrouter-sdk-spec.json`; maintainers update the
+following release metadata together and the conformance gate rejects drift:
 
 | file | publishes to |
 |---|---|
 | `sdks/js/package.json` | npm `@nrouter_ai/sdk` |
 | `sdks/python/pyproject.toml` | PyPI `nrouter-sdk` |
 | `sdks/java/pom.xml` | Maven Central `ai.nrouter:nrouter-sdk` |
+| `sdks/kotlin/gradle.properties` | Maven Central Kotlin preview |
+| `sdks/android/gradle.properties` | Maven Central Android preview |
+| `sdks/rust/Cargo.toml` | crates.io preview |
+| `sdks/dart/pubspec.yaml` | pub.dev preview |
+| `sdks/r/DESCRIPTION` | R-universe preview |
+| `sdks/swift/VERSION` | Swift source tag |
+| `sdks/go/VERSION` | Go source tag |
 
 Leave every version field exactly as you found it. A maintainer bumps it in a
 separate commit when the change is ready to ship. If your change needs a

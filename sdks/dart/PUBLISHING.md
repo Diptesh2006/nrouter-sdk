@@ -22,7 +22,7 @@ cd sdks/dart
 
 # 1. Version lives in pubspec.yaml and nowhere else.
 #    pub.dev refuses to overwrite a published version — bump, never re-push.
-$EDITOR pubspec.yaml            # version: 2.1.1
+$EDITOR pubspec.yaml            # version: 2.2.0
 
 # 2. Prove it green. A published version cannot be withdrawn, only retracted.
 dart pub get
@@ -70,6 +70,6 @@ reports the same findings. What actually costs points here:
 ## Tagging
 
 ```bash
-git tag -s sdk-dart-v2.1.1 -m "dart sdk 2.1.1"
-git push origin sdk-dart-v2.1.1     # SSH remote; HTTPS git fails here
+git tag -s sdk-dart-v2.2.0 -m "dart sdk 2.2.0"
+git push origin sdk-dart-v2.2.0     # SSH remote; HTTPS git fails here
 ```

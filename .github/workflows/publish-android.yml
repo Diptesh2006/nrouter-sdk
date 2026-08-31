@@ -94,6 +94,36 @@ jobs:
             *)   echo "::error::Maven Central answered $code; cannot tell whether $VERSION exists"; exit 1 ;;
           esac
 
+      # Android's published POM points at the Kotlin artifact with this exact
+      # version. Both workflows start from the same main push, so fail closed
+      # until Central actually serves the core instead of publishing an AAR
+      # whose mandatory dependency is temporarily or permanently missing.
+      - name: Wait for matching Kotlin core on Maven Central
+        if: >-
+          github.event_name != 'pull_request'
+          && github.ref == 'refs/heads/main'
+          && steps.check.outputs.publish == 'true'
+        working-directory: sdks/android
+        run: |
+          set -euo pipefail
+          VERSION="$(grep '^version=' gradle.properties | cut -d'=' -f2 | tr -d '[:space:]')"
+          KOTLIN_URL="https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk-kotlin/$VERSION/nrouter-sdk-kotlin-$VERSION.pom"
+          for attempt in $(seq 1 360); do
+            echo "Checking Kotlin core $VERSION availability ($attempt/360)..."
+            code="$(curl -s -o /dev/null -w '%{http_code}' "$KOTLIN_URL")"
+            if [ "$code" = 200 ]; then
+              echo "Kotlin core $VERSION is available on Maven Central."
+              exit 0
+            fi
+            if [ "$code" != 404 ]; then
+              echo "::error::Maven Central answered $code while checking Kotlin core $VERSION"
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::Kotlin core $VERSION was not available within 30 minutes; refusing to publish Android."
+          exit 1
+
       - name: Publish to Maven Central
         if: >-
           github.event_name != 'pull_request'

@@ -11,6 +11,11 @@ For the six first-party native transports it also requires a named helper for
 every operation the spec marks supported, plus incremental streaming helpers
 for chat completions, legacy completions, Messages, and Responses.
 
+The same gate also enforces the coordinated release version across all ten
+distribution manifests, JavaScript/Rust lockfiles, Python's imported version,
+Android's Kotlin dependency, Swift/Go version markers, and Go's SemVer major
+module suffix. Every publish workflow invokes it before credentials are used.
+
 ```bash
 python3 conformance/check_conformance.py             # check
 python3 conformance/check_conformance.py --self-test # prove the gate bites

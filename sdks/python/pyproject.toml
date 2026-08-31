@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nrouter-sdk"
-version = "2.1.3"
+version = "2.2.0"
 description = "nRouter SDK — one API key for models across six provider clouds. Native OpenAI and Anthropic wire formats, plus embeddings, audio, images and video."
 readme = "README.md"
 license = "MIT"

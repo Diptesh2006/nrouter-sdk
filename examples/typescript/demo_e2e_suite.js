@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { nRouter, createMemory, promptTemplate, buildSamplingParams } = require('../sdks/js/dist/index');
+const { nRouter, createMemory, promptTemplate, buildSamplingParams } = require('../../sdks/js/dist/index');
 
 async function main() {
   console.log('======================================================================');

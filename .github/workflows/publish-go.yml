@@ -1,4 +1,4 @@
-# Test and publish nRouter Go SDK (`github.com/nRouterAI/nrouter-sdk/sdks/go`), on merge to main.
+# Test and publish nRouter Go SDK (`github.com/nRouterAI/nrouter-sdk/sdks/go/v2`), on merge to main.
 #
 # ONE workflow for Go: formats, vets, tests with race detector, runs conformance,
 # and verifies proxy.golang.org tag readiness.
@@ -68,5 +68,7 @@ jobs:
       - name: Verify Module Path & Proxy Format (Release Template)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          grep '^module github.com/nRouterAI/nrouter-sdk/sdks/go' go.mod
-          echo "Go module is configured for proxy.golang.org resolution via sdks/go/v* tags."
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          MAJOR="${VERSION%%.*}"
+          grep -Fx "module github.com/nRouterAI/nrouter-sdk/sdks/go/v$MAJOR" go.mod
+          echo "Go module is ready for proxy.golang.org tag sdks/go/v$VERSION."

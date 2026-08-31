@@ -60,8 +60,8 @@ publishing {
             from(components["java"])
             // NOT "nrouter-sdk": the Java SDK already publishes
             // ai.nrouter:nrouter-sdk. Sharing the GAV would make one version
-            // number mean two incompatible APIs, and the two SDKs could never
-            // release independently.
+            // number mean two incompatible APIs. Distinct coordinates let the
+            // coordinated version identify each ecosystem-specific artifact.
             artifactId = "nrouter-sdk-kotlin"
             pom {
                 name.set("nRouter SDK")

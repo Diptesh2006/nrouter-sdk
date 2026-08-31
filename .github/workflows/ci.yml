@@ -47,7 +47,7 @@ jobs:
         run: python3 conformance/check_conformance.py
 
       - name: SDK contract tests
-        run: python3 -m pytest tests/test_sdk_contract.py
+        run: python3 -m pytest tests/test_sdk_contract.py tests/test_release_versions.py
 
       - name: Install pinned security scanners
         run: |

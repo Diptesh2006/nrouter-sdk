@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.0
+
+- Joins the coordinated 2.2.0 release train shared by all nRouter SDKs.
+- Includes the current full gateway contract, examples, and security gates.
+
 ## 2.1.1
 
 - Add `example/nrouter_example.dart` for pub.dev documentation and package analysis.

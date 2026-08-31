@@ -90,12 +90,9 @@ jobs:
       # THE REPOSITORY CONTRACT GATES, which ran in NO workflow until now.
       #
       # `tests/test_sdk_contract.py` was RED on main and nothing said so: it
-      # asserts spec/nrouter-sdk-spec.json agrees with the Python package
-      # version ("Version lives in four places. Any one drifting is a broken
-      # release."), the spec drifted to 2.1.0 while Python shipped 2.1.1, 2.1.2
-      # and 2.1.3, and three releases went out over a failing gate. Conformance
-      # does not cover this — it compares the SDKs to each other, not the spec
-      # to the package.
+      # asserts Python's internal package version and packaging behavior. The
+      # shared conformance gate now separately binds all ten distribution
+      # manifests and lockfiles to spec/nrouter-sdk-spec.json.
       #
       # It lives in THIS workflow because it imports `nroutersdk` and httpx,
       # which only this job installs. `spec/**` is in both workflows' filters,

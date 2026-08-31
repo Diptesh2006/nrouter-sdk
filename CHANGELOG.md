@@ -1,14 +1,24 @@
 # Changelog
 
-⚠️ **Each SDK has its own version line.** They are one product against one
-gateway contract (`spec/nrouter-sdk-spec.json`), but every registry versions
-independently — so Python 2.1.1 and JavaScript 1.1.2 are the *same* generation
-of the same SDK, not a newer and an older release. Do not read across the
-sections.
+Starting with 2.2.0, all ten SDKs use one coordinated version sourced from
+`spec/nrouter-sdk-spec.json`. Older entries retain the independent versions
+under which they were actually published; immutable registry history is never
+rewritten.
 
 Dates are the registry upload date, which is the only date a consumer can
 observe. Versions are immutable once published; nothing here is ever rewritten
 to correct a release, only appended to.
+
+## Coordinated SDK release — 2.2.0 — 2026-08-31
+
+- Aligns JavaScript, Python, Java, Kotlin, Android, Rust, Swift, Dart, R and Go
+  on one release version and adds a fail-closed cross-SDK version gate to every
+  publish workflow through conformance.
+- Moves the Go module to the SemVer-required `/v2` import path.
+- Makes Android wait for the same-version Kotlin core to be visible on Maven
+  Central before its own publication can begin.
+- Includes the expanded standalone examples, Python context managers and
+  static typing/lint coverage already present on `main`.
 
 ## JavaScript / TypeScript — npm `@nrouter_ai/sdk`
 

@@ -9,7 +9,7 @@ the same code runs on Flutter mobile, desktop, **web**, and the plain Dart VM.
 
 ```yaml
 dependencies:
-  nrouter: ^2.1.1
+  nrouter: ^2.2.0
 ```
 
 Or install via CLI:

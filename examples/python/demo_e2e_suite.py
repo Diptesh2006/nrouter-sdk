@@ -21,7 +21,10 @@ import threading
 import time
 
 # Ensure nroutersdk is on sys.path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sdks", "python"))
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(__file__), "..", "..", "sdks", "python"),
+)
 
 from nroutersdk import (
     nRouter,

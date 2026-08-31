@@ -9,7 +9,7 @@ One API key for models across six provider clouds.
 
 ```toml
 [dependencies]
-nrouter = "2.1.0"
+nrouter = "2.2.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 

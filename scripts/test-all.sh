@@ -44,6 +44,7 @@ step "cross-SDK conformance and mutation proof"
 
 step "repository contract and catalog guards"
 (cd "$ROOT" && "$PYTHON_BIN" -m unittest tests/test_sdk_contract.py)
+(cd "$ROOT" && "$PYTHON_BIN" -m pytest -q tests/test_release_versions.py)
 bash "$ROOT/tests/sdk-static-catalog-count.test.sh"
 bash "$ROOT/tests/demo-e2e-record.test.sh"
 

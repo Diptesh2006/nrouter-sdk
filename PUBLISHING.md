@@ -1,5 +1,10 @@
 # Publishing the SDKs
 
+All ten SDKs use one coordinated release version. The canonical value is
+`spec/nrouter-sdk-spec.json`; `conformance/check_conformance.py` refuses any
+manifest, lockfile, Swift/Go release marker, Android Kotlin dependency, or Go
+major module path that differs from it.
+
 One workflow per published language, all merge-triggered:
 
 | package / target | registry | workflow | version lives in |
@@ -7,21 +12,27 @@ One workflow per published language, all merge-triggered:
 | `@nrouter_ai/sdk` (TypeScript / JS) | [npmjs.org](https://www.npmjs.com/package/@nrouter_ai/sdk) | `.github/workflows/publish-npm.yml` | `sdks/js/package.json` |
 | `nrouter-sdk` (Python) | [pypi.org](https://pypi.org/project/nrouter-sdk/) | `.github/workflows/publish-pypi.yml` | `sdks/python/pyproject.toml` |
 | `ai.nrouter:nrouter-sdk` (Java) | [Maven Central](https://central.sonatype.com/) | `.github/workflows/publish-maven.yml` | `sdks/java/pom.xml` |
-| `ai.nrouter:nrouter-sdk-kotlin` (Kotlin) | [Maven Central / Sonatype](https://central.sonatype.com/) | `.github/workflows/publish-kotlin.yml` | `sdks/kotlin/build.gradle.kts` |
-| `NRouter` (Swift) | [Swift Package Index](https://swiftpackageindex.com/) | `.github/workflows/publish-swift.yml` | `Package.swift` |
+| `ai.nrouter:nrouter-sdk-kotlin` (Kotlin) | [Maven Central / Sonatype](https://central.sonatype.com/) | `.github/workflows/publish-kotlin.yml` | `sdks/kotlin/gradle.properties` |
+| `ai.nrouter:nrouter-sdk-android` (Android) | [Maven Central](https://central.sonatype.com/) | `.github/workflows/publish-android.yml` | `sdks/android/gradle.properties` |
+| `NRouter` (Swift) | [Swift Package Index](https://swiftpackageindex.com/) | `.github/workflows/publish-swift.yml` | `sdks/swift/VERSION` + bare SemVer tag |
 | `nrouter` (Rust) | [crates.io](https://crates.io/crates/nrouter) | `.github/workflows/publish-rust.yml` | `sdks/rust/Cargo.toml` |
-| `github.com/nRouterAI/nrouter-sdk/sdks/go` (Go) | [proxy.golang.org](https://proxy.golang.org/) | `.github/workflows/publish-go.yml` | `sdks/go/go.mod` (tag `sdks/go/v*`) |
+| `github.com/nRouterAI/nrouter-sdk/sdks/go/v2` (Go) | [proxy.golang.org](https://proxy.golang.org/) | `.github/workflows/publish-go.yml` | `sdks/go/VERSION` + tag `sdks/go/v*` |
 | `nrouter` (Dart) | [pub.dev](https://pub.dev/packages/nrouter) | `.github/workflows/publish-dart.yml` | `sdks/dart/pubspec.yaml` |
 | `nrouter` (R) | [CRAN / R-universe](https://nrouterai.r-universe.dev/nrouter) | `.github/workflows/publish-r.yml` | `sdks/r/DESCRIPTION` |
 
 ## To release
 
-Bump the version, merge to `main`. That is the whole procedure.
+Bump the canonical version and every manifest together, then merge to `main`.
+The shared gate makes a partial bump impossible. Kotlin publishes before
+Android; the Android workflow waits until Central serves the matching Kotlin
+POM. After all hosted workflows are green, create the Swift and Go tags from
+that exact commit.
 
 ```bash
-$EDITOR sdks/js/package.json          # "version": "1.1.0"
-$EDITOR sdks/python/pyproject.toml    # version = "2.1.1"
-$EDITOR sdks/java/pom.xml             # <version>1.0.1</version>
+$EDITOR spec/nrouter-sdk-spec.json    # "version": "2.2.0"
+$EDITOR sdks/js/package.json          # "version": "2.2.0"
+$EDITOR sdks/python/pyproject.toml    # version = "2.2.0"
+$EDITOR sdks/java/pom.xml             # <version>2.2.0</version>
 # ...open a PR, get it merged...
 ```
 
@@ -136,5 +147,5 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pypi.org/pypi/nrouter-sdk/2.2.0
 cd sdks/java && mvn -B clean verify
 python3 ../../conformance/check_conformance.py
 mvn -B clean deploy -P release
-curl -s -o /dev/null -w '%{http_code}\n' https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk/1.0.1/nrouter-sdk-1.0.1.pom
+curl -s -o /dev/null -w '%{http_code}\n' https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk/2.2.0/nrouter-sdk-2.2.0.pom
 ```

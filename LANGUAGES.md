@@ -603,7 +603,7 @@ async fn main() {
 
 ```kotlin
 // build.gradle.kts
-implementation("ai.nrouter:nrouter-sdk-kotlin:2.1.0")
+implementation("ai.nrouter:nrouter-sdk-kotlin:2.2.0")
 ```
 
 ```kotlin
@@ -655,7 +655,7 @@ println(response.choices[0].message.content)
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.1.0")
+.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.2.0")
 ```
 
 ```swift
@@ -701,7 +701,7 @@ print(result.choices[0].message.content ?? "")
 
 ```yaml
 dependencies:
-  nrouter: ^2.1.0
+  nrouter: ^2.2.0
 ```
 
 ```dart
@@ -843,4 +843,3 @@ else:
 
 Balances, spend history and guardrail logs are org-scoped billing data and live
 in the dashboard at <https://app.nrouter.ai>, not on the inference API.
-

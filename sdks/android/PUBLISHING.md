@@ -17,13 +17,13 @@ names a dependency nobody can resolve — it installs fine for you (it is in you
 cd ../kotlin && ./gradlew publish        # then release it in the Central UI
 
 # 2. Confirm it actually resolves from Central, not just from your machine.
-curl -sI https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk-kotlin/2.1.1/nrouter-sdk-kotlin-2.1.1.pom \
+curl -sI https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk-kotlin/2.2.0/nrouter-sdk-kotlin-2.2.0.pom \
   | head -1        # expect: HTTP/2 200
 
 # 3. Then Android.
 cd ../android
-$EDITOR gradle.properties                # version=2.1.1
-$EDITOR build.gradle.kts                 # api("ai.nrouter:nrouter-sdk-kotlin:2.1.1")
+$EDITOR gradle.properties                # version=2.2.0
+$EDITOR build.gradle.kts                 # api("ai.nrouter:nrouter-sdk-kotlin:2.2.0")
 ./gradlew build
 ./gradlew publish
 ```

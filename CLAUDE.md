@@ -6,13 +6,11 @@ is world-readable. Treat every file as published.
 
 ## ⛔ SUPPORT SCOPE: npm, PyPI and Maven — owner decision 2026-08-29, reviewed monthly
 
-**Ten SDKs exist here; THREE are registry-released and supported.** Work that
-ships as a supported package goes to `sdks/{js,python,java}`. Swift and Go also
-have immutable source-resolution tags, but no registry release or support
-commitment. R is distributed as a public preview through R-universe; that makes
-it globally installable but does not add it to the supported set. The remaining
-four — `{kotlin,android,rust,dart}` — build from this repo without a registry
-release. All ten remain subject to the same conformance gate.
+**Ten SDKs exist here; THREE are supported.** Work that ships as a supported
+package goes to `sdks/{js,python,java}`. Kotlin, Android, Rust, Dart and R are
+registry-distributed public previews; Swift and Go use immutable source tags.
+Distribution does not add a support commitment. All ten use one coordinated
+release version and remain subject to the same conformance gate.
 
 | supported | registry | package |
 |---|---|---|
@@ -38,9 +36,10 @@ to land in all ten — a spec edit that leaves seven behind turns a green gate
 into a lie the day one of them is supported. Source tags do not broaden the
 support commitment.
 
-⚠️ Three published surfaces means THREE immutable version lines and three
-release workflows. A breaking change is breaking per registry: `guardrailIds`
-throwing is a JS major, and says nothing about Python's or Java's numbering.
+⚠️ Every registry remains immutable, but the ten SDKs use ONE release version.
+`spec/nrouter-sdk-spec.json` is canonical and the conformance gate checks every
+manifest, lockfile and Swift/Go version marker. A breaking change in any SDK
+therefore advances the coordinated major version for all ten.
 
 Independent repo, own remote, nested in `nrouter-brain`, gitignored by it.
 **Edit in place; commit and push here.** Rule #20: `git pull --ff-only` → edit →

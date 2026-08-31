@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -90,6 +91,28 @@ SDK_SOURCES: dict[str, list[str]] = {
         "sdks/go/meta.go",
         "sdks/go/stream.go",
     ],
+}
+
+# Distribution metadata read by the release-version gate. Swift and Go derive
+# their public versions from tags, so their VERSION files are the reviewable
+# source from which release automation creates those immutable tags.
+RELEASE_METADATA_PATHS = {
+    "sdks/js/package.json",
+    "sdks/js/package-lock.json",
+    "sdks/python/pyproject.toml",
+    "sdks/python/nroutersdk/_version.py",
+    "sdks/java/pom.xml",
+    "sdks/kotlin/gradle.properties",
+    "sdks/android/gradle.properties",
+    "sdks/android/build.gradle.kts",
+    "sdks/android/gradle.lockfile",
+    "sdks/go/VERSION",
+    "sdks/go/go.mod",
+    "sdks/rust/Cargo.toml",
+    "sdks/rust/Cargo.lock",
+    "sdks/swift/VERSION",
+    "sdks/dart/pubspec.yaml",
+    "sdks/r/DESCRIPTION",
 }
 
 # These SDKs own their HTTP transport rather than delegating it to a vendor or
@@ -160,6 +183,7 @@ def stream_helper_pattern(sdk: str, basename: str) -> str:
     }
     return patterns[sdk]
 
+
 # An SDK that only wraps a vendor client does not restate every constant: the
 # vendor SDK owns the transport, so headers and error codes live in the wrapper
 # only where it adds them. These SDKs are held to the connection contract (base
@@ -192,7 +216,7 @@ DELEGATES = {
 # reports it in its summary.
 NO_ENV_RESOLUTION = {
     "dart": "requires an explicit key; dart:io is absent on Flutter web and "
-            "empty on mobile, so an env fallback would resolve to nothing",
+    "empty on mobile, so an env fallback would resolve to nothing",
 }
 
 # Spellings that must appear nowhere (Rule #35).
@@ -237,6 +261,104 @@ def load_spec() -> dict:
     return json.loads(SPEC.read_text())
 
 
+def check_release_versions(root: Path, spec: dict) -> list[str]:
+    """Require one release version across all ten SDK distributions."""
+    failures: list[str] = []
+    canonical = spec["version"]
+
+    def text(relative: str) -> str:
+        path = root / relative
+        if not path.exists():
+            failures.append(f"release version: missing {relative}")
+            return ""
+        return path.read_text()
+
+    def match(relative: str, pattern: str) -> str | None:
+        found = re.search(pattern, text(relative), flags=re.MULTILINE | re.DOTALL)
+        if found is None:
+            failures.append(f"release version: cannot parse {relative}")
+            return None
+        return found.group(1)
+
+    def prop(relative: str, name: str) -> str | None:
+        return match(relative, rf"^{re.escape(name)}\s*=\s*([^\s]+)$")
+
+    js_manifest = text("sdks/js/package.json")
+    js_lock = text("sdks/js/package-lock.json")
+    try:
+        js_version = json.loads(js_manifest)["version"]
+        lock = json.loads(js_lock)
+        js_lock_versions = [lock["version"], lock["packages"][""]["version"]]
+    except (KeyError, TypeError, json.JSONDecodeError):
+        failures.append("release version: cannot parse JavaScript package metadata")
+        js_version = None
+        js_lock_versions = []
+
+    java_version = None
+    java_pom = text("sdks/java/pom.xml")
+    if java_pom:
+        try:
+            pom = ET.fromstring(java_pom)
+            java_version = pom.findtext("{http://maven.apache.org/POM/4.0.0}version")
+        except ET.ParseError:
+            failures.append("release version: cannot parse sdks/java/pom.xml")
+
+    versions = {
+        "javascript": js_version,
+        "python": match("sdks/python/pyproject.toml", r'^version\s*=\s*"([^"]+)"'),
+        "java": java_version,
+        "kotlin": prop("sdks/kotlin/gradle.properties", "version"),
+        "android": prop("sdks/android/gradle.properties", "version"),
+        "go": text("sdks/go/VERSION").strip() or None,
+        "rust": match("sdks/rust/Cargo.toml", r'^version\s*=\s*"([^"]+)"'),
+        "swift": text("sdks/swift/VERSION").strip() or None,
+        "dart": match("sdks/dart/pubspec.yaml", r"^version:\s*([^\s]+)$"),
+        "r": match("sdks/r/DESCRIPTION", r"^Version:\s*([^\s]+)$"),
+    }
+    for sdk, version in versions.items():
+        if version != canonical:
+            failures.append(
+                f"{sdk}: release version {version!r} does not match spec {canonical!r}"
+            )
+
+    for version in js_lock_versions:
+        if version != canonical:
+            failures.append(
+                f"javascript: package-lock version {version!r} does not match spec {canonical!r}"
+            )
+
+    coupled = {
+        "python import": match(
+            "sdks/python/nroutersdk/_version.py", r'^__version__\s*=\s*"([^"]+)"'
+        ),
+        "rust lock": match(
+            "sdks/rust/Cargo.lock",
+            r'\[\[package\]\]\s+name = "nrouter"\s+version = "([^"]+)"',
+        ),
+        "android Kotlin dependency": match(
+            "sdks/android/build.gradle.kts", r'nrouter-sdk-kotlin:([^"]+)"'
+        ),
+        "android dependency lock": match(
+            "sdks/android/gradle.lockfile",
+            r"^ai\.nrouter:nrouter-sdk-kotlin:([^=]+)=",
+        ),
+    }
+    for label, version in coupled.items():
+        if version != canonical:
+            failures.append(
+                f"{label}: version {version!r} does not match spec {canonical!r}"
+            )
+
+    major = canonical.split(".", 1)[0]
+    go_module = match("sdks/go/go.mod", r"^module\s+([^\s]+)$")
+    if int(major) >= 2 and go_module and not go_module.endswith(f"/v{major}"):
+        failures.append(
+            f"go: version {canonical} requires module path suffix /v{major}; got {go_module}"
+        )
+
+    return failures
+
+
 def check_swift_manifests(root: Path = ROOT) -> list[str]:
     """The Swift package is declared twice; make them agree.
 
@@ -251,15 +373,19 @@ def check_swift_manifests(root: Path = ROOT) -> list[str]:
     shipping = root / "Package.swift"
     nested = root / "sdks/swift/Package.swift"
     if not shipping.exists():
-        return [f"swift: {shipping.name} is missing from the SDK root — SwiftPM "
-                f"reads the manifest from the repository root and consumers "
-                f"cannot resolve the package without it"]
+        return [
+            f"swift: {shipping.name} is missing from the SDK root — SwiftPM "
+            f"reads the manifest from the repository root and consumers "
+            f"cannot resolve the package without it"
+        ]
     if not nested.exists():
         return []
 
     def platforms(text: str) -> set[str]:
         block = re.search(r"platforms:\s*\[(.*?)\]", text, re.S)
-        return set(re.findall(r"\.(\w+)\(\.(\w+)\)", block.group(1))) if block else set()
+        return (
+            set(re.findall(r"\.(\w+)\(\.(\w+)\)", block.group(1))) if block else set()
+        )
 
     def names(text: str, kind: str) -> set[str]:
         return set(re.findall(rf'\.{kind}\(\s*name:\s*"([^"]+)"', text))
@@ -374,7 +500,9 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
                     present = prefix in blob and (not suffix or suffix in blob)
                 else:
                     present = wire_path in blob
-                has_helper = re.search(native_helper_pattern(sdk, basename), blob) is not None
+                has_helper = (
+                    re.search(native_helper_pattern(sdk, basename), blob) is not None
+                )
                 if not present or not has_helper:
                     failures.append(
                         f"{sdk}: supported endpoint {endpoint['method']} "
@@ -417,6 +545,7 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
                 )
 
     failures.extend(check_swift_manifests(root))
+    failures.extend(check_release_versions(root, spec))
     return failures
 
 
@@ -443,12 +572,18 @@ def self_test() -> int:
         ("base_url", lambda d: d.update(base_url="https://api-stage.nrouter.ai/v1")),
         ("env_var", lambda d: d.update(env_var="NROUTER_TOKEN")),
         ("a new header", lambda d: d["response_headers"].update({"x-nr-invented": {}})),
-        ("a new error code", lambda d: d["errors"].update({"invented_code": {"http": 400}})),
+        (
+            "a new error code",
+            lambda d: d["errors"].update({"invented_code": {"http": 400}}),
+        ),
         # Moving an EXISTING code's status must also bite: the contract is the
         # code AND its status, and a gate blind to `http` lets one drift.
         # A status leaving the spec's set must bite. (Moving a code ONTO an
         # existing status does not — see the LIMIT note in check().)
-        ("an existing code's http", lambda d: d["errors"]["guardrail_blocked"].update({"http": 422})),
+        (
+            "an existing code's http",
+            lambda d: d["errors"]["guardrail_blocked"].update({"http": 422}),
+        ),
     ):
         mutated = json.loads(json.dumps(spec))
         mutate(mutated)
@@ -458,7 +593,9 @@ def self_test() -> int:
     # --- half two: a real SDK LOSES something, that SDK must go red ----------
     with tempfile.TemporaryDirectory() as tmp:
         fake_root = Path(tmp)
-        for rel in {r for paths in SDK_SOURCES.values() for r in paths}:
+        copied_paths = {r for paths in SDK_SOURCES.values() for r in paths}
+        copied_paths.update(RELEASE_METADATA_PATHS)
+        for rel in copied_paths:
             src = ROOT / rel
             if not src.exists():
                 continue
@@ -477,13 +614,27 @@ def self_test() -> int:
         if check(root=fake_root):
             problems.append("an unmodified copy of the tree did not pass")
 
+        # A package-version drift must stop every publish workflow that invokes
+        # this gate, before any registry credential becomes reachable.
+        victim = fake_root / "sdks/js/package.json"
+        text = victim.read_text()
+        victim.write_text(
+            text.replace(f'"version": "{spec["version"]}"', '"version": "0.0.0"', 1)
+        )
+        failures = check(root=fake_root)
+        if not any("javascript: release version" in f for f in failures):
+            problems.append("changing a real package version did not fail the check")
+        victim.write_text(text)
+
         # Delete a header this SDK really reads.
         victim = fake_root / "sdks/rust/src/meta.rs"
         text = victim.read_text()
         victim.write_text(text.replace('"x-nr-response-cache-age",\n', "", 1))
         failures = check(root=fake_root)
         if not any("x-nr-response-cache-age" in f and "rust" in f for f in failures):
-            problems.append("deleting a real header from a real SDK did not fail the check")
+            problems.append(
+                "deleting a real header from a real SDK did not fail the check"
+            )
         victim.write_text(text)
 
         # Delete one native streaming helper. Streaming is a public capability,
@@ -510,7 +661,9 @@ def self_test() -> int:
         )
         failures = check(root=fake_root)
         if not any("/v1/images/generations" in f and "go" in f for f in failures):
-            problems.append("deleting a real native endpoint helper did not fail the check")
+            problems.append(
+                "deleting a real native endpoint helper did not fail the check"
+            )
         victim.write_text(text)
 
         # Delete an error code this SDK really maps.
@@ -524,7 +677,9 @@ def self_test() -> int:
         )
         failures = check(root=fake_root)
         if not any("guardrail_blocked" in f and "dart" in f for f in failures):
-            problems.append("deleting a real error code from a real SDK did not fail the check")
+            problems.append(
+                "deleting a real error code from a real SDK did not fail the check"
+            )
         victim.write_text(text)
         stream_victim.write_text(stream_text)
 
@@ -543,7 +698,9 @@ def self_test() -> int:
             text = victim.read_text()
             victim.write_text(text.replace(".macOS(.v12)", ".macOS(.v13)"))
             if not any("platform floors differ" in f for f in check(root=fake_root)):
-                problems.append("a Swift manifest platform drift did not fail the check")
+                problems.append(
+                    "a Swift manifest platform drift did not fail the check"
+                )
             victim.write_text(text)
 
         # A missing root manifest must ERROR: without it SwiftPM cannot resolve
@@ -552,8 +709,10 @@ def self_test() -> int:
         if shipping.exists():
             text = shipping.read_text()
             shipping.unlink()
-            if not any("reads the manifest from the repository root" in f
-                       for f in check(root=fake_root)):
+            if not any(
+                "reads the manifest from the repository root" in f
+                for f in check(root=fake_root)
+            ):
                 problems.append("a missing root Package.swift did not fail the check")
             shipping.write_text(text)
 
@@ -574,8 +733,8 @@ def self_test() -> int:
         return 1
     print(
         "self-test ok: red on spec drift (base_url, env_var, header, code) AND on a "
-        "real SDK losing an endpoint helper, a header, a code, a file, or gaining "
-        "a retired spelling"
+        "real SDK losing an endpoint helper, a header, a code, a file, drifting "
+        "a release version, or gaining a retired spelling"
     )
     return 0
 

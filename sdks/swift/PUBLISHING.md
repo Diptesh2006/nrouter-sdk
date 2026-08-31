@@ -27,11 +27,10 @@ resolves through its own registry (PyPI, npm, crates.io, pub.dev, Maven Central,
 R-universe) and needs no git tag, so semver tags there mean "the Swift package",
 and nothing else competes for them.
 
-The consequence is worth knowing: a Swift release tags the whole monorepo, so a
-tag's tree contains the other SDKs at whatever state they were in. That is
-harmless — SwiftPM only ever builds the targets this manifest names — but it
-does mean the Swift version number moves independently of, say, the crate
-version, and they will drift.
+The Swift tag points at the same coordinated release commit as every registry
+package. SwiftPM only builds the targets this manifest names, while
+`sdks/swift/VERSION` and the cross-SDK conformance gate prevent its tag version
+from drifting from the shared release train.
 
 ## Release
 
@@ -61,8 +60,8 @@ test -f Package.swift
 
 ```bash
 git ls-remote --tags origin
-git tag 2.1.1                  # bare semver, no `v` — see the trap below
-git push origin 2.1.1
+git tag 2.2.0                  # bare semver, no `v` — see the trap below
+git push origin 2.2.0
 ```
 
 The `test -f Package.swift` is the guard for exactly the mistake above: it fails
@@ -73,7 +72,7 @@ Use SSH URLs throughout. HTTPS git fails from the nRouter workspace.
 ## Consumers
 
 ```swift
-.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.1.1")
+.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.2.0")
 ```
 
 Or in Xcode: **File → Add Package Dependencies** and paste that URL.
@@ -92,7 +91,7 @@ swift package resolve
 
 ## Traps
 
-- **`from: "2.1.1"` matches the tag `2.1.1`, not `v2.1.1`.** SwiftPM accepts a
+- **`from: "2.2.0"` matches the tag `2.2.0`, not `v2.2.0`.** SwiftPM accepts a
   `v` prefix, but mixing the two across releases makes version ranges resolve in
   ways nobody expects. Pick bare semver and keep it.
 - **Tag only clean, pushed `main`.** SwiftPM resolves the immutable tag, not

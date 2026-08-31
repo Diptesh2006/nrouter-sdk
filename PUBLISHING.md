@@ -38,6 +38,7 @@ the no-change case into a quiet green no-op instead.
 | secret | purpose |
 |---|---|
 | `PYPI_API_TOKEN` | PyPI project token for `nrouter-sdk` |
+| `CRATES_IO_TOKEN` | crates.io API token for `nrouter` crate |
 | `CENTRAL_USERNAME` | Sonatype Central Portal token username |
 | `CENTRAL_PASSWORD` | Sonatype Central Portal token password |
 | `GPG_PRIVATE_KEY` | ASCII-armored private signing key |

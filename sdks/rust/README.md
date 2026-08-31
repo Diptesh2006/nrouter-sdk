@@ -1,13 +1,13 @@
 # nRouter SDK for Rust
 
-One API key for models across six provider clouds.
+[![crates.io](https://img.shields.io/crates/v/nrouter?logo=rust&label=nrouter)](https://crates.io/crates/nrouter)
+[![docs.rs](https://docs.rs/nrouter/badge.svg)](https://docs.rs/nrouter)
 
-> **Source preview:** the crate is not on crates.io. Use the repository checkout
-> as a path dependency until the first registry release.
+One API key for models across six provider clouds.
 
 ```toml
 [dependencies]
-nrouter = { path = "../nrouter-sdk/sdks/rust" }
+nrouter = "2.1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 

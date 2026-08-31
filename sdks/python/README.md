@@ -14,14 +14,13 @@ those are the models currently live through the gateway. Check
 | Language | Package | Install | Status |
 |----------|---------|---------|--------|
 | **Python** | `nrouter-sdk` | `pip install nrouter-sdk` | **Published** on PyPI — imports as `nroutersdk` |
+| **JavaScript / TypeScript** | `@nrouter_ai/sdk` | `npm install @nrouter_ai/sdk` | **Published** on npm |
+| **Java** | `ai.nrouter:nrouter-sdk` | Maven `ai.nrouter:nrouter-sdk` | **Published** on Maven Central |
+| **Rust** | `nrouter` | `cargo add nrouter` | **Published** on crates.io |
+| **Dart / Flutter** | `nrouter` | `dart pub add nrouter` | **Published** on pub.dev |
+| **Go** | `github.com/nRouterAI/nrouter-sdk/sdks/go` | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1` | **Published** via Go proxy |
+| **R** | `nrouter` | `install.packages("nrouter", ...)` | **Public Preview** on R-universe |
 | **cURL** | none needed | built in | **Ready** — see `examples/curl.sh` |
-| **JavaScript / TypeScript** | `@nrouter_ai/sdk` | — | `npm install @nrouter_ai/sdk` — PUBLISHED; source in `sdks/js/` |
-| **Java** | — | — | Source in `sdks/java/`; not on Maven Central |
-| **Rust** | — | — | Source in `sdks/rust/`; not on crates.io |
-| **R** | — | — | Source in `sdks/r/`; not on CRAN |
-
-Python is the only language published to a package registry today. The others are
-usable from source in this repository, and ship to their registries as they are ready.
 
 **Until a branded SDK ships for your language, use the stock OpenAI SDK** pointed at
 `https://api.nrouter.ai/v1` — that is the supported path and it is what every file under

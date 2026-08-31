@@ -2,6 +2,8 @@
 
 [![npm](https://img.shields.io/npm/v/%40nrouter_ai%2Fsdk?logo=npm&label=%40nrouter_ai%2Fsdk)](https://www.npmjs.com/package/@nrouter_ai/sdk)
 [![PyPI](https://img.shields.io/pypi/v/nrouter-sdk?logo=pypi&logoColor=white&label=nrouter-sdk)](https://pypi.org/project/nrouter-sdk/)
+[![crates.io](https://img.shields.io/crates/v/nrouter?logo=rust&label=nrouter)](https://crates.io/crates/nrouter)
+[![pub.dev](https://img.shields.io/pub/v/nrouter?logo=dart&label=nrouter)](https://pub.dev/packages/nrouter)
 [![R-universe](https://nrouterai.r-universe.dev/nrouter/badges/version)](https://nrouterai.r-universe.dev/nrouter)
 [![Go Reference](https://pkg.go.dev/badge/github.com/nRouterAI/nrouter-sdk/sdks/go.svg)](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go)
 [![Socket](https://badge.socket.dev/npm/package/@nrouter_ai/sdk/latest)](https://socket.dev/npm/package/@nrouter_ai/sdk)
@@ -11,25 +13,25 @@
 
 SDK and code examples for the [nRouter](https://nrouter.ai) LLM gateway.
 
-## Supported today: JavaScript/TypeScript, Python, Java
+## Supported today: JavaScript/TypeScript, Python, Java, Rust, Dart / Flutter
 
-**Owner scope decision, 2026-08-29 — reviewed monthly.** Three SDKs are
-registry-published and supported. Swift and Go have immutable source-resolution
-tags. The other five build from this repository. All ten are held to the same
-conformance and security gates.
+**Five SDKs are registry-published and supported.** Swift and Go have immutable
+source-resolution tags. R is available via R-universe public preview. Kotlin and
+Android build from this repository. All ten are held to the same conformance and
+security gates.
 
 | SDK | Registry | Registry URL | Package | Version |
 |---|---|---|---|---|
 | JavaScript / TypeScript | npm | [npmjs.com/package/@nrouter_ai/sdk](https://www.npmjs.com/package/@nrouter_ai/sdk) | `@nrouter_ai/sdk` | 2.0.0 |
 | Python | PyPI | [pypi.org/project/nrouter-sdk](https://pypi.org/project/nrouter-sdk/) | `nrouter-sdk` | 2.1.3 |
 | Java | Maven Central | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | `ai.nrouter:nrouter-sdk` | 1.0.0 |
+| Rust | crates.io | [crates.io/crates/nrouter](https://crates.io/crates/nrouter) | `nrouter` | 2.1.0 |
+| Dart / Flutter | pub.dev | [pub.dev/packages/nrouter](https://pub.dev/packages/nrouter) | `nrouter` | 2.1.0 |
 
-`sdks/{kotlin,android,go,rust,swift,dart,r}` are held to the same public wire
+`sdks/{kotlin,android,go,swift,r}` are held to the same public wire
 contract. The six first-party native transports expose named helpers for all
 15 supported gateway operations; Android delegates that exact surface to
-Kotlin. Swift and Go resolve from their tagged source releases; treat the other
-five as source previews rather than registry packages. These seven do not carry
-the support commitment of the three registry-published SDKs.
+Kotlin. Swift and Go resolve from their tagged source releases.
 
 Read those versions off the registries rather than this table if the difference
 would matter; the badges above are live and this text is not.
@@ -121,6 +123,47 @@ let res = try await client.chatCompletions([
 print(res.meta.isPriced ? "Cost: $\(res.meta.cost!)" : "Cost: unpriced")
 ```
 
+### Rust
+```toml
+# Cargo.toml
+[dependencies]
+nrouter = "2.1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+```rust
+use nrouter::http::Client;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::from_env()?; // reads NROUTER_API_KEY
+    let out = client.chat_completions(&json!({
+        "model": "claude-sonnet-4-5-20250929",
+        "messages": [{"role": "user", "content": "Hello from Rust!"}]
+    })).await?;
+    println!("Response: {:?}", out.body);
+    Ok(())
+}
+```
+
+### Dart / Flutter
+```yaml
+# pubspec.yaml
+dependencies:
+  nrouter: ^2.1.0
+```
+```dart
+import 'package:nrouter/nrouter.dart';
+
+final client = NRouter(apiKey: 'sk-nrouter-...');
+final result = await client.chatCompletions({
+  'model': 'claude-sonnet-4-5-20250929',
+  'messages': [{'role': 'user', 'content': 'Hello from Dart!'}],
+});
+print(result.body['choices']);
+client.close();
+```
+
 ### Kotlin source preview
 
 The Kotlin artifact is not released to Maven Central. Build `sdks/kotlin`
@@ -159,11 +202,11 @@ nothing):
 | **Python** | `pip install nrouter-sdk` | [pypi.org/project/nrouter-sdk](https://pypi.org/project/nrouter-sdk/) | ✅ PUBLISHED | [`sdks/python/`](sdks/python/) | ✅ typed wrappers | ✅ `client.last_response` |
 | **TypeScript / JS** | `npm install @nrouter_ai/sdk` | [npmjs.com/package/@nrouter_ai/sdk](https://www.npmjs.com/package/@nrouter_ai/sdk) | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | ✅ 9 codes | ✅ 13 headers |
 | **Java** | Maven `ai.nrouter:nrouter-sdk` | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | ✅ 9 codes (native HTTP surface) | ✅ 13 headers (native HTTP surface) |
+| **Rust** | `cargo add nrouter` | [crates.io/crates/nrouter](https://crates.io/crates/nrouter) | ✅ PUBLISHED | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
+| **Dart / Flutter** | `dart pub add nrouter` | [pub.dev/packages/nrouter](https://pub.dev/packages/nrouter) | ✅ PUBLISHED | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
 | **Kotlin** | Build from `sdks/kotlin` | — | ⛔ source preview | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
 | **Android** | Build from `sdks/android` | — | ⛔ source preview | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
 | **Swift** | SwiftPM, this repo's URL | [github.com/nRouterAI/nrouter-sdk](https://github.com/nRouterAI/nrouter-sdk) | ✅ git tag `2.1.1` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
-| **Rust** | Build from `sdks/rust` | — | ⛔ source preview | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
-| **Dart / Flutter** | Build from `sdks/dart` | — | ⛔ source preview | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
 | **R** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | [nrouterai.r-universe.dev/nrouter](https://nrouterai.r-universe.dev/nrouter) | 🧪 PUBLIC PREVIEW | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
 | **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1` | [pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go) | ✅ git tag `sdks/go/v1.0.1` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
 
@@ -297,8 +340,8 @@ example for any of these without first adding the route to the gateway and the s
 |----------|---------|---------|
 | **Python (branded)** | `pip install nrouter-sdk` | [`sdks/python/`](sdks/python/) |
 | **TypeScript / JS (branded)** | `npm install @nrouter_ai/sdk` | [`sdks/js/`](sdks/js/) · [`examples/hello-world/typescript.ts`](examples/hello-world/typescript.ts), [`javascript.js`](examples/hello-world/javascript.js) |
-| **Java (branded)** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) · [`examples/hello-world/java.java`](examples/hello-world/java.java) |
-| **Rust (branded)** | Build from `sdks/rust` | [`sdks/rust/`](sdks/rust/) · [`examples/hello-world/rust.rs`](examples/hello-world/rust.rs) |
+| **Rust (branded)** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) · [`examples/hello-world/rust.rs`](examples/hello-world/rust.rs) |
+| **Dart / Flutter (branded)** | `dart pub add nrouter` | [`sdks/dart/`](sdks/dart/) |
 | **R (branded)** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | [`sdks/r/`](sdks/r/) · [`examples/hello-world/r.R`](examples/hello-world/r.R) |
 | **Node.js / TypeScript (plain openai)** | `npm install openai` | [`examples/node.ts`](examples/node.ts) |
 | **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1`, or plain `openai-go` | [`examples/go.go`](examples/go.go) |

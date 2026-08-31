@@ -31,6 +31,14 @@ java {
     withJavadocJar()
 }
 
+tasks.named<org.gradle.jvm.tasks.Jar>("javadocJar") {
+    from("README.md")
+}
+
+tasks.withType<org.gradle.api.publish.tasks.GenerateModuleMetadata>().configureEach {
+    enabled = false
+}
+
 tasks.test { useJUnitPlatform() }
 
 publishing {

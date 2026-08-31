@@ -57,6 +57,16 @@ dependencies {
 
 kotlin { jvmToolchain(11) }
 
+tasks.withType<org.gradle.api.publish.tasks.GenerateModuleMetadata>().configureEach {
+    enabled = false
+}
+
+tasks.withType<org.gradle.jvm.tasks.Jar>().configureEach {
+    if (name.endsWith("JavadocJar", ignoreCase = true)) {
+        from("README.md")
+    }
+}
+
 publishing {
     repositories {
         maven {

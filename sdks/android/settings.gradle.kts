@@ -6,6 +6,15 @@ dependencyResolutionManagement {
     // up before a released artifact. That is how this module is built and
     // tested against an unreleased core, and it is the loop to use when
     // changing both at once.
-    repositories { mavenLocal(); google(); mavenCentral() }
+    repositories {
+        mavenLocal {
+            metadataSources {
+                mavenPom()
+                artifact()
+            }
+        }
+        google()
+        mavenCentral()
+    }
 }
 rootProject.name = "nrouter-sdk-android"

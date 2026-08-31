@@ -1,15 +1,15 @@
 # nRouter SDK for Rust
 
-[![crates.io](https://img.shields.io/crates/v/nrouter?logo=rust&label=nrouter)](https://crates.io/crates/nrouter)
-[![docs.rs](https://docs.rs/nrouter/badge.svg)](https://docs.rs/nrouter)
-
 One API key for models across six provider clouds.
 
-## Installation
+## Source installation
+
+Rust is a source preview and declares `publish = false`. From an application
+beside a checkout of this repository, use a path dependency:
 
 ```toml
 [dependencies]
-nrouter = "2.2.1"
+nrouter = { path = "../nrouter-sdk/sdks/rust" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 

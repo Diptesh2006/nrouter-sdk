@@ -1,6 +1,7 @@
 [package]
 name = "nrouter"
 version = "2.2.1"
+publish = false
 edition = "2021"
 # The EFFECTIVE floor of the transitive graph, not an aspiration. `cargo
 # metadata` reports dependencies declaring up to 1.88 (icu_*), and

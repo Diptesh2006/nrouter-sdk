@@ -3,11 +3,18 @@
 One API key for models across six provider clouds. The gateway speaks the OpenAI
 wire format, so the bodies are the shapes you already know.
 
-[![Maven Central](https://img.shields.io/maven-central/v/ai.nrouter/nrouter-sdk-kotlin?label=Maven%20Central)](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-kotlin)
+## Source installation
 
-## Installation
+Kotlin is a source preview, not a Maven Central release. From a checkout of
+this repository, publish the verified artifact only to your local Maven cache:
+
+```bash
+cd sdks/kotlin
+./gradlew clean check publishToMavenLocal
+```
 
 ```kotlin
+repositories { mavenLocal() }
 dependencies {
     implementation("ai.nrouter:nrouter-sdk-kotlin:2.2.1")
 }

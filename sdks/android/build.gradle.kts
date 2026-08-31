@@ -2,7 +2,6 @@ plugins {
     id("com.android.library") version "8.6.1"
     kotlin("android") version "2.0.21"
     `maven-publish`
-    signing
 }
 
 dependencyLocking { lockAllConfigurations() }
@@ -68,18 +67,6 @@ tasks.withType<org.gradle.jvm.tasks.Jar>().configureEach {
 }
 
 publishing {
-    repositories {
-        maven {
-            name = "central"
-            // Without a repositories block Gradle generates no remote publish
-            // task, so `./gradlew publish` succeeds having uploaded nothing.
-            url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
-            credentials {
-                username = System.getenv("SONATYPE_USERNAME")
-                password = System.getenv("SONATYPE_PASSWORD")
-            }
-        }
-    }
     publications {
         register<MavenPublication>("release") {
             afterEvaluate { from(components["release"]) }
@@ -110,15 +97,5 @@ publishing {
                 }
             }
         }
-    }
-}
-
-signing {
-    setRequired { gradle.taskGraph.hasTask("publish") }
-    val key = System.getenv("SIGNING_KEY")
-    val password = System.getenv("SIGNING_PASSWORD")
-    if (key != null && password != null) {
-        useInMemoryPgpKeys(key, password)
-        sign(publishing.publications["release"])
     }
 }

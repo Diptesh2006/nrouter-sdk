@@ -17,6 +17,9 @@ to correct a release, only appended to.
   toolchain without suppressing either gate.
 - Advances every SDK together so all registries and source tags remain on the
   same immutable release train; non-Python wire behavior is unchanged.
+- Makes the Kotlin and Android workflows honest source-preview verification:
+  no release credentials, staging uploads, false green publishes, or doomed
+  waits for artifacts outside the supported registry set.
 
 ## Coordinated SDK release — 2.2.0 — 2026-08-31
 

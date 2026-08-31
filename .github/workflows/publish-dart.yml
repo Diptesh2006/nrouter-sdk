@@ -59,5 +59,6 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 conformance/check_conformance.py
 
-      - name: Dry run publish
-        run: dart pub publish --dry-run
+      - name: Verify source-only publication guard
+        run: |
+          grep -Fx 'publish_to: none' pubspec.yaml

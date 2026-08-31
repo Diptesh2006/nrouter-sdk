@@ -5,28 +5,28 @@ All ten SDKs use one coordinated release version. The canonical value is
 manifest, lockfile, Swift/Go release marker, Android Kotlin dependency, or Go
 major module path that differs from it.
 
-One workflow per published language, all merge-triggered:
+Three supported registry packages publish from merge-triggered workflows:
 
 | package / target | registry | workflow | version lives in |
 |---|---|---|---|
 | `@nrouter_ai/sdk` (TypeScript / JS) | [npmjs.org](https://www.npmjs.com/package/@nrouter_ai/sdk) | `.github/workflows/publish-npm.yml` | `sdks/js/package.json` |
 | `nrouter-sdk` (Python) | [pypi.org](https://pypi.org/project/nrouter-sdk/) | `.github/workflows/publish-pypi.yml` | `sdks/python/pyproject.toml` |
 | `ai.nrouter:nrouter-sdk` (Java) | [Maven Central](https://central.sonatype.com/) | `.github/workflows/publish-maven.yml` | `sdks/java/pom.xml` |
-| `ai.nrouter:nrouter-sdk-kotlin` (Kotlin) | [Maven Central / Sonatype](https://central.sonatype.com/) | `.github/workflows/publish-kotlin.yml` | `sdks/kotlin/gradle.properties` |
-| `ai.nrouter:nrouter-sdk-android` (Android) | [Maven Central](https://central.sonatype.com/) | `.github/workflows/publish-android.yml` | `sdks/android/gradle.properties` |
-| `NRouter` (Swift) | [Swift Package Index](https://swiftpackageindex.com/) | `.github/workflows/publish-swift.yml` | `sdks/swift/VERSION` + bare SemVer tag |
-| `nrouter` (Rust) | [crates.io](https://crates.io/crates/nrouter) | `.github/workflows/publish-rust.yml` | `sdks/rust/Cargo.toml` |
-| `github.com/nRouterAI/nrouter-sdk/sdks/go/v2` (Go) | [proxy.golang.org](https://proxy.golang.org/) | `.github/workflows/publish-go.yml` | `sdks/go/VERSION` + tag `sdks/go/v*` |
-| `nrouter` (Dart) | [pub.dev](https://pub.dev/packages/nrouter) | `.github/workflows/publish-dart.yml` | `sdks/dart/pubspec.yaml` |
-| `nrouter` (R) | [CRAN / R-universe](https://nrouterai.r-universe.dev/nrouter) | `.github/workflows/publish-r.yml` | `sdks/r/DESCRIPTION` |
+
+The other SDKs keep the same version but use source distribution:
+
+| target | distribution | verification |
+|---|---|---|
+| Kotlin / Android / Rust / Dart | source checkout | their `publish-*` workflow builds and packages only |
+| Swift | bare SemVer git tag | `.github/workflows/publish-swift.yml` |
+| Go | `sdks/go/v*` git tag | `.github/workflows/publish-go.yml` |
+| R | [R-universe public preview](https://nrouterai.r-universe.dev/nrouter) | `.github/workflows/publish-r.yml` |
 
 ## To release
 
 Bump the canonical version and every manifest together, then merge to `main`.
-The shared gate makes a partial bump impossible. Kotlin publishes before
-Android; the Android workflow waits until Central serves the matching Kotlin
-POM. After all hosted workflows are green, create the Swift and Go tags from
-that exact commit.
+The shared gate makes a partial bump impossible. After all hosted workflows are
+green, create the Swift and Go tags from that exact commit.
 
 ```bash
 $EDITOR spec/nrouter-sdk-spec.json    # "version": "2.2.1"
@@ -36,8 +36,9 @@ $EDITOR sdks/java/pom.xml             # <version>2.2.1</version>
 # ...open a PR, get it merged...
 ```
 
-The workflow then runs the tests and the cross-SDK conformance gate, and
-publishes only if that version is not already on the registry.
+The supported-package workflows run tests and conformance, then publish only if
+that version is not already on their registry. Preview workflows stop after
+build, package, and conformance verification.
 
 **A merge that does not change the version publishes nothing.** That is what
 makes merge-triggered safe: registry versions are immutable, so re-running on
@@ -49,7 +50,6 @@ the no-change case into a quiet green no-op instead.
 | secret | purpose |
 |---|---|
 | `PYPI_API_TOKEN` | PyPI project token for `nrouter-sdk` |
-| `CRATES_IO_TOKEN` | crates.io API token for `nrouter` crate |
 | `CENTRAL_USERNAME` | Sonatype Central Portal token username |
 | `CENTRAL_PASSWORD` | Sonatype Central Portal token password |
 | `GPG_PRIVATE_KEY` | ASCII-armored private signing key |

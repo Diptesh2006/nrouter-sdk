@@ -2,7 +2,6 @@ plugins {
     kotlin("jvm") version "2.0.21"
     `java-library`
     `maven-publish`
-    signing
 }
 
 kotlin {
@@ -42,19 +41,6 @@ tasks.withType<org.gradle.api.publish.tasks.GenerateModuleMetadata>().configureE
 tasks.test { useJUnitPlatform() }
 
 publishing {
-    repositories {
-        maven {
-            name = "central"
-            // Sonatype's Central Portal OSSRH-compatible endpoint. Without a
-            // repositories block Gradle generates no remote publish task at
-            // all, so `./gradlew publish` succeeds having uploaded nothing.
-            url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
-            credentials {
-                username = System.getenv("SONATYPE_USERNAME")
-                password = System.getenv("SONATYPE_PASSWORD")
-            }
-        }
-    }
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
@@ -91,17 +77,5 @@ publishing {
                 }
             }
         }
-    }
-}
-
-// Signing is required by Maven Central and skipped everywhere else, so a local
-// `gradle build` never asks for a key it has no reason to need.
-signing {
-    setRequired { gradle.taskGraph.hasTask("publish") }
-    val key = System.getenv("SIGNING_KEY")
-    val password = System.getenv("SIGNING_PASSWORD")
-    if (key != null && password != null) {
-        useInMemoryPgpKeys(key, password)
-        sign(publishing.publications["maven"])
     }
 }

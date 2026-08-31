@@ -1,22 +1,17 @@
 # nRouter SDK for Dart & Flutter
 
-[![pub.dev](https://img.shields.io/pub/v/nrouter?logo=dart&label=nrouter)](https://pub.dev/packages/nrouter)
-
 One API key for models across six provider clouds. One dependency (`http`), so
 the same code runs on Flutter mobile, desktop, **web**, and the plain Dart VM.
 
-## Installation
+## Source installation
+
+Dart is a source preview and declares `publish_to: none`. Use a path dependency
+from an application beside a checkout of this repository:
 
 ```yaml
 dependencies:
-  nrouter: ^2.2.1
-```
-
-Or install via CLI:
-```bash
-dart pub add nrouter
-# or for Flutter:
-flutter pub add nrouter
+  nrouter:
+    path: ../nrouter-sdk/sdks/dart
 ```
 
 ## Authentication & Setup

@@ -2,12 +2,19 @@
 
 One API key for models across six provider clouds, packaged as an AAR.
 
-[![Maven Central](https://img.shields.io/maven-central/v/ai.nrouter/nrouter-sdk-android?label=Maven%20Central)](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-android)
+## Source installation
 
-## Installation
+Android is a source preview, not a Maven Central release. Build the same-version
+Kotlin core and Android AAR into your local Maven cache first:
+
+```bash
+cd sdks/kotlin && ./gradlew clean check publishToMavenLocal
+cd ../android && ./gradlew clean build publishToMavenLocal
+```
 
 ```kotlin
 // app/build.gradle.kts
+repositories { mavenLocal() }
 dependencies {
     implementation("ai.nrouter:nrouter-sdk-android:2.2.1")
 }
@@ -107,8 +114,7 @@ export ANDROID_HOME=$HOME/Library/Android/sdk    # or set sdk.dir in local.prope
 ./gradlew build          # compile + lint + Robolectric tests + AAR
 ```
 
-Publishing — **and the ordering rule that the core must be on Central first** —
-is in [PUBLISHING.md](PUBLISHING.md).
+The source-distribution contract is in [PUBLISHING.md](PUBLISHING.md).
 
 ## How guardrails, budgets and routing work
 

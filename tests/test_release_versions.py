@@ -85,15 +85,21 @@ def test_sdk_version_2_go_module_path_carries_the_release_major() -> None:
         ), f"Go {version} requires a /v{major} module path; got {module}"
 
 
-def test_sdk_version_3_android_publish_waits_for_matching_kotlin_core() -> None:
-    workflow = (ROOT / ".github/workflows/publish-android.yml").read_text()
-    wait_step = workflow.find("- name: Wait for matching Kotlin core on Maven Central")
-    publish_step = workflow.find("- name: Publish to Maven Central")
+def test_sdk_version_3_source_only_workflows_cannot_publish() -> None:
+    """Unsupported previews must verify packages without registry credentials."""
+    for sdk in ("kotlin", "android"):
+        workflow = (ROOT / f".github/workflows/publish-{sdk}.yml").read_text()
+        assert "publishToMavenLocal" in workflow
+        assert "secrets." not in workflow, f"{sdk} workflow accepts release credentials"
+        assert "Publish to Maven Central" not in workflow
+        assert "Already published?" not in workflow
+        assert "Wait for matching Kotlin core on Maven Central" not in workflow
 
-    assert (
-        wait_step >= 0
-    ), "Android can publish before its same-version Kotlin core exists"
-    assert (
-        wait_step < publish_step
-    ), "the Kotlin availability gate must precede publication"
-    assert "nrouter-sdk-kotlin-$VERSION.pom" in workflow
+    for sdk in ("kotlin", "android"):
+        build = (ROOT / f"sdks/{sdk}/build.gradle.kts").read_text()
+        assert "ossrh-staging-api.central.sonatype.com" not in build
+        assert "signing {" not in build
+
+    with (ROOT / "sdks/rust/Cargo.toml").open("rb") as handle:
+        assert tomllib.load(handle)["package"]["publish"] is False
+    assert _matched(ROOT / "sdks/dart/pubspec.yaml", r"^publish_to:\s*([^\s]+)$") == "none"

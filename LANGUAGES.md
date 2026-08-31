@@ -536,7 +536,7 @@ Console.WriteLine(response.Content[0].Text);
 
 ```toml
 [dependencies]
-nrouter = "2.1"
+nrouter = { path = "sdks/rust" } # from a checkout of this repository
 ```
 
 ```rust
@@ -603,6 +603,7 @@ async fn main() {
 
 ```kotlin
 // build.gradle.kts
+repositories { mavenLocal() }
 implementation("ai.nrouter:nrouter-sdk-kotlin:2.2.1")
 ```
 
@@ -701,7 +702,8 @@ print(result.choices[0].message.content ?? "")
 
 ```yaml
 dependencies:
-  nrouter: ^2.2.1
+  nrouter:
+    path: sdks/dart # from a checkout of this repository
 ```
 
 ```dart

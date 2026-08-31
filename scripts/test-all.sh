@@ -76,7 +76,7 @@ step "Swift"
 (cd "$ROOT/sdks/swift" && swift test && swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors)
 
 step "Dart"
-(cd "$ROOT/sdks/dart" && dart analyze && dart test && dart pub publish --dry-run)
+(cd "$ROOT/sdks/dart" && dart analyze && dart test && grep -Fx 'publish_to: none' pubspec.yaml)
 
 step "R"
 (cd "$ROOT/sdks/r" && Rscript -e 'testthat::test_local(".", reporter="summary")')

@@ -9,14 +9,20 @@ is world-readable. Treat every file as published.
 **Ten SDKs exist here; THREE are registry-released and supported.** Work that
 ships as a supported package goes to `sdks/{js,python,java}`. Swift and Go also
 have immutable source-resolution tags, but no registry release or support
-commitment. The remaining five — `{kotlin,android,rust,dart,r}` — build from
-this repo and are held to the same conformance gate without a registry release.
+commitment. R is distributed as a public preview through R-universe; that makes
+it globally installable but does not add it to the supported set. The remaining
+four — `{kotlin,android,rust,dart}` — build from this repo without a registry
+release. All ten remain subject to the same conformance gate.
 
 | supported | registry | package |
 |---|---|---|
 | `sdks/js` | npm | `@nrouter_ai/sdk` |
 | `sdks/python` | PyPI | `nrouter-sdk` |
 | `sdks/java` | Maven Central | `ai.nrouter:nrouter-sdk` |
+
+Public preview distribution: `sdks/r` is available from
+`https://nrouterai.r-universe.dev/nrouter` as package `nrouter`. Preview publication is
+not a support commitment.
 
 Derive the live versions; never quote one from prose:
 

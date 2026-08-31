@@ -2,6 +2,8 @@
 
 [![npm](https://img.shields.io/npm/v/%40nrouter_ai%2Fsdk?logo=npm&label=%40nrouter_ai%2Fsdk)](https://www.npmjs.com/package/@nrouter_ai/sdk)
 [![PyPI](https://img.shields.io/pypi/v/nrouter-sdk?logo=pypi&logoColor=white&label=nrouter-sdk)](https://pypi.org/project/nrouter-sdk/)
+[![R-universe](https://nrouterai.r-universe.dev/nrouter/badges/version)](https://nrouterai.r-universe.dev/nrouter)
+[![Go Reference](https://pkg.go.dev/badge/github.com/nRouterAI/nrouter-sdk/sdks/go.svg)](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go)
 [![Socket](https://badge.socket.dev/npm/package/@nrouter_ai/sdk/latest)](https://socket.dev/npm/package/@nrouter_ai/sdk)
 [![npm publish](https://github.com/nRouterAI/nrouter-sdk/actions/workflows/publish-npm.yml/badge.svg)](https://github.com/nRouterAI/nrouter-sdk/actions/workflows/publish-npm.yml)
 [![PyPI publish](https://github.com/nRouterAI/nrouter-sdk/actions/workflows/publish-pypi.yml/badge.svg)](https://github.com/nRouterAI/nrouter-sdk/actions/workflows/publish-pypi.yml)
@@ -145,8 +147,9 @@ but Dart also resolve `NROUTER_API_KEY` (Dart requires an explicit key — `dart
 not exist in a Flutter web build, so an environment fallback would silently resolve to
 nothing):
 
-> **Published status is a fact, not an intention.** Only the packages marked
-> PUBLISHED below resolve today. The rest are complete and
+> **Published status is a fact, not an intention.** Packages marked PUBLISHED
+> or PUBLIC PREVIEW below resolve today. A public preview is not a support
+> commitment. The rest are complete and
 > tested in this repo but not yet on their registry, so their install command
 > is deliberately not advertised — build from source until each is released.
 > Each SDK's `PUBLISHING.md` has the release procedure.
@@ -160,7 +163,7 @@ nothing):
 | **Swift** | SwiftPM, this repo's URL | ✅ git tag `2.1.1` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
 | **Rust** | Build from `sdks/rust` | ⛔ source preview | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
 | **Dart / Flutter** | Build from `sdks/dart` | ⛔ source preview | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
-| **R** | `remotes::install_github(..., subdir="sdks/r")` | ✅ source install | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
+| **R** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | 🧪 PUBLIC PREVIEW ([R-universe](https://nrouterai.r-universe.dev/nrouter)) | [`sdks/r/`](sdks/r/) · [nrouter](https://nrouterai.r-universe.dev/nrouter) | ✅ 9 classed conditions | ✅ 13 headers |
 | **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1` | ✅ git tag `sdks/go/v1.0.1` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
 
 Verify any row rather than trusting it:
@@ -176,6 +179,7 @@ curl -s https://repo1.maven.org/maven2/ai/nrouter/ | grep -oE 'href="[^"]+"'
 # Go has no registry: proxy.golang.org serves whatever a git tag points at, and
 # it case-encodes the path (each uppercase letter becomes '!' + lowercase).
 curl -s https://proxy.golang.org/github.com/n!router!a!i/nrouter-sdk/sdks/go/@v/list
+curl -s https://nrouterai.r-universe.dev/src/contrib/PACKAGES | grep -A4 '^Package: nrouter$'
 ```
 
 Java keeps its vendor-compatible OpenAI factory and adds a Java 11 native HTTP
@@ -294,7 +298,7 @@ example for any of these without first adding the route to the gateway and the s
 | **TypeScript / JS (branded)** | `npm install @nrouter_ai/sdk` | [`sdks/js/`](sdks/js/) · [`examples/hello-world/typescript.ts`](examples/hello-world/typescript.ts), [`javascript.js`](examples/hello-world/javascript.js) |
 | **Java (branded)** | Maven `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) · [`examples/hello-world/java.java`](examples/hello-world/java.java) |
 | **Rust (branded)** | Build from `sdks/rust` | [`sdks/rust/`](sdks/rust/) · [`examples/hello-world/rust.rs`](examples/hello-world/rust.rs) |
-| **R (branded)** | `remotes::install_github(..., subdir = "sdks/r")` | [`sdks/r/`](sdks/r/) · [`examples/hello-world/r.R`](examples/hello-world/r.R) |
+| **R (branded)** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | [`sdks/r/`](sdks/r/) · [`examples/hello-world/r.R`](examples/hello-world/r.R) |
 | **Node.js / TypeScript (plain openai)** | `npm install openai` | [`examples/node.ts`](examples/node.ts) |
 | **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1`, or plain `openai-go` | [`examples/go.go`](examples/go.go) |
 | **Java (plain openai-java)** | `com.openai:openai-java` | [`examples/java.java`](examples/java.java) |
@@ -363,7 +367,7 @@ nrouter-sdk/
 │   ├── rust/                        ← Source-preview Rust SDK
 │   ├── dart/                        ← Source-preview Dart/Flutter SDK
 │   ├── go/                          ← Branded SDK → tagged Go module
-│   └── r/                           ← Branded SDK → remotes::install_github(...)
+│   └── r/                           ← Branded SDK → R-universe public preview
 └── examples/
     ├── curl.sh                      ← cURL
     ├── node.ts                      ← Node.js / TypeScript (plain openai)

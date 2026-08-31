@@ -12,7 +12,7 @@ One workflow per published language, all merge-triggered:
 | `nrouter` (Rust) | [crates.io](https://crates.io/crates/nrouter) | `.github/workflows/publish-rust.yml` | `sdks/rust/Cargo.toml` |
 | `github.com/nRouterAI/nrouter-sdk/sdks/go` (Go) | [proxy.golang.org](https://proxy.golang.org/) | `.github/workflows/publish-go.yml` | `sdks/go/go.mod` (tag `sdks/go/v*`) |
 | `nrouter` (Dart) | [pub.dev](https://pub.dev/packages/nrouter) | `.github/workflows/publish-dart.yml` | `sdks/dart/pubspec.yaml` |
-| `nrouter` (R) | [CRAN / R-universe](https://nrouterai.r-universe.dev) | `.github/workflows/publish-r.yml` | `sdks/r/DESCRIPTION` |
+| `nrouter` (R) | [CRAN / R-universe](https://nrouterai.r-universe.dev/nrouter) | `.github/workflows/publish-r.yml` | `sdks/r/DESCRIPTION` |
 
 ## To release
 

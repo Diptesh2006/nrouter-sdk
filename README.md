@@ -48,6 +48,19 @@ Claude models because those are the models currently live through the gateway.
 Other provider routes may exist in the SDK contract, but examples should use a
 model returned by your own `/v1/models` response before spending.
 
+## Authentication & API Keys
+
+All nRouter SDKs automatically read your API key from the `NROUTER_API_KEY` environment variable:
+
+```bash
+# 1. Get your API key from https://nrouter.ai/dashboard/keys
+export NROUTER_API_KEY="sk-nrouter-your-api-key-here"
+```
+
+All API keys must start with the `sk-nrouter-` prefix. You can also pass the key explicitly in code via the `apiKey` / `api_key` parameter in any SDK constructor.
+
+---
+
 ## Quick Start
 
 ### TypeScript / JavaScript

@@ -33,6 +33,14 @@ Or in Xcode: **File → Add Package Dependencies** and paste the URL.
 | watchOS | 8 |
 | visionOS | 1 |
 
+## Authentication & Setup
+
+Set your API key in your environment (macOS/CLI) or pass it explicitly:
+
+```bash
+export NROUTER_API_KEY="sk-nrouter-your-api-key-here"
+```
+
 ## Use it
 
 ```swift

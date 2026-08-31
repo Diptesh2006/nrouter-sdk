@@ -5,10 +5,29 @@
 One API key for models across six provider clouds. One dependency (`http`), so
 the same code runs on Flutter mobile, desktop, **web**, and the plain Dart VM.
 
+## Installation
+
 ```yaml
 dependencies:
   nrouter: ^2.1.1
 ```
+
+Or install via CLI:
+```bash
+dart pub add nrouter
+# or for Flutter:
+flutter pub add nrouter
+```
+
+## Authentication & Setup
+
+Pass your API key to the `NRouter` constructor:
+
+```dart
+final client = NRouter(apiKey: 'sk-nrouter-your-api-key-here');
+```
+
+> **Why explicit apiKey is required:** `Platform.environment` requires `dart:io`, which does not exist in Flutter web builds (and is empty on mobile). For Flutter apps, mint a short-lived key on your backend and pass it to the constructor. In plain Dart VM CLI tools, you can pass `Platform.environment['NROUTER_API_KEY']!`.
 
 ## Use it
 

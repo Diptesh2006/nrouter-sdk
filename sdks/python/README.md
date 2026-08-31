@@ -1,255 +1,331 @@
-# nRouter SDKs
+# nRouter Python SDK
 
-SDKs for the [nRouter](https://nrouter.ai) LLM gateway — one API key for models across six
-provider clouds. One key, one bill,
-the live multi-provider catalog, built-in guardrails, and prompt management. The exact current
-models are published at [nrouter.ai/api/public/models](https://nrouter.ai/api/public/models).
+[![PyPI](https://img.shields.io/pypi/v/nrouter-sdk?logo=pypi&logoColor=white&label=nrouter-sdk)](https://pypi.org/project/nrouter-sdk/)
+[![Python Versions](https://img.shields.io/pypi/pyversions/nrouter-sdk.svg)](https://pypi.org/project/nrouter-sdk/)
+[![PyPI publish](https://github.com/nRouterAI/nrouter-sdk/actions/workflows/publish-pypi.yml/badge.svg)](https://github.com/nRouterAI/nrouter-sdk/actions/workflows/publish-pypi.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-As of 2026-08-29, the runnable examples use Anthropic Claude models because
-those are the models currently live through the gateway. Check
-`client.models.list()` with your key before choosing another model.
+The official Python client library for the [nRouter](https://nrouter.ai) LLM gateway.
 
-## SDKs
+One API key for models across six provider clouds — OpenAI, Anthropic, AWS Bedrock, Google Vertex AI, Azure Foundry, and Alibaba Cloud. Features built-in automatic cost tracking (`x-nr-*` metadata capture), guardrails, response caching, prompt templates, and typed exception handling.
 
-| Language | Package | Install | Status |
-|----------|---------|---------|--------|
-| **Python** | `nrouter-sdk` | `pip install nrouter-sdk` | **Published** on PyPI — imports as `nroutersdk` |
-| **JavaScript / TypeScript** | `@nrouter_ai/sdk` | `npm install @nrouter_ai/sdk` | **Published** on npm |
-| **Java** | `ai.nrouter:nrouter-sdk` | Maven `ai.nrouter:nrouter-sdk` | **Published** on Maven Central |
-| **Kotlin** | `ai.nrouter:nrouter-sdk-kotlin` | `implementation("ai.nrouter:nrouter-sdk-kotlin:2.1.0")` | **Published** on Maven Central |
-| **Android** | `ai.nrouter:nrouter-sdk-android` | `implementation("ai.nrouter:nrouter-sdk-android:2.1.0")` | **Published** on Maven Central |
-| **Rust** | `nrouter` | `cargo add nrouter` | **Published** on crates.io |
-| **Dart / Flutter** | `nrouter` | `dart pub add nrouter` | **Published** on pub.dev |
-| **Go** | `github.com/nRouterAI/nrouter-sdk/sdks/go` | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1` | **Published** via Go proxy |
-| **R** | `nrouter` | `install.packages("nrouter", ...)` | **Public Preview** on R-universe |
-| **cURL** | none needed | built in | **Ready** — see `examples/curl.sh` |
+---
 
-**Until a branded SDK ships for your language, use the stock OpenAI SDK** pointed at
-`https://api.nrouter.ai/v1` — that is the supported path and it is what every file under
-`examples/` demonstrates.
+## Installation
 
-## Architecture
-
-Every SDK is a thin wrapper around the language's OpenAI SDK. The magic happens server-side.
-
-```
-spec/nrouter-sdk-spec.json          ← Single source of truth
-    ↓
-sdks/
-└── python/                       ← pip install nrouter-sdk  (the only PUBLISHED one)
-
-(planned, not built: node/ go/ java/ ruby/ php/ — see the status table above)
-```
-
-## What Every SDK Does (Same Features, Every Language)
-
-1. **Pre-configured** — `base_url` and `api_key` (from `NROUTER_API_KEY`) set automatically
-2. **Auto-captures metadata** — `last_response` populated from the gateway's canonical `x-nr-*` cost, model, token, request, and limit headers
-3. **Typed errors** — `nRouterGuardrailBlockedError`, `nRouterCreditError`, `nRouterRateLimitError`, `nRouterAuthenticationError`, `nRouterNotFoundError`, `nRouterRequestError`, `nRouterServiceError` (not a generic 400/401/402/404/429/503)
-4. **Blocks unsupported endpoints** — `files`, `fine_tuning`, batches, and other unmounted resources give clear errors, not confusing 404s
-5. **Anthropic wire on the same key** — `messages.create()` and `messages.count_tokens()`
-6. **Prompt template override** — `nrouter_prompt_template_id` + `nrouter_prompt_variables` per request
-
-## Keeping SDKs in Sync
-
-All SDKs are driven by `spec/nrouter-sdk-spec.json`:
-
-```json
-{
-  "version": "2.0.0",
-  "response_headers": { "x-nr-request-cost": { "type": "float" }, ... },
-  "errors": { "guardrail_blocked": { "http": 400, "class": "nRouterGuardrailBlockedError" }, ... },
-  "unsupported_endpoints": { "files": "...", "fine_tuning": "...", ... }
-}
-```
-
-**When the backend changes:**
-1. Update `spec/nrouter-sdk-spec.json`
-2. Re-publish the Python SDK
-
-(There is no CI that "regenerates + publishes all SDKs" — only the Python package exists, and
-its release is manual. Do not describe an automated multi-language pipeline that isn't wired.)
-
-## Quick Start
-
-Only the Python snippet below is runnable today. The rest show the intended shape of branded
-SDKs that have **not** been built — do not paste them into a customer doc.
-
-### Python
-```python
-from nroutersdk import nRouter
-client = nRouter()
-response = client.chat.completions.create(model="anthropic/claude-sonnet-4-5-20250929", messages=[{"role": "user", "content": "Hello!"}])
-print(f"Cost: ${client.last_response.cost}")
-print(client.last_response.response_cache)      # "hit", "miss", or None
-print(client.last_response.response_cache_age)  # seconds on hits, otherwise None
-```
-
-### Anthropic Messages
-```python
-message = client.messages.create(
-    model="anthropic/claude-sonnet-4-5-20250929",
-    messages=[{"role": "user", "content": "Hello!"}],
-    max_tokens=256,
-)
-print(message["content"][0]["text"])
-print(f"Cost: ${client.last_response.cost}")
-```
-
-Buffered Messages calls are supported in both `nRouter` and `AsyncnRouter`. `stream=True` refuses
-explicitly until the branded SDK has a tested SSE parser; use the official Anthropic-compatible
-HTTP endpoint directly if you need streaming today.
-
-The Python client also exposes every mounted OpenAI-compatible namespace: chat completions,
-legacy completions, Responses, embeddings, image generation, speech, transcription, translation,
-model list/retrieve, and the video create/retrieve/download collection. `messages.count_tokens()`
-is available in both sync and async clients. Binary audio/video responses remain bytes; multipart
-audio uploads remain multipart; large JSON message bodies are not truncated by the wrapper.
-
-### Node.js
-```typescript
-import { nRouter } from "@nrouter_ai/sdk";
-const client = new nRouter();
-const res = await client.chat.completions.create({ model: "anthropic/claude-sonnet-4-5-20250929", messages: [{ role: "user", content: "Hello!" }] });
-```
-
-### Go
-```go
-client := nrouter.New()
-resp, _ := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{...})
-fmt.Println(client.LastResponse.Cost)
-```
-
-### Ruby
-```ruby
-client = nRouter::Client.new
-response = client.chat(parameters: { model: "anthropic/claude-sonnet-4-5-20250929", messages: [{ role: "user", content: "Hello!" }] })
-```
-
-### PHP
-```php
-$client = new \nRouter\nRouter();
-$response = $client->chat()->create([...]);
-```
-
-### Java
-```java
-nRouter nrouter = new nRouter();
-ChatCompletion resp = nrouter.openai().chat().completions().create(...);
-```
-
-### cURL
 ```bash
-curl https://api.nrouter.ai/v1/chat/completions \
-  -H "Authorization: Bearer $NROUTER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"anthropic/claude-sonnet-4-5-20250929","messages":[{"role":"user","content":"Hello!"}]}'
+pip install nrouter-sdk
 ```
 
 ---
 
-## How We Keep SDKs Updated
+## Authentication & Setup
 
-### Industry Standard (What OpenAI, Stripe, Anthropic Do)
+The SDK automatically reads your API key from the `NROUTER_API_KEY` environment variable.
 
-| Company | Approach | Tool |
-|---------|----------|------|
-| **OpenAI** | OpenAPI spec → generated SDKs | [Stainless](https://stainless.com) |
-| **Anthropic** | OpenAPI spec → generated SDKs | [Stainless](https://stainless.com) |
-| **Stripe** | OpenAPI spec → generated SDKs | Custom generator |
-| **AWS** | Smithy model → generated SDKs | [Smithy](https://smithy.io) |
-| **Google Cloud** | Protobuf → generated SDKs | [gapic-generator](https://github.com/googleapis/gapic-generator) |
-| **Twilio** | OpenAPI spec → generated SDKs | Custom generator |
-
-**The pattern is universal:** one spec file → code generation → publish.
-
-### Our Approach
-
-```
-┌─────────────────────────────────────────┐
-│  spec/nrouter-sdk-spec.json                │   ← YOU EDIT THIS
-│  (headers, errors, APIs, version)       │
-└──────────────────┬──────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────┐
-│  scripts/generate-sdks.py               │   ← READS SPEC
-│  (validates + generates SDK code)       │
-│                                         │
-│  For each language:                     │
-│    1. Read spec                         │
-│    2. Generate response meta class      │
-│    3. Generate error classes            │
-│    4. Generate unsupported blockers     │
-│    5. Generate nRouter API helpers         │
-│    6. Write to sdks/{lang}/             │
-└──────────────────┬──────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────┐
-│  CI Pipeline (GitHub Actions)           │
-│                                         │
-│  On spec change:                        │
-│    1. Regenerate all SDKs               │
-│    2. Run tests per language            │
-│    3. Version bump (from spec.version)  │
-│    4. Publish:                          │
-│       PyPI, npm, Maven, RubyGems,      │
-│       Packagist, Go module tag          │
-└─────────────────────────────────────────┘
+### 1. Set your environment variable
+```bash
+# Get your API key from https://nrouter.ai/dashboard/keys
+export NROUTER_API_KEY="sk-nrouter-your-api-key-here"
 ```
 
-### What Triggers an Update
+### 2. (Optional) Pass the key explicitly in code
+```python
+from nroutersdk import nRouter
 
-| Backend Change | Spec Update | SDK Impact |
-|----------------|-------------|------------|
-| New response header | Add to `response_headers` | All SDKs parse new header |
-| New error code | Add to `errors` | All SDKs get new error class |
-| New nRouter API endpoint | Add to `nrouter_apis` | All SDKs get new method |
-| New unsupported block | Add to `unsupported_endpoints` | All SDKs block it |
-| Version bump | Change `version` | All packages publish same version |
-| OpenAI adds new method | Nothing — inherited automatically | SDKs get it for free |
+client = nRouter(api_key="sk-nrouter-your-api-key-here")
+```
 
-### What DOESN'T Need an Update
+All API keys must start with the `sk-nrouter-` prefix.
 
-| Change | Why No SDK Update |
-|--------|-------------------|
-| New model added | Just use `model="new-model-name"` — no SDK change |
-| Guardrail config change | Dashboard config, not SDK |
-| Prompt template change | Dashboard config, not SDK |
-| Pricing change | Server-side; per-request cost arrives on `x-nr-request-cost` |
-| Rate limit change | Server-side enforcement |
-| New provider key | Server-side routing |
+---
 
-This is the key advantage of the thin-wrapper approach: **90% of product changes need zero SDK updates.**
+## Quick Start
 
-## How guardrails, budgets and routing work
+### Synchronous Client (`nRouter`)
 
-They are configured in the dashboard and enforced at the **gateway**, not in
-this package. The useful guarantee is not that they are always on — it is that
-**whatever you have enabled cannot be bypassed by a client**, this one
-included, and behaves identically from every nRouter SDK and from raw `curl`.
+```python
+from nroutersdk import nRouter
 
-- [Guardrails](https://nrouter.ai/docs/guides/guardrails) — PII redaction,
-  injection protection, secret and keyword scanning, pre-call and post-call.
-  Which ones run is resolved per request: the organization's guardrail switch
-  first, then the narrowest applicable assignment wins across
-  key > team > org > default, and a winner disabled at that scope does not run.
-- [Budget controls](https://nrouter.ai/docs/guides/budget-controls) — spend
-  limits per key, team and organization.
-- [Observability](https://nrouter.ai/docs/guides/observability) — cost and usage
-  on billable calls. Free routes are genuinely free and carry no
-  `x-nr-request-cost`: `/v1/messages/count_tokens`, and video polling and
-  content retrieval.
+# Automatically reads NROUTER_API_KEY from environment
+client = nRouter()
 
-[Smart Router aliases and fallback chains](https://nrouter.ai/docs/guides/router-settings)
-carry two conditions worth knowing before you rely on failover you have not
-enabled:
+response = client.chat.completions.create(
+    model="claude-sonnet-4-5-20250929",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello from Python!"},
+    ],
+)
 
-- **Opt-in by what you put in `model`.** An alias gets the strategy and its
-  chain; a concrete model is never re-routed and inherits no hidden fallback.
-- **Text wires only** — chat completions, responses, messages and legacy
-  completions. Audio, image and video calls take a single-provider route and
-  are not cross-provider Smart Router wires.
-- [Python quickstart](https://nrouter.ai/docs/sdks/python) and the
-  [API reference](https://nrouter.ai/docs/api-reference).
+# Output completion text
+print(response.choices[0].message.content)
+
+# Cost and Request Metadata (captured automatically)
+meta = client.last_response
+print(f"Request ID: {meta.request_id}")
+print(f"Model: {meta.model}")
+if meta.cost is not None:
+    print(f"Cost: ${meta.cost:.6f}")
+else:
+    print(f"Cost: unpriced ({meta.cost_status})")
+```
+
+### Asynchronous Client (`AsyncnRouter`)
+
+```python
+import asyncio
+from nroutersdk import AsyncnRouter
+
+async def main():
+    client = AsyncnRouter()
+
+    response = await client.chat.completions.create(
+        model="claude-sonnet-4-5-20250929",
+        messages=[{"role": "user", "content": "Explain quantum computing in one sentence."}],
+    )
+
+    print(response.choices[0].message.content)
+    print(f"Cost: ${client.last_response.cost}")
+
+asyncio.run(main())
+```
+
+---
+
+## Core Capabilities
+
+### 1. Streaming Responses
+
+Stream completions incrementally using Server-Sent Events (SSE):
+
+```python
+from nroutersdk import nRouter
+
+client = nRouter()
+
+stream = client.chat.completions.create(
+    model="claude-sonnet-4-5-20250929",
+    messages=[{"role": "user", "content": "Write a short poem about routers."}],
+    stream=True,
+)
+
+for chunk in stream:
+    content = chunk.choices[0].delta.content
+    if content:
+        print(content, end="", flush=True)
+print()
+```
+
+### 2. Anthropic Messages API
+
+Use Anthropic's Messages format directly on the exact same `sk-nrouter-` API key:
+
+```python
+from nroutersdk import nRouter
+
+client = nRouter()
+
+message = client.messages.create(
+    model="claude-sonnet-4-5-20250929",
+    messages=[{"role": "user", "content": "Hello via Anthropic Messages!"}],
+    max_tokens=256,
+)
+
+print(message["content"][0]["text"])
+print(f"Cost: ${client.last_response.cost}")
+```
+
+Count tokens before calling:
+```python
+token_count = client.messages.count_tokens(
+    model="claude-sonnet-4-5-20250929",
+    messages=[{"role": "user", "content": "How many tokens is this?"}],
+)
+print(f"Tokens: {token_count['input_tokens']}")
+```
+
+### 3. Response Metadata & Cost Tracking
+
+The gateway emits canonical `x-nr-*` headers with every response. `client.last_response` captures these automatically:
+
+```python
+meta = client.last_response
+
+print("Request ID:        ", meta.request_id)
+print("Exact Cost (USD):  ", meta.cost)
+print("Cost Status:       ", meta.cost_status)        # "exact" or "unpriced"
+print("Served Model:      ", meta.model)
+print("Input Tokens:      ", meta.input_tokens)
+print("Output Tokens:     ", meta.output_tokens)
+print("Total Tokens:      ", meta.total_tokens)
+print("Cache Read Tokens: ", meta.cache_read_tokens)
+print("Cache Write Tokens:", meta.cache_write_tokens)
+print("Gateway Cache:     ", meta.response_cache)     # "hit", "miss", or None
+print("Cache Age (s):     ", meta.response_cache_age) # seconds on hits
+```
+
+> **Note on Cost Accuracy:** Unpriced models return `cost=None` and `cost_status="unpriced"`. Never treat `None` as `$0.00` — free routes (like `/v1/messages/count_tokens`) emit no cost header, while billable inferences always track usage.
+
+### 4. Prompt Templates & Versioning
+
+Pass managed prompt template IDs and variable substitutions directly with requests:
+
+```python
+from nroutersdk import nRouter, prompt_template
+
+client = nRouter()
+
+# Inject template ID and variables
+extra_body = prompt_template(
+    template_id="pt_customer_support_v2",
+    variables={"customer_name": "Alice", "issue_type": "Billing"}
+)
+
+response = client.chat.completions.create(
+    model="claude-sonnet-4-5-20250929",
+    messages=[{"role": "user", "content": "I need help with my account."}],
+    extra_body=extra_body,
+)
+```
+
+### 5. Client-Side Conversation Memory
+
+Safely manage turn history and multi-turn context without leaking tenant headers:
+
+```python
+from nroutersdk import create_memory
+
+memory = create_memory()
+memory.add({"role": "user", "content": "My name is Bob."})
+memory.add({"role": "assistant", "content": "Nice to meet you, Bob!"})
+memory.add({"role": "user", "content": "What is my name?"})
+
+response = client.chat.completions.create(
+    model="claude-sonnet-4-5-20250929",
+    messages=memory.messages(),
+)
+print(response.choices[0].message.content)
+```
+
+### 6. Model Discovery & Smart Routing
+
+List all models currently enabled for your organization:
+
+```python
+models = client.models.list()
+for m in models.data:
+    print(f"Model ID: {m.id}")
+```
+
+#### Smart Router Aliases
+You can specify Smart Router aliases in the `model` parameter to activate automatic fallback and load-balancing chains:
+
+```python
+# Alias routes through configured strategies and failovers
+response = client.chat.completions.create(
+    model="my-production-router",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+```
+
+---
+
+## Error Handling
+
+All gateway refusals are converted into typed exceptions:
+
+```python
+from nroutersdk import (
+    nRouter,
+    nRouterGuardrailBlockedError,
+    nRouterCreditError,
+    nRouterRateLimitError,
+    nRouterAuthenticationError,
+    nRouterNotFoundError,
+    nRouterRequestError,
+    nRouterServiceError,
+    nRouterError,
+)
+
+client = nRouter()
+
+try:
+    response = client.chat.completions.create(
+        model="claude-sonnet-4-5-20250929",
+        messages=[{"role": "user", "content": "Analyze sensitive data..."}],
+    )
+except nRouterGuardrailBlockedError as e:
+    print(f"Request blocked by guardrails: {e}")
+except nRouterCreditError as e:
+    print(f"Insufficient credits: {e}")
+except nRouterRateLimitError as e:
+    print(f"Rate limit exceeded: {e}")
+except nRouterAuthenticationError as e:
+    print(f"Invalid API key: {e}")
+except nRouterNotFoundError as e:
+    print(f"Model not found: {e}")
+except nRouterServiceError as e:
+    print(f"Gateway service unavailable: {e}")
+except nRouterError as e:
+    print(f"General nRouter error: {e}")
+```
+
+| Exception | HTTP Status | Meaning |
+|---|---|---|
+| `nRouterRequestError` | 400 | Malformed request body or parameters |
+| `nRouterGuardrailBlockedError` | 400 | Content blocked by pre-call / post-call guardrail |
+| `nRouterAuthenticationError` | 401 | Invalid or missing `sk-nrouter-` API key |
+| `nRouterCreditError` | 402 | Account has insufficient credits |
+| `nRouterBudgetExceededError` | 402 / 429 | Key, team, or org spend ceiling exceeded |
+| `nRouterNotFoundError` | 404 | Model or endpoint not found |
+| `nRouterRateLimitError` | 429 | RPM or TPM rate limit exceeded |
+| `nRouterServiceError` | 503 | Gateway or upstream provider temporary outage |
+
+---
+
+## Advanced Configuration
+
+### Custom Base URL & Timeouts
+
+```python
+import httpx
+from nroutersdk import nRouter
+
+client = nRouter(
+    base_url="https://api-stage.nrouter.ai/v1",  # Stage gateway
+    timeout=httpx.Timeout(60.0, connect=10.0),
+    max_retries=3,
+)
+```
+
+---
+
+## Supported Endpoints
+
+All endpoints route through `https://api.nrouter.ai/v1`:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/v1/chat/completions` | `client.chat.completions.create()` | OpenAI-compatible chat |
+| `/v1/messages` | `client.messages.create()` | Anthropic-compatible Messages |
+| `/v1/messages/count_tokens` | `client.messages.count_tokens()` | Pre-call token counting |
+| `/v1/completions` | `client.completions.create()` | Legacy text completions |
+| `/v1/embeddings` | `client.embeddings.create()` | Text embeddings |
+| `/v1/images/generations` | `client.images.generate()` | Image generation |
+| `/v1/audio/speech` | `client.audio.speech.create()` | Text-to-Speech (TTS) |
+| `/v1/audio/transcriptions` | `client.audio.transcriptions.create()` | Speech-to-Text (STT) |
+| `/v1/audio/translations` | `client.audio.translations.create()` | Audio translations |
+| `/v1/responses` | `client.responses.create()` | OpenAI Responses API |
+| `/v1/models` | `client.models.list()` | Organization model catalog |
+| `/v1/videos` | `POST /v1/videos` | Video generation jobs |
+
+---
+
+## Documentation & Resources
+
+* [nRouter Documentation](https://nrouter.ai/docs)
+* [API Reference](https://nrouter.ai/docs/api-reference)
+* [Python Quickstart Guide](https://nrouter.ai/docs/sdks/python)
+* [Live Model Catalog](https://nrouter.ai/models)
+* [Dashboard & API Keys](https://nrouter.ai/dashboard/keys)

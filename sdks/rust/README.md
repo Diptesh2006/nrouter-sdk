@@ -5,10 +5,20 @@
 
 One API key for models across six provider clouds.
 
+## Installation
+
 ```toml
 [dependencies]
 nrouter = "2.1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+## Authentication & Setup
+
+Set your API key in the environment:
+
+```bash
+export NROUTER_API_KEY="sk-nrouter-your-api-key-here"
 ```
 
 ## Two entry points, on purpose

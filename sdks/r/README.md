@@ -27,6 +27,14 @@ For a development install directly from the monorepo:
 remotes::install_github("nRouterAI/nrouter-sdk", subdir = "sdks/r")
 ```
 
+## Authentication & Setup
+
+Set your API key in your environment or `.Renviron`:
+
+```r
+Sys.setenv(NROUTER_API_KEY = "sk-nrouter-your-api-key-here")
+```
+
 ## Use it
 
 ```r

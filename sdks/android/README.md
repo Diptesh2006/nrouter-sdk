@@ -4,10 +4,21 @@ One API key for models across six provider clouds, packaged as an AAR.
 
 [![Maven Central](https://img.shields.io/maven-central/v/ai.nrouter/nrouter-sdk-android?label=Maven%20Central)](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-android)
 
+## Installation
+
 ```kotlin
+// app/build.gradle.kts
 dependencies {
     implementation("ai.nrouter:nrouter-sdk-android:2.1.0")
 }
+```
+
+## Authentication & Setup
+
+Pass your API key directly to `NRouterAndroid.create(...)`:
+
+```kotlin
+val client = NRouterAndroid.create(context, "sk-nrouter-your-api-key-here")
 ```
 
 The wire behaviour is the shared [`sdks/kotlin`](../kotlin) artifact — this is

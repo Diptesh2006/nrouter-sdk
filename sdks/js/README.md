@@ -18,6 +18,14 @@ model returned by `client.nrouterModels.list()` for your key.
 npm install @nrouter_ai/sdk
 ```
 
+## Authentication & Setup
+
+The SDK automatically reads your API key from the `NROUTER_API_KEY` environment variable:
+
+```bash
+export NROUTER_API_KEY="sk-nrouter-your-api-key-here"
+```
+
 ## Usage
 
 ```typescript

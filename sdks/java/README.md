@@ -13,6 +13,14 @@ around the official `openai-java` client — same API surface, pre-configured fo
 </dependency>
 ```
 
+## Authentication & Setup
+
+The SDK automatically reads your API key from the `NROUTER_API_KEY` environment variable:
+
+```bash
+export NROUTER_API_KEY="sk-nrouter-your-api-key-here"
+```
+
 ## Usage
 
 ```java

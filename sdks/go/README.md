@@ -10,11 +10,21 @@ audio, images and video.
 
 **Documentation & Package Reference:** [pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go)
 
+## Installation
+
 ```bash
 go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1
 ```
 
-## Use
+## Authentication & Setup
+
+The SDK automatically reads your API key from the `NROUTER_API_KEY` environment variable:
+
+```bash
+export NROUTER_API_KEY="sk-nrouter-your-api-key-here"
+```
+
+## Usage
 
 ```go
 package main

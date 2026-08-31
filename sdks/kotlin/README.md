@@ -5,10 +5,20 @@ wire format, so the bodies are the shapes you already know.
 
 [![Maven Central](https://img.shields.io/maven-central/v/ai.nrouter/nrouter-sdk-kotlin?label=Maven%20Central)](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-kotlin)
 
+## Installation
+
 ```kotlin
 dependencies {
     implementation("ai.nrouter:nrouter-sdk-kotlin:2.1.0")
 }
+```
+
+## Authentication & Setup
+
+The SDK automatically reads your API key from the `NROUTER_API_KEY` environment variable:
+
+```bash
+export NROUTER_API_KEY="sk-nrouter-your-api-key-here"
 ```
 
 Building an Android app? Use [`nrouter-sdk-android`](../android) instead — it

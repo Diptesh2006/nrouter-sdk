@@ -2,6 +2,8 @@
 
 [![npm](https://img.shields.io/npm/v/%40nrouter_ai%2Fsdk?logo=npm&label=%40nrouter_ai%2Fsdk)](https://www.npmjs.com/package/@nrouter_ai/sdk)
 [![PyPI](https://img.shields.io/pypi/v/nrouter-sdk?logo=pypi&logoColor=white&label=nrouter-sdk)](https://pypi.org/project/nrouter-sdk/)
+[![R-universe](https://nrouterai.r-universe.dev/nrouter/badges/version)](https://nrouterai.r-universe.dev/nrouter)
+[![Go Reference](https://pkg.go.dev/badge/github.com/nRouterAI/nrouter-sdk/sdks/go.svg)](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go)
 [![Socket](https://badge.socket.dev/npm/package/@nrouter_ai/sdk/latest)](https://socket.dev/npm/package/@nrouter_ai/sdk)
 [![npm publish](https://github.com/nRouterAI/nrouter-sdk/actions/workflows/publish-npm.yml/badge.svg)](https://github.com/nRouterAI/nrouter-sdk/actions/workflows/publish-npm.yml)
 [![PyPI publish](https://github.com/nRouterAI/nrouter-sdk/actions/workflows/publish-pypi.yml/badge.svg)](https://github.com/nRouterAI/nrouter-sdk/actions/workflows/publish-pypi.yml)
@@ -161,7 +163,7 @@ nothing):
 | **Swift** | SwiftPM, this repo's URL | ✅ git tag `2.1.1` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
 | **Rust** | Build from `sdks/rust` | ⛔ source preview | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
 | **Dart / Flutter** | Build from `sdks/dart` | ⛔ source preview | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
-| **R** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | 🧪 PUBLIC PREVIEW (R-universe) | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
+| **R** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | 🧪 PUBLIC PREVIEW ([R-universe](https://nrouterai.r-universe.dev/nrouter)) | [`sdks/r/`](sdks/r/) · [nrouter](https://nrouterai.r-universe.dev/nrouter) | ✅ 9 classed conditions | ✅ 13 headers |
 | **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1` | ✅ git tag `sdks/go/v1.0.1` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
 
 Verify any row rather than trusting it:

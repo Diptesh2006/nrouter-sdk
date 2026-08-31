@@ -1,11 +1,11 @@
 // nRouter with the Vercel AI SDK.
 //
 // npm install ai @ai-sdk/openai zod
-// npx tsx examples/vercel_ai.ts
+// npx tsx examples/typescript/vercel_ai.ts
 //
 // This example uses the Vercel AI OpenAI provider, so it needs a model that
 // your nRouter key can use on /v1/chat/completions. If your key currently sees
-// only Claude/Anthropic models, use examples/node.ts or @nrouter_ai/sdk
+// only Claude/Anthropic models, use examples/typescript/node.ts or @nrouter_ai/sdk
 // instead; the nRouter SDK translates Claude calls to /v1/messages.
 
 import { createOpenAI } from "@ai-sdk/openai";

@@ -1,7 +1,7 @@
 // nRouter Node.js / TypeScript example.
 //
 // npm install @nrouter_ai/sdk
-// npx tsx examples/node.ts
+// npx tsx examples/typescript/node.ts
 // set NROUTER_API_KEY before running.
 
 import {

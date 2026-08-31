@@ -358,36 +358,33 @@ example for any of these without first adding the route to the gateway and the s
 
 | Language | Install | Example |
 |----------|---------|---------|
-| **Python (branded)** | `pip install nrouter-sdk` | [`sdks/python/`](sdks/python/) · [`examples/01_quickstart.py`](examples/01_quickstart.py), [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb) |
-| **TypeScript / JS (branded)** | `npm install @nrouter_ai/sdk` | [`sdks/js/`](sdks/js/) · [`examples/hello-world/typescript.ts`](examples/hello-world/typescript.ts), [`javascript.js`](examples/hello-world/javascript.js) |
-| **Java (branded)** | `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) · [`examples/hello-world/java.java`](examples/hello-world/java.java) |
-| **Kotlin (branded)** | `ai.nrouter:nrouter-sdk-kotlin` | [`sdks/kotlin/`](sdks/kotlin/) · [`examples/hello-world/kotlin.kt`](examples/hello-world/kotlin.kt) |
+| **Python (branded)** | `pip install nrouter-sdk` | [`sdks/python/`](sdks/python/) · [`examples/python/`](examples/python/), [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb) |
+| **TypeScript / JS (branded)** | `npm install @nrouter_ai/sdk` | [`sdks/js/`](sdks/js/) · [`examples/typescript/quickstart.ts`](examples/typescript/quickstart.ts), [`examples/javascript/quickstart.js`](examples/javascript/quickstart.js) |
+| **Java (branded)** | `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) · [`examples/java/quickstart.java`](examples/java/quickstart.java) |
+| **Kotlin (branded)** | `ai.nrouter:nrouter-sdk-kotlin` | [`sdks/kotlin/`](sdks/kotlin/) · [`examples/kotlin/quickstart.kt`](examples/kotlin/quickstart.kt) |
 | **Android (branded)** | `ai.nrouter:nrouter-sdk-android` | [`sdks/android/`](sdks/android/) |
-| **Rust (branded)** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) · [`examples/hello-world/rust.rs`](examples/hello-world/rust.rs) |
-| **Dart / Flutter (branded)** | `dart pub add nrouter` | [`sdks/dart/`](sdks/dart/) |
-| **R (branded)** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | [`sdks/r/`](sdks/r/) · [`examples/hello-world/r.R`](examples/hello-world/r.R) |
-| **Node.js / TypeScript (plain openai)** | `npm install openai` | [`examples/node.ts`](examples/node.ts) |
-| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1`, or plain `openai-go` | [`examples/go.go`](examples/go.go) |
-| **Java (plain openai-java)** | `com.openai:openai-java` | [`examples/java.java`](examples/java.java) |
-| **Ruby** | `gem install ruby-openai` | [`examples/ruby.rb`](examples/ruby.rb) |
-| **PHP** | `composer require openai-php/client` | [`examples/php.php`](examples/php.php) |
-| **C# / .NET** | `dotnet add package OpenAI` | [`examples/dotnet.cs`](examples/dotnet.cs) |
-| **cURL** | Built-in | [`examples/curl.sh`](examples/curl.sh) |
+| **Rust (branded)** | `cargo add nrouter` | [`sdks/rust/`](sdks/rust/) · [`examples/rust/quickstart.rs`](examples/rust/quickstart.rs) |
+| **Dart / Flutter (branded)** | `dart pub add nrouter` | [`sdks/dart/`](sdks/dart/) · [`examples/dart/quickstart.dart`](examples/dart/quickstart.dart) |
+| **R (branded)** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | [`sdks/r/`](sdks/r/) · [`examples/r/quickstart.R`](examples/r/quickstart.R) |
+| **Node.js / TypeScript (plain openai)** | `npm install openai` | [`examples/typescript/node.ts`](examples/typescript/node.ts) |
+| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1`, or plain `openai-go` | [`examples/go/quickstart.go`](examples/go/quickstart.go) |
+| **Java (plain openai-java)** | `com.openai:openai-java` | [`examples/java/quickstart.java`](examples/java/quickstart.java) |
+| **Ruby** | `gem install ruby-openai` | [`examples/ruby/quickstart.rb`](examples/ruby/quickstart.rb) |
+| **PHP** | `composer require openai-php/client` | [`examples/php/quickstart.php`](examples/php/quickstart.php) |
+| **C# / .NET** | `dotnet add package OpenAI` | [`examples/dotnet/quickstart.cs`](examples/dotnet/quickstart.cs) |
+| **cURL** | Built-in | [`examples/curl/quickstart.sh`](examples/curl/quickstart.sh) |
 
-`examples/hello-world/` holds one minimal script per NON-Python branded SDK (`typescript.ts`,
-`javascript.js`, `java.java`, `rust.rs`, `r.R`) — the first-run smoke test, separate from the
-richer per-framework examples above. Python has no `hello-world` entry; `sdks/python/` and the
-Quick Start snippet above serve that role for Python.
+Every language under `examples/` holds standalone, runnable starter scripts and framework integrations.
 
 ### AI Frameworks
 
 | Framework | Install | Example | What Changes |
 |-----------|---------|---------|-------------|
-| **LangChain** | `pip install langchain-openai` | [`examples/langchain.py`](examples/langchain.py) | `base_url` + `api_key` on `ChatOpenAI` |
-| **LlamaIndex** | `pip install llama-index-llms-openai` | [`examples/llamaindex.py`](examples/llamaindex.py) | `api_base` + `api_key` on `OpenAI` |
-| **Vercel AI SDK** | `npm install ai @ai-sdk/openai` | [`examples/vercel_ai.ts`](examples/vercel_ai.ts) | `baseURL` on `createOpenAI()` |
-| **CrewAI** | `pip install crewai` | [`examples/crewai.py`](examples/crewai.py) | `OPENAI_API_BASE` env var |
-| **AutoGen** | `pip install autogen-agentchat` | [`examples/autogen.py`](examples/autogen.py) | `base_url` in config_list |
+| **LangChain** | `pip install langchain-openai` | [`examples/python/frameworks/langchain.py`](examples/python/frameworks/langchain.py) | `base_url` + `api_key` on `ChatOpenAI` |
+| **LlamaIndex** | `pip install llama-index-llms-openai` | [`examples/python/frameworks/llamaindex.py`](examples/python/frameworks/llamaindex.py) | `api_base` + `api_key` on `OpenAI` |
+| **Vercel AI SDK** | `npm install ai @ai-sdk/openai` | [`examples/typescript/vercel_ai.ts`](examples/typescript/vercel_ai.ts) | `baseURL` on `createOpenAI()` |
+| **CrewAI** | `pip install crewai` | [`examples/python/frameworks/crewai.py`](examples/python/frameworks/crewai.py) | `OPENAI_API_BASE` env var |
+| **AutoGen** | `pip install autogen-agentchat` | [`examples/python/frameworks/autogen.py`](examples/python/frameworks/autogen.py) | `base_url` in config_list |
 
 **Every framework** that supports OpenAI-compatible endpoints works with nRouter. Set `base_url` to `https://api.nrouter.ai/v1` and `api_key` to your `NROUTER_API_KEY`. That's it.
 

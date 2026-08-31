@@ -66,7 +66,7 @@ func main() {
 
 ## Why not just point the OpenAI Go SDK at the gateway
 
-You can, and [`examples/go.go`](../../examples/go.go) shows exactly that — it
+You can, and [`examples/go/quickstart.go`](../../examples/go/quickstart.go) shows exactly that — it
 keeps working and stays supported. The vendor client owns its own transport and
 discards the raw response, so the `x-nr-*` metadata is out of reach without
 `.WithRawResponse()` plumbing at every call site. This SDK exists for the

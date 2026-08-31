@@ -14,12 +14,12 @@ echo "======================================================================"
 # 1. Run Python Demo E2E
 echo ""
 echo ">>> [1/5] Executing Python SDK Demo E2E..."
-python3 examples/demo-e2e-suite.py
+python3 examples/python/demo_e2e_suite.py
 
 # 2. Run TypeScript/Node Demo E2E
 echo ""
 echo ">>> [2/5] Executing TypeScript/JavaScript SDK Demo E2E..."
-node examples/demo-e2e-suite.js
+node examples/typescript/demo_e2e_suite.js
 
 # 3. Run Swift SDK E2E Contract Suite
 echo ""

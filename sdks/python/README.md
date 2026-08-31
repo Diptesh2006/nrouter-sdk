@@ -107,18 +107,18 @@ asyncio.run(main())
 
 | Example Script | Topic | Description |
 |---|---|---|
-| [`01_quickstart.py`](../../examples/01_quickstart.py) | **Quickstart** | Basic chat completion & metadata extraction |
-| [`02_async_concurrency.py`](../../examples/02_async_concurrency.py) | **Async / Concurrency** | Concurrent requests with `asyncio.gather` |
-| [`03_streaming.py`](../../examples/03_streaming.py) | **Streaming** | Server-Sent Events (SSE) token streaming |
-| [`04_anthropic_messages.py`](../../examples/04_anthropic_messages.py) | **Anthropic Messages** | Native Messages format & token counting |
-| [`05_metadata_cost_tracking.py`](../../examples/05_metadata_cost_tracking.py) | **Metadata & Cost** | Deep dive into `x-nr-*` headers |
-| [`06_prompt_templates.py`](../../examples/06_prompt_templates.py) | **Prompt Templates** | Server-side prompt templates & variables |
-| [`07_tool_calling.py`](../../examples/07_tool_calling.py) | **Tool Calling** | Function calling with JSON schema tools |
-| [`08_structured_outputs.py`](../../examples/08_structured_outputs.py) | **Structured Outputs** | Strict JSON object output formatting |
-| [`09_error_handling.py`](../../examples/09_error_handling.py) | **Error Handling** | Typed error handling & guardrail recovery |
-| [`10_conversation_memory.py`](../../examples/10_conversation_memory.py) | **Memory** | Multi-turn memory without header leaks |
-| [`11_embeddings.py`](../../examples/11_embeddings.py) | **Embeddings** | Vector embeddings generation |
-| [`12_multimodal_vision.py`](../../examples/12_multimodal_vision.py) | **Multimodal Vision** | Image inputs via URL or base64 |
+| [`01_quickstart.py`](../../examples/python/01_quickstart.py) | **Quickstart** | Basic chat completion & metadata extraction |
+| [`02_async_concurrency.py`](../../examples/python/02_async_concurrency.py) | **Async / Concurrency** | Concurrent requests with `asyncio.gather` |
+| [`03_streaming.py`](../../examples/python/03_streaming.py) | **Streaming** | Server-Sent Events (SSE) token streaming |
+| [`04_anthropic_messages.py`](../../examples/python/04_anthropic_messages.py) | **Anthropic Messages** | Native Messages format & token counting |
+| [`05_metadata_cost_tracking.py`](../../examples/python/05_metadata_cost_tracking.py) | **Metadata & Cost** | Deep dive into `x-nr-*` headers |
+| [`06_prompt_templates.py`](../../examples/python/06_prompt_templates.py) | **Prompt Templates** | Server-side prompt templates & variables |
+| [`07_tool_calling.py`](../../examples/python/07_tool_calling.py) | **Tool Calling** | Function calling with JSON schema tools |
+| [`08_structured_outputs.py`](../../examples/python/08_structured_outputs.py) | **Structured Outputs** | Strict JSON object output formatting |
+| [`09_error_handling.py`](../../examples/python/09_error_handling.py) | **Error Handling** | Typed error handling & guardrail recovery |
+| [`10_conversation_memory.py`](../../examples/python/10_conversation_memory.py) | **Memory** | Multi-turn memory without header leaks |
+| [`11_embeddings.py`](../../examples/python/11_embeddings.py) | **Embeddings** | Vector embeddings generation |
+| [`12_multimodal_vision.py`](../../examples/python/12_multimodal_vision.py) | **Multimodal Vision** | Image inputs via URL or base64 |
 
 ### 📓 Interactive Jupyter Notebook
 Try the SDK interactively with [`notebooks/quickstart.ipynb`](../../notebooks/quickstart.ipynb).

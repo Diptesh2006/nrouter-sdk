@@ -26,7 +26,7 @@ security gates.
 | Python | PyPI | [pypi.org/project/nrouter-sdk](https://pypi.org/project/nrouter-sdk/) | `nrouter-sdk` | 2.1.3 |
 | Java | Maven Central | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | `ai.nrouter:nrouter-sdk` | 1.0.0 |
 | Rust | crates.io | [crates.io/crates/nrouter](https://crates.io/crates/nrouter) | `nrouter` | 2.1.0 |
-| Dart / Flutter | pub.dev | [pub.dev/packages/nrouter](https://pub.dev/packages/nrouter) | `nrouter` | 2.1.0 |
+| Dart / Flutter | pub.dev | [pub.dev/packages/nrouter](https://pub.dev/packages/nrouter) | `nrouter` | 2.1.1 |
 
 `sdks/{kotlin,android,go,swift,r}` are held to the same public wire
 contract. The six first-party native transports expose named helpers for all
@@ -150,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```yaml
 # pubspec.yaml
 dependencies:
-  nrouter: ^2.1.0
+  nrouter: ^2.1.1
 ```
 ```dart
 import 'package:nrouter/nrouter.dart';

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.1
+
+- Add `example/nrouter_example.dart` for pub.dev documentation and package analysis.
+
 ## 2.1.0
 
 - Cover all 15 nRouter gateway operations with named helpers.

@@ -18,11 +18,11 @@ registry-published and supported. Swift and Go have immutable source-resolution
 tags. The other five build from this repository. All ten are held to the same
 conformance and security gates.
 
-| SDK | Registry | Package | Version |
-|---|---|---|---|
-| JavaScript / TypeScript | npm | `@nrouter_ai/sdk` | 2.0.0 |
-| Python | PyPI | `nrouter-sdk` | 2.1.3 |
-| Java | Maven Central | `ai.nrouter:nrouter-sdk` | 1.0.0 |
+| SDK | Registry | Registry URL | Package | Version |
+|---|---|---|---|---|
+| JavaScript / TypeScript | npm | [npmjs.com/package/@nrouter_ai/sdk](https://www.npmjs.com/package/@nrouter_ai/sdk) | `@nrouter_ai/sdk` | 2.0.0 |
+| Python | PyPI | [pypi.org/project/nrouter-sdk](https://pypi.org/project/nrouter-sdk/) | `nrouter-sdk` | 2.1.3 |
+| Java | Maven Central | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | `ai.nrouter:nrouter-sdk` | 1.0.0 |
 
 `sdks/{kotlin,android,go,rust,swift,dart,r}` are held to the same public wire
 contract. The six first-party native transports expose named helpers for all
@@ -154,17 +154,18 @@ nothing):
 > is deliberately not advertised — build from source until each is released.
 > Each SDK's `PUBLISHING.md` has the release procedure.
 
-| Language | Install | Registry status | Package | Typed errors | `x-nr-*` metadata |
-|----------|---------|---|---------|---|---|
-| **TypeScript / JS** | `npm install @nrouter_ai/sdk` | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | ✅ 9 codes | ✅ 13 headers |
-| **Java** | Maven `ai.nrouter:nrouter-sdk` | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | ✅ 9 codes (native HTTP surface) | ✅ 13 headers (native HTTP surface) |
-| **Kotlin** | Build from `sdks/kotlin` | ⛔ source preview | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
-| **Android** | Build from `sdks/android` | ⛔ source preview | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
-| **Swift** | SwiftPM, this repo's URL | ✅ git tag `2.1.1` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
-| **Rust** | Build from `sdks/rust` | ⛔ source preview | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
-| **Dart / Flutter** | Build from `sdks/dart` | ⛔ source preview | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
-| **R** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | 🧪 PUBLIC PREVIEW ([R-universe](https://nrouterai.r-universe.dev/nrouter)) | [`sdks/r/`](sdks/r/) · [nrouter](https://nrouterai.r-universe.dev/nrouter) | ✅ 9 classed conditions | ✅ 13 headers |
-| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1` | ✅ git tag `sdks/go/v1.0.1` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
+| Language | Install | Registry URL | Registry status | Package | Typed errors | `x-nr-*` metadata |
+|----------|---------|--------------|---|---------|---|---|
+| **Python** | `pip install nrouter-sdk` | [pypi.org/project/nrouter-sdk](https://pypi.org/project/nrouter-sdk/) | ✅ PUBLISHED | [`sdks/python/`](sdks/python/) | ✅ typed wrappers | ✅ `client.last_response` |
+| **TypeScript / JS** | `npm install @nrouter_ai/sdk` | [npmjs.com/package/@nrouter_ai/sdk](https://www.npmjs.com/package/@nrouter_ai/sdk) | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | ✅ 9 codes | ✅ 13 headers |
+| **Java** | Maven `ai.nrouter:nrouter-sdk` | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | ✅ 9 codes (native HTTP surface) | ✅ 13 headers (native HTTP surface) |
+| **Kotlin** | Build from `sdks/kotlin` | — | ⛔ source preview | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
+| **Android** | Build from `sdks/android` | — | ⛔ source preview | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
+| **Swift** | SwiftPM, this repo's URL | [github.com/nRouterAI/nrouter-sdk](https://github.com/nRouterAI/nrouter-sdk) | ✅ git tag `2.1.1` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
+| **Rust** | Build from `sdks/rust` | — | ⛔ source preview | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
+| **Dart / Flutter** | Build from `sdks/dart` | — | ⛔ source preview | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
+| **R** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | [nrouterai.r-universe.dev/nrouter](https://nrouterai.r-universe.dev/nrouter) | 🧪 PUBLIC PREVIEW | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
+| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1` | [pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go) | ✅ git tag `sdks/go/v1.0.1` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
 
 Verify any row rather than trusting it:
 

@@ -69,7 +69,8 @@ def apply_prompt(options: Dict[str, object], selection: PromptSelection) -> Dict
     if selection.template_id:
         next_options["prompt_template_id"] = selection.template_id
     if selection.variables:
-        merged = dict(next_options.get("prompt_variables") or {})
+        existing = next_options.get("prompt_variables")
+        merged = dict(existing) if isinstance(existing, (dict, Mapping)) else {}
         merged.update(selection.variables)
         next_options["prompt_variables"] = merged
     return next_options

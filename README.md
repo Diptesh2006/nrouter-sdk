@@ -358,7 +358,7 @@ example for any of these without first adding the route to the gateway and the s
 
 | Language | Install | Example |
 |----------|---------|---------|
-| **Python (branded)** | `pip install nrouter-sdk` | [`sdks/python/`](sdks/python/) |
+| **Python (branded)** | `pip install nrouter-sdk` | [`sdks/python/`](sdks/python/) · [`examples/01_quickstart.py`](examples/01_quickstart.py), [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb) |
 | **TypeScript / JS (branded)** | `npm install @nrouter_ai/sdk` | [`sdks/js/`](sdks/js/) · [`examples/hello-world/typescript.ts`](examples/hello-world/typescript.ts), [`javascript.js`](examples/hello-world/javascript.js) |
 | **Java (branded)** | `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) · [`examples/hello-world/java.java`](examples/hello-world/java.java) |
 | **Kotlin (branded)** | `ai.nrouter:nrouter-sdk-kotlin` | [`sdks/kotlin/`](sdks/kotlin/) · [`examples/hello-world/kotlin.kt`](examples/hello-world/kotlin.kt) |

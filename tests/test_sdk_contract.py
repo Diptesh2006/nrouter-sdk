@@ -641,6 +641,30 @@ class ExampleBodyFieldContractTests(unittest.TestCase):
                 f"gateway does not read",
             )
 
+    def test_base_url_env_resolution(self) -> None:
+        """NROUTER_BASE_URL environment variable is respected when base_url is omitted."""
+        custom_base = "https://api-stage.nrouter.ai/v1"
+        try:
+            os.environ["NROUTER_BASE_URL"] = custom_base
+            client = nRouter(api_key="sk-nrouter-test-key")
+            self.assertEqual(str(client.base_url).rstrip("/"), custom_base)
+            self.assertEqual(client._nrouter_base, "https://api-stage.nrouter.ai")
+
+            # Explicit base_url overrides environment variable
+            override_base = "https://custom.nrouter.ai/v1"
+            client_override = nRouter(api_key="sk-nrouter-test-key", base_url=override_base)
+            self.assertEqual(str(client_override.base_url).rstrip("/"), override_base)
+            self.assertEqual(client_override._nrouter_base, "https://custom.nrouter.ai")
+        finally:
+            os.environ.pop("NROUTER_BASE_URL", None)
+
+    def test_context_manager_lifecycle(self) -> None:
+        """Client implements context manager protocol cleanly."""
+        with nRouter(api_key="sk-nrouter-test-key") as client:
+            self.assertIsNotNone(client)
+            self.assertFalse(client.is_closed())
+        self.assertTrue(client.is_closed())
+
 
 # AT THE BOTTOM, and that is the whole point. This block used to sit at line
 # 492 with THREE test classes defined after it, so `unittest.main()` ran

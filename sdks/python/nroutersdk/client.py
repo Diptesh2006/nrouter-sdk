@@ -27,6 +27,7 @@ from nroutersdk.sampling import build_sampling_params
 
 _DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 _ENV_KEY = "NROUTER_API_KEY"
+_ENV_BASE_URL = "NROUTER_BASE_URL"
 _KEY_PREFIX = "sk-nrouter-"
 
 #: Default model for the convenience wrapper.
@@ -45,6 +46,11 @@ def _resolve_api_key(api_key: Optional[str]) -> str:
             f"pass api_key or set {_ENV_KEY}."
         )
     return resolved_key
+
+
+def _resolve_base_url(base_url: Optional[str]) -> str:
+    """Resolve API base URL from parameter, NROUTER_BASE_URL env, or default."""
+    return base_url or os.environ.get(_ENV_BASE_URL) or _DEFAULT_BASE_URL
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +468,7 @@ class nRouter(_OpenAI):
 
     nrouter_models: _nRouterModels
     messages: _Messages
-    videos: _Videos
+    videos: _Videos  # type: ignore[assignment]
     nrouter: _nRouterChat
     last_response: Optional[nRouterResponseMeta]
 
@@ -472,8 +478,18 @@ class nRouter(_OpenAI):
         base_url: Optional[str] = None,
         **kwargs,
     ) -> None:
+        """Initialize the nRouter client.
+
+        Args:
+            api_key: nRouter API key starting with 'sk-nrouter-'. Defaults to
+                the NROUTER_API_KEY environment variable.
+            base_url: Optional gateway base URL. Defaults to the NROUTER_BASE_URL
+                environment variable or 'https://api.nrouter.ai/v1'.
+            **kwargs: Extra arguments passed directly to OpenAI client constructor
+                (e.g. timeout, max_retries, http_client).
+        """
         resolved_key = _resolve_api_key(api_key)
-        resolved_base = base_url or _DEFAULT_BASE_URL
+        resolved_base = _resolve_base_url(base_url)
 
         super().__init__(api_key=resolved_key, base_url=resolved_base, **kwargs)
 
@@ -486,7 +502,7 @@ class nRouter(_OpenAI):
         # Attach nRouter namespaces
         self.nrouter_models = _nRouterModels(self)
         self.messages = _Messages(self)
-        self.videos = _Videos(self)
+        self.videos = _Videos(self)  # type: ignore[assignment]
         self.nrouter = _nRouterChat(self)
 
         # Response metadata — updated after every API call
@@ -494,6 +510,12 @@ class nRouter(_OpenAI):
 
         # Hook into httpx to capture response headers automatically
         self._client.event_hooks["response"].append(self._capture_nrouter_headers)
+
+    def __enter__(self) -> "nRouter":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
 
     def _capture_nrouter_headers(self, response: httpx.Response) -> None:
         """Capture canonical x-nr-* headers from every response."""
@@ -579,7 +601,7 @@ class AsyncnRouter(_AsyncOpenAI):
 
     nrouter_models: _nRouterModels
     messages: _AsyncMessages
-    videos: _AsyncVideos
+    videos: _AsyncVideos  # type: ignore[assignment]
     nrouter: _nRouterChat
     last_response: Optional[nRouterResponseMeta]
 
@@ -589,8 +611,18 @@ class AsyncnRouter(_AsyncOpenAI):
         base_url: Optional[str] = None,
         **kwargs,
     ) -> None:
+        """Initialize the AsyncnRouter client.
+
+        Args:
+            api_key: nRouter API key starting with 'sk-nrouter-'. Defaults to
+                the NROUTER_API_KEY environment variable.
+            base_url: Optional gateway base URL. Defaults to the NROUTER_BASE_URL
+                environment variable or 'https://api.nrouter.ai/v1'.
+            **kwargs: Extra arguments passed directly to AsyncOpenAI client constructor
+                (e.g. timeout, max_retries, http_client).
+        """
         resolved_key = _resolve_api_key(api_key)
-        resolved_base = base_url or _DEFAULT_BASE_URL
+        resolved_base = _resolve_base_url(base_url)
 
         super().__init__(api_key=resolved_key, base_url=resolved_base, **kwargs)
 
@@ -602,12 +634,18 @@ class AsyncnRouter(_AsyncOpenAI):
 
         self.nrouter_models = _nRouterModels(self)
         self.messages = _AsyncMessages(self)
-        self.videos = _AsyncVideos(self)
+        self.videos = _AsyncVideos(self)  # type: ignore[assignment]
         self.nrouter = _nRouterChat(self)
         self.last_response = None
 
         # Hook into httpx to capture response headers automatically
         self._client.event_hooks["response"].append(self._capture_nrouter_headers)
+
+    async def __aenter__(self) -> "AsyncnRouter":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.close()
 
     async def _capture_nrouter_headers(self, response: httpx.Response) -> None:
         """Capture canonical x-nr-* headers from every response."""

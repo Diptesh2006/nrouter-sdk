@@ -1,8 +1,10 @@
-# Verify the source-preview nRouter Kotlin SDK.
+# Publish ai.nrouter:nrouter-sdk-kotlin to Maven Central, on merge to main.
 #
-# Support scope does not authorize a registry release for this SDK. This
-# workflow deliberately has read-only permissions and no credentialed publish
-# path; publication requires a separate owner scope decision.
+# Requires these repo secrets:
+# - CENTRAL_USERNAME: Sonatype Central Portal token username
+# - CENTRAL_PASSWORD: Sonatype Central Portal token password
+# - GPG_PRIVATE_KEY: ASCII-armored private signing key
+# - MAVEN_GPG_PASSPHRASE: passphrase for that private key
 name: publish-kotlin
 
 on:
@@ -61,4 +63,40 @@ jobs:
       - name: Run Demo E2E Smoke Check
         run: |
           ./gradlew test --tests "ai.nrouter.sdk.ContractTest"
+
+      - name: Already published?
+        id: check
+        run: |
+          set -euo pipefail
+          VERSION="$(grep '^version=' gradle.properties | cut -d'=' -f2 | tr -d '[:space:]')"
+          GROUP_ID="$(grep '^group=' gradle.properties | cut -d'=' -f2 | tr -d '[:space:]')"
+          ARTIFACT_ID="nrouter-sdk-kotlin"
+
+          {
+            echo "group_id=$GROUP_ID"
+            echo "artifact_id=$ARTIFACT_ID"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+          GROUP_PATH="${GROUP_ID//./\/}"
+          URL="https://repo1.maven.org/maven2/$GROUP_PATH/$ARTIFACT_ID/$VERSION/$ARTIFACT_ID-$VERSION.pom"
+          code="$(curl -s -o /dev/null -w '%{http_code}' "$URL")"
+          case "$code" in
+            200) echo "publish=false" >> "$GITHUB_OUTPUT"
+                 echo "::notice::$GROUP_ID:$ARTIFACT_ID:$VERSION is already on Maven Central; nothing to do." ;;
+            404) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "::error::Maven Central answered $code; cannot tell whether $VERSION exists"; exit 1 ;;
+          esac
+
+      - name: Publish to Maven Central
+        if: >-
+          github.event_name != 'pull_request'
+          && github.ref == 'refs/heads/main'
+          && steps.check.outputs.publish == 'true'
+        env:
+          SONATYPE_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: ./gradlew publish
 

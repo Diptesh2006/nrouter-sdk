@@ -2,11 +2,9 @@
 
 One API key for models across six provider clouds, packaged as an AAR.
 
-> **Source preview:** this coordinate is not on Maven Central. Publish the
-> Kotlin core and Android AAR to Maven Local from this repository first.
+[![Maven Central](https://img.shields.io/maven-central/v/ai.nrouter/nrouter-sdk-android?label=Maven%20Central)](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-android)
 
 ```kotlin
-// First publish sdks/kotlin, then sdks/android, to Maven Local.
 dependencies {
     implementation("ai.nrouter:nrouter-sdk-android:2.1.0")
 }

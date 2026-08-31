@@ -16,6 +16,8 @@ those are the models currently live through the gateway. Check
 | **Python** | `nrouter-sdk` | `pip install nrouter-sdk` | **Published** on PyPI — imports as `nroutersdk` |
 | **JavaScript / TypeScript** | `@nrouter_ai/sdk` | `npm install @nrouter_ai/sdk` | **Published** on npm |
 | **Java** | `ai.nrouter:nrouter-sdk` | Maven `ai.nrouter:nrouter-sdk` | **Published** on Maven Central |
+| **Kotlin** | `ai.nrouter:nrouter-sdk-kotlin` | `implementation("ai.nrouter:nrouter-sdk-kotlin:2.1.0")` | **Published** on Maven Central |
+| **Android** | `ai.nrouter:nrouter-sdk-android` | `implementation("ai.nrouter:nrouter-sdk-android:2.1.0")` | **Published** on Maven Central |
 | **Rust** | `nrouter` | `cargo add nrouter` | **Published** on crates.io |
 | **Dart / Flutter** | `nrouter` | `dart pub add nrouter` | **Published** on pub.dev |
 | **Go** | `github.com/nRouterAI/nrouter-sdk/sdks/go` | `go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1` | **Published** via Go proxy |

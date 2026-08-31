@@ -1,5 +1,5 @@
 # nRouter — R hello world
-# remotes::install_github("nRouterAI/nrouter-sdk", subdir = "sdks/r")
+# install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))
 
 library(nrouter)
 

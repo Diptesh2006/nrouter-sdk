@@ -1,9 +1,14 @@
 # nRouter SDK for Go
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/nRouterAI/nrouter-sdk/sdks/go.svg)](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/nRouterAI/nrouter-sdk/blob/main/LICENSE)
+
 One API key for models across six provider clouds — Alibaba US, OpenAI, AWS
 Bedrock, Azure Foundry, Google Vertex AI and Anthropic. The gateway serves the
 OpenAI wire format and Anthropic's Messages API natively, plus embeddings,
 audio, images and video.
+
+**Documentation & Package Reference:** [pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go)
 
 ```bash
 go get github.com/nRouterAI/nrouter-sdk/sdks/go@v1.0.1

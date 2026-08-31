@@ -1,10 +1,25 @@
 # nRouter SDK for R
 
+[![R-universe version](https://nrouterai.r-universe.dev/nrouter/badges/version)](https://nrouterai.r-universe.dev/nrouter)
+[![R-universe checks](https://nrouterai.r-universe.dev/nrouter/badges/checks)](https://nrouterai.r-universe.dev/nrouter)
+
 One API key for models across six provider clouds. There is no official OpenAI
 SDK for R, so this package calls the gateway's HTTP API directly via `httr`.
 
 ```r
-# Source install; no R-universe or CRAN binary is advertised yet.
+# Public preview from R-universe.
+install.packages(
+  "nrouter",
+  repos = c(
+    nrouterai = "https://nrouterai.r-universe.dev",
+    CRAN = "https://cloud.r-project.org"
+  )
+)
+```
+
+For a development install directly from the monorepo:
+
+```r
 remotes::install_github("nRouterAI/nrouter-sdk", subdir = "sdks/r")
 ```
 

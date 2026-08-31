@@ -57,17 +57,27 @@ roxygenise rather than hand-editing.
 > tree and reports phantom failures while they exist. `rm -rf sdks/nrouter.Rcheck
 > sdks/nrouter_*.tar.gz` when the check is done.
 
-## Easiest real distribution: R-universe
+## R-universe — live public preview
 
-No review queue, and it builds binaries for macOS and Windows:
+No review queue, and it builds binaries for macOS and Windows. Direct package page:
+[https://nrouterai.r-universe.dev/nrouter](https://nrouterai.r-universe.dev/nrouter)
 
-1. Add this repo to the `nRouterAI` packages registry
-   (`https://github.com/nRouterAI/nRouterAI.r-universe.dev`).
-2. Users install with:
+The registry configuration lives at: `https://github.com/nRouterAI/nrouterai.r-universe.dev`
 
-   ```r
-   install.packages("nrouter", repos = "https://nrouterai.r-universe.dev")
-   ```
+Its `packages.json` maps package `nrouter` to this repository with
+`"subdir": "sdks/r"`. Users install with:
+
+```r
+install.packages(
+  "nrouter",
+  repos = c(
+    nrouterai = "https://nrouterai.r-universe.dev",
+    CRAN = "https://cloud.r-project.org"
+  )
+)
+```
+
+For future releases, update `Version:` in `sdks/r/DESCRIPTION`, commit, and push to `main`. R-universe detects the push and rebuilds automatically.
 
 R-universe rebuilds on every push, so a red `R CMD check` becomes a public red
 badge — which is the point.

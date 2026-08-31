@@ -243,7 +243,7 @@ curl -s -o /dev/null -w "%{http_code}\n" https://pub.dev/api/packages/nrouter
 curl -s https://repo1.maven.org/maven2/ai/nrouter/ | grep -oE 'href="[^"]+"'
 # Go has no registry: proxy.golang.org serves whatever a git tag points at, and
 # it case-encodes the path (each uppercase letter becomes '!' + lowercase).
-curl -s https://proxy.golang.org/github.com/n!router!a!i/nrouter-sdk/sdks/go/@v/list
+curl -s https://proxy.golang.org/github.com/n!router!a!i/nrouter-sdk/sdks/go/v2/@v/list
 curl -s https://nrouterai.r-universe.dev/src/contrib/PACKAGES | grep -A4 '^Package: nrouter$'
 ```
 

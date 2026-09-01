@@ -9,7 +9,7 @@ Generated from local checks after pulling `origin/main` on 2026-09-01.
 - Local Node version: `22.16.0`
 - SDK import path used by demos: built `dist/`
 - API key source: `NROUTER_API_KEY` from local environment or repo-root `.env`
-- Default live model: `claude-haiku-4-5-20251001`
+- Default live model: `claude-haiku-4-5-20251001` (`nrouter-doc-wire: messages`)
 
 The API key is intentionally not printed or stored in this report.
 
@@ -123,14 +123,15 @@ Working:
 - `client.nr.messages()`
 - `client.nr.stream()`
 
-Failing:
+Observed failing check:
 
-- `client.nr.responses()` with `claude-haiku-4-5-20251001`
+- `client.nr.responses()` when intentionally tried with the default Anthropic
+  messages model
 
-Error:
+Gateway error observed:
 
 ```text
-unknown model: claude-haiku-4-5-20251001 is not available on /v1/responses
+unknown model: the default Anthropic messages model is not available on /v1/responses
 ```
 
 Conclusion: Anthropic Claude works through `chat`, `messages`, and streaming,

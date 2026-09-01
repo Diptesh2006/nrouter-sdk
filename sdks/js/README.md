@@ -50,9 +50,60 @@ const { nRouter } = require("@nrouter_ai/sdk");
 const client = new nRouter({ apiKey: process.env.NROUTER_API_KEY });
 ```
 
-`nRouter` extends the `OpenAI` class directly, so every resource the `openai`
-package supports (`chat.completions`, `embeddings`, `images`, streaming, ...)
-works unmodified.
+`nRouter` extends the `OpenAI` class directly, so the resources nRouter serves
+(`chat.completions`, `completions`, `responses`, `embeddings`, `images`, `audio`,
+`videos`, `models`, streaming) are called exactly as you would call them against
+OpenAI — same method names, same request and response shapes.
+
+### What "compatible" does and does not mean
+
+The `openai` package exposes a larger API than nRouter serves, and a model is
+callable only on the routes ITS provider serves. Three limits. Every one of them
+fails loudly — a 404 from the gateway, never a silent wrong answer — but they
+fail at call time, not at compile time: the wrapper inherits the full `openai`
+type surface, so all three type-check.
+
+- **Resources nRouter does not mount.** The served resources are exactly
+  `chat.completions`, `completions`, `responses`, `embeddings`, `images`,
+  `audio`, `videos` and `models`. Everything else the `openai` client carries
+  404s — `files`, `fineTuning`, `batches`, `beta` (assistants/threads),
+  `vectorStores`, `uploads`, `containers`, `conversations`, `webhooks`,
+  `moderations`, `evals`, `graders`, `admin`, `skills` and
+  `contentProvenanceChecks`. `realtime` is the one that does not 404, because it
+  is a WebSocket surface with no gateway to connect to; it fails to open. Treat
+  the served list, not this one, as authoritative — it is
+  `spec/nrouter-sdk-spec.json`, derived from the gateway's own route table.
+- **Methods a served resource does not mount.** Being on the served list is per
+  ROUTE, not per resource. `images.generate()` is served and `images.edit()` /
+  `images.createVariation()` are not; `videos.create()`, `videos.retrieve()` and
+  `videos.downloadContent()` are served and `videos.list()` / `videos.delete()` /
+  `videos.remix()` are not; `models.list()` and `models.retrieve()` are served
+  and `models.delete()` is not.
+- **Routes a model's provider does not serve.** An Anthropic model answers
+  `/v1/messages` and neither `/v1/chat/completions` nor `/v1/responses`. Only
+  OpenAI and Azure models answer `/v1/responses`. Sending a Claude id to
+  `client.chat.completions.create()` is a 404 from the gateway, not a
+  translation. **AWS Bedrock is narrower than its name suggests: only the
+  Anthropic family on Bedrock is served, and only on `/v1/messages`.** A Nova,
+  Llama, Titan, Qwen, Mistral or DeepSeek id on Bedrock has no text route here
+  at all — the refusal says so rather than pointing you at a second wire.
+
+`client.nr.chat()` covers the common half of the third one: it recognises a
+Claude id by name and sends it to `/v1/messages`. That is a NAME heuristic, so
+it does not help with an alias whose name hides its provider — a Bedrock or
+Vertex id for a non-Claude model. For those, and whenever you call
+`client.chat.completions` directly, ask the gateway instead of guessing:
+
+```typescript
+const models = await client.nrouterModels.list();
+const entry = models.data.find((m) => m.id === alias);
+// e.g. ["/v1/messages", "/v1/messages/count_tokens"]
+console.log(entry.nrouter_endpoints);
+```
+
+Any alias whose `nrouter_endpoints` contains `/v1/chat/completions` works with
+the stock `openai` resource unmodified. An empty array means no route on this
+gateway serves that alias — pick another model rather than trying a second wire.
 
 ## nRouter Helpers
 

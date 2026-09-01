@@ -83,6 +83,50 @@ The practical consequence: configuring a cross-provider fallback chain for an
 image or audio alias will not give you failover. Chain entries that stay on the
 same provider and the same upstream model still work there.
 
+### On the text wires, an entry whose provider does not serve THAT ROUTE is skipped
+
+The `yes` above is about the mechanism, and read alone it is misleading. Failover
+being available on a wire does not mean every chain entry can be tried on it: a
+provider serves the routes it declares a path for, and **an entry on a provider
+that declares no path for the route you called is skipped, exactly like an entry
+with no credential.** Nothing is sent, nothing is billed, and the walk moves on.
+
+That is per-entry, not per-route, so a route-level yes/no cannot express it:
+
+| Route | Providers that serve it |
+|---|---|
+| `/v1/chat/completions` | OpenAI, Azure OpenAI, Azure AI Foundry, Vertex AI, Alibaba DashScope |
+| `/v1/responses` | OpenAI, Azure OpenAI, Azure AI Foundry |
+| `/v1/messages` | Anthropic, Vertex AI, AWS Bedrock (Anthropic-family models only) |
+| `/v1/completions` | OpenAI |
+
+**The case that bites is `/v1/responses`.** Anthropic, AWS Bedrock, Vertex AI and
+Alibaba DashScope declare no Responses path, so a Responses chain whose entries
+are all on those providers has every entry skipped and the request fails — the
+chain looks configured and failover never happens. Same shape one route over:
+Anthropic and Bedrock declare no chat-completions path, so they cannot be
+failover targets for `/v1/chat/completions` either.
+
+**AWS Bedrock is narrower than the table row alone reads**, and it is the one
+place where the answer is per MODEL rather than per provider. Bedrock declares
+`/v1/messages` and serves only the Anthropic family there; every other family
+takes a different upstream request schema. So a Bedrock entry for a Nova, Llama,
+Titan, Qwen, Mistral or DeepSeek model serves **no** text route at all and can
+never be a failover target on any of the four wires. Its `nrouter_endpoints` is
+empty, which is the honest answer and the one to build chains from.
+
+**Do not infer a model's route from its name.** Ask the gateway. Every entry in
+`GET /v1/models` carries the routes that alias actually answers on:
+
+```ts
+const models = await client.nrouterModels.list();
+const entry = models.data.find((m) => m.id === alias);
+entry.nrouter_endpoints; // e.g. ["/v1/messages", "/v1/messages/count_tokens"]
+```
+
+Build a chain out of entries whose `nrouter_endpoints` all contain the route you
+intend to call, and the walk has somewhere to go on every hop.
+
 ## What the response tells you
 
 `res.meta.model` is the model that **actually served** the request, which is not

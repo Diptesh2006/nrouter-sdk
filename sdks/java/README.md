@@ -46,8 +46,41 @@ ChatCompletion response = client.chat().completions().create(
 System.out.println(response.choices().get(0).message().content());
 ```
 
-`NRouter.create()` returns a real `OpenAIClient`, so every resource `openai-java`
-supports works unmodified.
+`NRouter.create()` returns a real `OpenAIClient`, so the resources nRouter
+serves are called exactly as you would call them against OpenAI.
+
+> ⚠️ **`OpenAIClient` compiles against a larger API than nRouter serves, and the
+> model is what decides whether a compiling call reaches anything.**
+> `openai-java` posts `client.chat().completions()` to `/v1/chat/completions`,
+> and neither Anthropic nor AWS Bedrock declares a chat-completions path — they
+> serve `/v1/messages` — so the call is a **404 from the gateway**, not a
+> translation. That is why the snippet above names an OpenAI-wire model rather
+> than a Claude alias. The 404 body is
+> `{"error":{"type":"gateway_error","message":"<model> is not available on <route>"}}`;
+> there is no `code` field to branch on, so match on the status and the route.
+>
+> **Use the native `NRouterHttpClient.messages(...)`, below, for any Anthropic
+> or AWS Bedrock model.** `client.chat().completions()` is right for a model whose
+> provider serves that route — OpenAI, Azure OpenAI, Azure AI Foundry, Vertex
+> AI, Alibaba DashScope. `/v1/responses` is narrower still: OpenAI and Azure
+> only. `client.completions()` (legacy `/v1/completions`) is narrower again:
+> OpenAI only. And `embeddings()`, `images()` and `audio()` are mounted but
+> served on the **OpenAI cloud only** — a Vertex or DashScope alias 404s there
+> even though the chat call with the same alias works.
+>
+> Resolve it per model rather than by name — an alias does not have to spell its
+> provider. Every entry `GET /v1/models` returns carries an
+> `nrouter_endpoints` array naming the routes that alias answers on (for a
+> Claude alias, `["/v1/messages", "/v1/messages/count_tokens"]`). Read it from
+> `client.models().list()` and pick the call that matches, rather than inferring
+> a wire from the id. An **empty** array is a real answer, not a gap: a Bedrock
+> alias outside the Anthropic family serves no text wire at all, so no
+> `openai-java` resource — and no `messages(...)` call either — will reach it.
+>
+> Resources nRouter mounts no route for at all — `files()`, `fineTuning()`,
+> `batches()`, `beta()`, `vectorStores()`, `uploads()`, `containers()`,
+> `conversations()`, `webhooks()`, `moderations()`, image edits — type-check and
+> 404. `spec/nrouter-sdk-spec.json` is the served list.
 
 ### Native response metadata and typed errors
 
@@ -59,7 +92,7 @@ import ai.nrouter.sdk.NRouterHttpClient;
 import ai.nrouter.sdk.NRouterHttpResponse;
 import java.util.Map;
 
-NRouterHttpClient client = NRouter.httpClient();
+NRouterHttpClient client = NRouter.httpClient(System.getenv("NROUTER_API_KEY"));
 NRouterHttpResponse response = client.messages(Map.of(
         "model", "claude-haiku-4-5-20251001",
         "max_tokens", 64,

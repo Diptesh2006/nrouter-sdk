@@ -1,20 +1,41 @@
 # nRouter — Every Language Guide
 
-nRouter serves models from six provider clouds behind one API key, and **speaks the OpenAI wire format**. Any language with an OpenAI SDK works by changing two things:
+nRouter serves models from six provider clouds behind one API key, and speaks the
+OpenAI wire format on the routes its providers declare. Any language with an
+OpenAI SDK **connects** by changing two things:
 
 ```
 base_url  →  https://api.nrouter.ai/v1
 api_key   →  your NROUTER_API_KEY
 ```
 
-That's it. Guardrails, prompt templates, credit tracking, and cost headers all work automatically regardless of language.
+Guardrails, prompt templates, credit tracking, and cost headers then work automatically regardless of language.
+
+**Connecting is language-independent; CALLING is model-dependent.** Changing the
+two values above is not "that's it": an OpenAI SDK still posts to the route its
+resource is hardcoded to, and a model is served on the routes its own provider
+declares. So the pairing — which model, on which route — is the part that has to
+be right, and it is the same in every language.
 
 **Pick a model that serves the wire you are calling.** The gateway resolves a
-provider endpoint per wire, so a provider that serves no endpoint for a wire
-answers `404 model_unavailable_on_route` — the model exists, just not on the
-route it was asked for. Anthropic serves `/v1/messages` only, so a `claude-*`
-id sent through an OpenAI SDK's `chat.completions` fails with a valid key and a
-real model id. Every OpenAI-SDK example on this page therefore uses
+provider endpoint per wire, so a provider that declares no endpoint for a wire
+answers **HTTP 404** — the model exists, just not on the route it was asked for:
+
+```json
+{"error": {"type": "gateway_error",
+           "message": "your-model is not available on /v1/chat/completions"}}
+```
+
+There is **no machine-readable code to branch on**. Every gateway error body
+carries the same `"type": "gateway_error"`, so the HTTP status plus the route
+named in `message` is what you match on — do not write a client that keys off a
+`code` field, because there isn't one. The branded SDKs already do this mapping:
+`spec/nrouter-sdk-spec.json` binds each HTTP status (plus `x-nr-auth-reason` and
+`x-nr-limit-source` where they narrow it) to a typed exception class.
+
+Anthropic declares no chat-completions path and no responses path, so a
+`claude-*` id sent through an OpenAI SDK's `chat.completions` fails with a valid
+key and a real model id. Every OpenAI-SDK example on this page therefore uses
 `gpt-5.4-mini`; the native-Messages examples use a Claude id. Both were present
 in the live catalogue on 2026-08-31 — confirm against your own key, which sees
 its own catalogue:
@@ -22,6 +43,42 @@ its own catalogue:
 ```bash
 curl -s https://api.nrouter.ai/v1/models -H "Authorization: Bearer $NROUTER_API_KEY"
 ```
+
+Each entry carries `nrouter_endpoints` — the routes that alias actually answers
+on — so the pairing is a lookup rather than a guess. That matters most for an
+alias whose name does not spell its provider, which no heuristic can classify:
+
+```bash
+curl -s https://api.nrouter.ai/v1/models -H "Authorization: Bearer $NROUTER_API_KEY" \
+  | jq -r '.data[] | select(.nrouter_endpoints | index("/v1/chat/completions")) | .id'
+```
+
+That list is exactly the set of models a stock OpenAI SDK's
+`chat.completions` works with, unmodified. Swap the path for `/v1/responses` or
+`/v1/messages` to get the set for those wires.
+
+For orientation — the model document above stays authoritative — this is which
+text wire each provider cloud declares, read off the gateway's own endpoint
+declarations on 2026-09-01:
+
+| Provider cloud | `chat/completions` | `responses` | `messages` | `completions` (legacy) |
+|---|---|---|---|---|
+| OpenAI | yes | yes | — | yes |
+| Azure (OpenAI + AI Foundry) | yes | yes | — | — |
+| Google Vertex AI | yes | — | yes | — |
+| Alibaba DashScope | yes | — | — | — |
+| Anthropic | — | — | yes, plus `messages/count_tokens` | — |
+| AWS Bedrock | — | — | Anthropic-family models only | — |
+
+An **empty** `nrouter_endpoints` array is a real answer, not a gap: a Bedrock
+alias outside the Anthropic family serves no text wire at all, so there is no
+call to make. That is the case no table can express and the reason to read the
+field per model.
+
+The non-text routes are narrower again. `/v1/embeddings`,
+`/v1/images/generations`, `/v1/audio/*` and `/v1/videos*` are served on the
+**OpenAI provider cloud only** — a model from any other cloud is not callable on
+them, in any language, through any SDK.
 
 ---
 
@@ -70,10 +127,12 @@ The cost in the header is the **model cost only**. Your platform fee (0-4%) was 
 ## cURL
 
 > **Model availability.** `/v1/embeddings` and `/v1/images/generations` are
-> mounted, but the model has to be enabled for your organization. Measured on
+> mounted, but they are served on the **OpenAI provider cloud only**, and the
+> model must additionally be enabled for your organization. Measured on
 > 2026-08-25 the served catalogue carried no embedding and no image model, so
-> the names in these snippets are illustrative. List what your key can actually
-> reach with `GET /v1/models` before copying one.
+> `text-embedding-3-small` and `dall-e-3` — here and in the Ruby and PHP
+> sections below — are illustrative names, not a promise. List what your key can
+> actually reach with `GET /v1/models` before copying one.
 
 ```bash
 # Chat completion

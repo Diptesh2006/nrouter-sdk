@@ -5,7 +5,7 @@ Usage:
 
     client = nRouter()  # reads NROUTER_API_KEY from env
     response = client.chat.completions.create(
-        model="anthropic/claude-sonnet-4-5-20250929",
+        model="gpt-5.4-mini",
         messages=[{"role": "user", "content": "Hello!"}],
     )
     print(response.choices[0].message.content)

@@ -42,6 +42,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from doc_wires import check_doc_wires  # noqa: E402
 from doc_wires import self_test as doc_wires_self_test  # noqa: E402
 
+# A THIRD corpus with its own failure mode, and the one that fell between the
+# other two: an SDK's own DEFAULT model. The spec fixes headers, endpoints and
+# error codes but carries no default model, and `doc_wires` reads documentation
+# rather than SDK source — so a default naming a wire the gateway refuses for
+# that model was invisible to both gates while being the first call every new
+# user makes.
+from source_defaults import check_source_defaults  # noqa: E402
+from source_defaults import self_test as source_defaults_self_test  # noqa: E402
+
 # Which files carry the contract, per SDK. A file listed here that does not
 # exist is an ERROR, not a skip: an SDK that vanished must not read as passing.
 SDK_SOURCES: dict[str, list[str]] = {
@@ -555,6 +564,7 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
     failures.extend(check_swift_manifests(root))
     failures.extend(check_release_versions(root, spec))
     failures.extend(check_doc_wires(root, spec))
+    failures.extend(check_source_defaults(root))
     return failures
 
 
@@ -580,6 +590,10 @@ def self_test() -> int:
     # in a fixture tree and asserting it is reported.
     if doc_wires_self_test():
         problems.append("doc_wires self-test failed; see its own output above")
+
+    # So does the default-model half.
+    if source_defaults_self_test():
+        problems.append("source_defaults self-test failed; see its own output above")
 
     # --- half one: the SPEC moves, every SDK must go red ---------------------
     for label, mutate in (

@@ -197,3 +197,27 @@ test_that("named helpers cover every remaining gateway operation", {
     "/videos/video%2Fone/content"
   )
 })
+
+test_that("the nrouter_chat default model is callable on the wire it posts to", {
+  # `nrouter_chat()` calls `nrouter_chat_completions()`, which posts to
+  # `/chat/completions` unconditionally — this package has no per-model wire
+  # switch. The gateway resolves a provider endpoint PER WIRE, and a provider
+  # declaring no endpoint for a wire answers 404 `model_unavailable_on_route`:
+  # the model exists, just not on the route it was asked for. Anthropic declares
+  # Messages only, so an Anthropic-family default here is a 404 for a brand-new
+  # customer who called `nrouter_chat(messages)` with no model at all. Derive the
+  # gateway side rather than trusting this comment:
+  #
+  #   cd nrouter-rust-gateway
+  #   grep -n "fn endpoints" -A 12 src/sdk/providers/anthropic/transformation.rs
+  #   # => messages: Some(...), responses: NULL, chat_completions: NULL
+  default_model <- formals(nrouter_chat)$model
+  expect_type(default_model, "character")
+  expect_false(
+    grepl("^(anthropic/|claude-)", default_model),
+    info = paste0(
+      default_model, " is an Anthropic-family id, served on /v1/messages ONLY, ",
+      "but nrouter_chat() posts to /v1/chat/completions."
+    )
+  )
+})

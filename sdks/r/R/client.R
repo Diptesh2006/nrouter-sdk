@@ -57,7 +57,7 @@ nrouter_resolve_api_key <- function(api_key = NULL) {
 #' \dontrun{
 #' client <- nrouter_client()
 #' result <- nrouter_chat_completions(client, list(
-#'   model = "claude-sonnet-4-5",
+#'   model = "gpt-5.4-mini",
 #'   messages = list(list(role = "user", content = "Hello!"))
 #' ))
 #' # Unpriced is unknown, not free. Never render a NULL cost as 0.
@@ -431,12 +431,18 @@ nrouter_download_video_content <- function(client, video_id) {
 #'
 #' @param messages List of message objects, e.g.
 #'   \code{list(list(role = "user", content = "Hello!"))}.
-#' @param model Model name.
+#' @param model Model name. The default MUST be a model the gateway serves on
+#'   \code{/v1/chat/completions}, because that is the only wire this wrapper
+#'   posts to. The gateway resolves a provider endpoint PER WIRE and answers 404
+#'   \code{model_unavailable_on_route} when the provider declares none, so an
+#'   Anthropic id (Messages-only) was a 404 out of the box for anyone calling
+#'   \code{nrouter_chat(messages)} without naming a model. Pinned by
+#'   \code{tests/testthat/test-contract.R} and \code{conformance/source_defaults.py}.
 #' @param api_key nRouter API key. Defaults to \code{NROUTER_API_KEY}.
 #' @param base_url Gateway base URL.
 #' @return The parsed JSON response as an R list.
 #' @export
-nrouter_chat <- function(messages, model = "claude-sonnet-4-5", api_key = NULL,
+nrouter_chat <- function(messages, model = "gpt-5.4-mini", api_key = NULL,
                          base_url = nrouter_default_base_url()) {
   client <- nrouter_client(api_key = api_key, base_url = base_url)
   nrouter_chat_completions(client, list(model = model, messages = messages))$body

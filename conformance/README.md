@@ -68,3 +68,44 @@ with each other. Neither replaces the other.
 Either the spec changed and an SDK has not caught up, or an SDK dropped
 something. Fix the SDK — the spec is derived from the gateway and is the
 authority, not the other way round.
+
+## The default-model half — `conformance/source_defaults.py`
+
+An SDK's DEFAULT model fell between every gate here. The spec fixes headers,
+endpoints and error codes and carries no default model at all, and the
+documentation gate reads prose rather than SDK source. So a default naming a
+wire the gateway refuses **for that model** was invisible — while being the very
+first call a new user makes.
+
+Two of the ten SDKs ship one (Python's `DEFAULT_MODEL`, R's
+`nrouter_chat(model = ...)`), and both convenience wrappers post to
+`/v1/chat/completions` with no per-model wire switch. The gateway resolves a
+provider endpoint PER WIRE and answers 404 `model_unavailable_on_route` when the
+provider declares none, so an Anthropic-family default returned a not-found
+error out of the box.
+
+```bash
+python3 conformance/source_defaults.py             # check
+python3 conformance/source_defaults.py --self-test # prove the gate bites
+```
+
+It runs as part of `check_conformance.py`, and has two halves. The first holds
+each declared default to the wire its own call path reaches. The second asserts
+the eight SDKs registered as default-free genuinely declare none — without it, a
+default added to Go tomorrow is invisible, which is the hole a registry-only
+check always has.
+
+**What it will not catch:** it works from a REFUSAL list of model families
+(`anthropic/`, `claude-`), not an allowlist of servable ids. An allowlist would
+have to enumerate every published model and would go stale the moment Super
+Admin publishes one, so it would be loosened until it meant nothing. The refusal
+list therefore only grows when a provider narrows its endpoint layout — derive
+it from `src/sdk/providers/*/transformation.rs::endpoints`, never from memory.
+
+And its second half recognises two declaration shapes — a name containing
+`default` and `model`, and a `model = "…"` parameter default (the form R
+shipped). A default hidden behind some third spelling, say a bare `MODEL`
+constant, would pass. Both shapes are deliberately narrow so that the
+`"model": "claude-sonnet-4-5"` map literal every SDK carries in its package doc
+comment does not trip it; widening them until doc comments matched would produce
+a gate nobody could keep green, which is the same as no gate.

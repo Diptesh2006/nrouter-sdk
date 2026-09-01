@@ -40,7 +40,16 @@ _KEY_PREFIX = "sk-nrouter-"
 #: Kept in ONE place because it was previously a literal in a keyword default,
 #: which is how it drifted to `gpt-4o` and stayed there. Any surface that needs
 #: a default imports this name.
-DEFAULT_MODEL = "anthropic/claude-sonnet-4-5-20250929"
+#:
+#: It MUST be a model the gateway serves on `/v1/chat/completions`, because that
+#: is the only wire `_nRouterChat.chat()` posts to — there is no per-model wire
+#: switch here. The gateway resolves a provider endpoint PER WIRE and answers
+#: 404 `model_unavailable_on_route` when the provider declares none, so an
+#: Anthropic id (Messages-only) was a 404 out of the box for anyone who called
+#: `client.nrouter.chat(messages)` without naming a model. `gpt-5.4-mini` is the
+#: Rule #14 source-of-truth default and is served on this wire. Pinned by
+#: `tests/test_defaults.py` and by `conformance/source_defaults.py`.
+DEFAULT_MODEL = "gpt-5.4-mini"
 
 
 def _resolve_api_key(api_key: str | None) -> str:

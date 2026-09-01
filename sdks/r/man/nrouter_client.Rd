@@ -23,7 +23,7 @@ package calls the HTTP API directly via \pkg{httr}.
 \dontrun{
 client <- nrouter_client()
 result <- nrouter_chat_completions(client, list(
-  model = "claude-sonnet-4-5",
+  model = "gpt-5.4-mini",
   messages = list(list(role = "user", content = "Hello!"))
 ))
 # Unpriced is unknown, not free. Never render a NULL cost as 0.

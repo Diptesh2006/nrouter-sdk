@@ -289,8 +289,15 @@ scripts/test-all.sh
 
 The same command runs `scripts/security-audit.sh` and fails on known advisories
 across npm, PyPI, Maven/Gradle, Cargo and Dart dependency graphs. Install
-`osv-scanner` and `pip-audit`; missing security tooling fails loudly rather
-than silently skipping the audit.
+`osv-scanner` and `pip-audit`.
+
+Each language is an independent lane, so one absent toolchain no longer blocks
+the rest. A lane whose prerequisites are missing is reported `SKIPPED`, named,
+and counted separately — it is never a pass, and the summary says so in as many
+words. A lane that FAILS exits the script non-zero. For a release, set
+`NROUTER_REQUIRE_ALL=1`: a lane that did not run is then not evidence, and the
+run reports `INCOMPLETE` and exits non-zero. `scripts/test-all.sh --self-test`
+proves those three exit postures against the same engine the real run uses.
 
 The opt-in live tests are intentionally excluded unless `NROUTER_LIVE=1` is
 set, because they make billed inference calls.

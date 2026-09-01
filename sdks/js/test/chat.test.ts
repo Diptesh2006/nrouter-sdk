@@ -408,7 +408,8 @@ test('a failed compare arm does not discard the sibling answers that were billed
 // MEASURED, in the gateway's own source: Anthropic declares
 // `chat_completions: None`
 // (`nrouter-rust-gateway/src/sdk/providers/anthropic/transformation.rs:55-57`)
-// and so does Bedrock (`bedrock/transformation.rs:862`), so `transform.rs`
+// and so does Bedrock (`bedrock/transformation.rs`, the `endpoints` impl —
+// anchored by name, the line number has already drifted), so `transform.rs`
 // answers a 404 UnknownModel reading "is not available on
 // /v1/chat/completions". This SDK sent every model to that one path. The
 // package advertises `claude` and `bedrock` in its own keywords, and not one
@@ -440,7 +441,6 @@ test('the wire predicate covers every id shape the catalogue actually serves', (
     'claude-3-5-haiku-20241022',
     'anthropic/claude-sonnet-4-5-20250929',
     'us.anthropic.claude-opus-4-1-v1:0',
-    'bedrock-nova-pro',
     'CLAUDE-SONNET-4-5',
   ]) {
     assert.equal(usesMessagesWire(model), true, `${model} must take /messages`);
@@ -450,10 +450,142 @@ test('the wire predicate covers every id shape the catalogue actually serves', (
   }
   // A private alias that hides the family name still routes correctly when the
   // caller supplied the provider attribution it already passes to the sampling
-  // policy.
+  // policy — but ONLY for an attribution that implies the wire on its own.
+  //
+  // `anthropic` does: every model Anthropic serves direct is on /v1/messages.
+  // `bedrock` does NOT, and that is the whole of BEDROCK_PUBLISHED_ALIASES
+  // below: Bedrock is a MULTI-FAMILY catalogue whose Anthropic half is the only
+  // half this gateway serves on that wire.
   assert.equal(usesMessagesWire('house-model-v2'), false);
   assert.equal(usesMessagesWire('house-model-v2', 'anthropic'), true);
-  assert.equal(usesMessagesWire('house-model-v2', 'bedrock'), true);
+  assert.equal(usesMessagesWire('house-model-v2', 'bedrock'), false);
+});
+
+// ---------------------------------------------------------------------------
+// BEDROCK IS NOT ONE FAMILY, AND THE WIRE PREDICATE MUST NOT PRETEND IT IS
+//
+// SDK-GW-AUDIT-20260831-001..046. Measured against the LIVE served set on
+// 2026-08-31 (`GET /v1/models`, 209 rows): 46 rows carry a `bedrock/` model and
+// **not one of them is in the Anthropic family** — Nova, Llama, Qwen, Mistral,
+// DeepSeek, Gemma, GLM, MiniMax, Nemotron, Kimi, gpt-oss.
+//
+// The gateway serves the Anthropic family ONLY on Bedrock:
+// `require_anthropic_family` in
+// `nrouter-rust-gateway/src/sdk/providers/bedrock/transformation.rs` refuses
+// everything else on `/v1/messages`, because that route forwards an Anthropic
+// Messages body and every other Bedrock family takes a different `InvokeModel`
+// schema.
+//
+// So a `bedrock` ATTRIBUTION forcing the Anthropic wire was wrong for all 46.
+// It also failed WORSE than the alternative: `toAnthropicMessagesRequest` runs
+// first, so the body reaching the gateway had already had its OpenAI-only
+// fields translated away before the refusal — a caller reading the 400 could
+// not tell whether their request had survived.
+//
+// Both wires still fail for these ids today; that half is the gateway's and the
+// catalogue's (a model that cannot be served must be ABSENT, never
+// served-but-broken). What this SDK owes them is the honest wire and an
+// unmangled body, so the refusal they read is about the model and not about a
+// translation we chose.
+// ---------------------------------------------------------------------------
+
+/** `[public alias, upstream Bedrock model id]`, from the 2026-08-31 served set. */
+const BEDROCK_PUBLISHED_ALIASES: ReadonlyArray<readonly [string, string]> = [
+  ['devstral-2-123b', 'mistral.devstral-2-123b'],
+  ['gemma-3-12b-it', 'google.gemma-3-12b-it'],
+  ['gemma-3-27b-it', 'google.gemma-3-27b-it'],
+  ['gemma-3-4b-it', 'google.gemma-3-4b-it'],
+  ['glm-4.7', 'zai.glm-4.7'],
+  ['glm-4.7-flash', 'zai.glm-4.7-flash'],
+  ['glm-5', 'zai.glm-5'],
+  ['gpt-oss-120b-1', 'openai.gpt-oss-120b-1:0'],
+  ['gpt-oss-20b-1', 'openai.gpt-oss-20b-1:0'],
+  ['gpt-oss-safeguard-120b', 'openai.gpt-oss-safeguard-120b'],
+  ['gpt-oss-safeguard-20b', 'openai.gpt-oss-safeguard-20b'],
+  ['kimi-k2-thinking', 'moonshot.kimi-k2-thinking'],
+  ['kimi-k2.5', 'moonshotai.kimi-k2.5'],
+  ['llama3-1-70b-instruct', 'us.meta.llama3-1-70b-instruct-v1:0'],
+  ['llama3-1-8b-instruct', 'us.meta.llama3-1-8b-instruct-v1:0'],
+  ['llama3-3-70b-instruct', 'meta.llama3-3-70b-instruct-v1:0'],
+  ['llama4-maverick-17b-instruct', 'us.meta.llama4-maverick-17b-instruct-v1:0'],
+  ['llama4-scout-17b-instruct', 'us.meta.llama4-scout-17b-instruct-v1:0'],
+  ['magistral-small-2509', 'mistral.magistral-small-2509'],
+  ['minimax-m2', 'minimax.minimax-m2'],
+  ['minimax-m2.1', 'minimax.minimax-m2.1'],
+  ['minimax-m2.5', 'minimax.minimax-m2.5'],
+  ['ministral-3-14b-instruct', 'mistral.ministral-3-14b-instruct'],
+  ['ministral-3-3b-instruct', 'mistral.ministral-3-3b-instruct'],
+  ['ministral-3-8b-instruct', 'mistral.ministral-3-8b-instruct'],
+  ['mistral-large-3-675b-instruct', 'mistral.mistral-large-3-675b-instruct'],
+  ['nemotron-nano-12b-v2', 'nvidia.nemotron-nano-12b-v2'],
+  ['nemotron-nano-3-30b', 'nvidia.nemotron-nano-3-30b'],
+  ['nemotron-nano-9b-v2', 'nvidia.nemotron-nano-9b-v2'],
+  ['nemotron-super-3-120b', 'nvidia.nemotron-super-3-120b'],
+  ['nova-2-lite', 'us.amazon.nova-2-lite-v1:0'],
+  ['nova-lite', 'amazon.nova-lite-v1:0'],
+  ['nova-micro', 'us.amazon.nova-micro-v1:0'],
+  ['nova-pro', 'us.amazon.nova-pro-v1:0'],
+  ['pixtral-large-2502', 'us.mistral.pixtral-large-2502-v1:0'],
+  ['qwen3-235b-a22b-2507', 'qwen.qwen3-235b-a22b-2507-v1:0'],
+  ['qwen3-32b', 'qwen.qwen3-32b-v1:0'],
+  ['qwen3-coder-30b-a3b', 'qwen.qwen3-coder-30b-a3b-v1:0'],
+  ['qwen3-coder-480b-a35b', 'qwen.qwen3-coder-480b-a35b-v1:0'],
+  ['qwen3-next-80b-a3b', 'qwen.qwen3-next-80b-a3b'],
+  ['qwen3-vl-235b-a22b', 'qwen.qwen3-vl-235b-a22b'],
+  ['r1', 'us.deepseek.r1-v1:0'],
+  ['v3', 'deepseek.v3-v1:0'],
+  ['v3.2', 'deepseek.v3.2'],
+  ['voxtral-mini-3b-2507', 'mistral.voxtral-mini-3b-2507'],
+  ['voxtral-small-24b-2507', 'mistral.voxtral-small-24b-2507'],
+];
+
+test('every published Bedrock alias stays OFF the Anthropic Messages wire', () => {
+  assert.equal(
+    BEDROCK_PUBLISHED_ALIASES.length,
+    46,
+    'the published bedrock alias table changed size without its count',
+  );
+  for (const [alias, upstream] of BEDROCK_PUBLISHED_ALIASES) {
+    for (const id of [alias, upstream, `bedrock/${upstream}`]) {
+      assert.equal(
+        usesMessagesWire(id),
+        false,
+        `${id} is not Anthropic-family and must not be translated onto /messages`,
+      );
+      // The attribution the public catalogue itself reports for these rows.
+      assert.equal(
+        usesMessagesWire(id, 'AWS Bedrock'),
+        false,
+        `${id}: a bedrock attribution must not force the Anthropic wire`,
+      );
+    }
+  }
+});
+
+test('a Bedrock ANTHROPIC-family id still takes the Messages wire', () => {
+  // The mutation guard for the narrowing above: a predicate stubbed to `false`
+  // would pass every assertion in the previous test while making every Claude
+  // on Bedrock uncallable — the exact P0 this whole section was written for.
+  for (const id of [
+    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'us.anthropic.claude-opus-4-1-v1:0',
+    'bedrock/us.anthropic.claude-3-5-haiku-20241022-v1:0',
+  ]) {
+    assert.equal(usesMessagesWire(id), true, `${id} is Anthropic-family`);
+    assert.equal(usesMessagesWire(id, 'AWS Bedrock'), true, `${id} is Anthropic-family`);
+  }
+});
+
+test('a published Bedrock alias is sent UNTRANSLATED to /chat/completions', async () => {
+  const runner = fakeRunner({ text: OK_BODY });
+  await chat(runner, { model: 'nova-pro', prompt: 'hi', modelProvider: 'AWS Bedrock' });
+  assert.equal(runner.seen.path, '/chat/completions');
+  // `model` survives, which the Anthropic translator would have kept too — but
+  // `max_tokens` must NOT have been injected, because that injection is the
+  // Anthropic wire's requirement and its presence is how you tell the body was
+  // rewritten for a wire this model does not take.
+  assert.equal(runner.seen.body?.model, 'nova-pro');
+  assert.equal(runner.seen.body?.max_tokens, undefined);
 });
 
 test('a Claude model is sent to /messages, not to the path that 404s it', async () => {

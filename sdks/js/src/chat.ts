@@ -43,7 +43,9 @@ const CHAT_PATH = '/chat/completions';
  * a Claude or Bedrock model can be reached on. Measured in the gateway's own
  * source: Anthropic declares `chat_completions: None`
  * (`nrouter-rust-gateway/src/sdk/providers/anthropic/transformation.rs:55-57`)
- * and Bedrock does the same (`bedrock/transformation.rs:862`), so `transform.rs`
+ * and Bedrock does the same (`bedrock/transformation.rs`, the `endpoints` impl —
+ * anchored by name because the line number has already drifted once), so
+ * `transform.rs`
  * answers a 404 UnknownModel reading "is not available on
  * /v1/chat/completions". Sending every model to one path made every id this
  * package advertises in its own keywords — `claude`, `bedrock` — uncallable
@@ -333,23 +335,48 @@ export async function chat(
  *
  * The `provider` arm covers a private alias that hides the family name. It uses
  * the same attribution the caller already passes to the sampling policy, so it
- * costs no new option. Both failure directions are LOUD — a wrong wire is a
- * 404, never a wrong answer — which is why a heuristic is acceptable here at
- * all.
+ * costs no new option — but ONLY for an attribution that decides the wire by
+ * itself. `anthropic` does; `bedrock` does not, and the body of the function
+ * records what that cost.
+ *
+ * Both failure directions are LOUD — a wrong wire is a 404 or a 400, never a
+ * wrong answer — which is why a heuristic is acceptable here at all. What is
+ * NOT acceptable is a heuristic that also rewrites the body on its way to the
+ * wrong wire, which is why the attribution arm is now the narrow one.
  */
 export function usesMessagesWire(model: string, provider?: string | null): boolean {
   const id = (model ?? '').toLowerCase();
   if (
     id.includes('claude') ||
-    id.startsWith('bedrock-') ||
+    id.includes('anthropic') ||
     id.includes('haiku') ||
     id.includes('sonnet') ||
     id.includes('opus')
   ) {
     return true;
   }
-  const attribution = (provider ?? '').toLowerCase();
-  return attribution.includes('anthropic') || attribution.includes('bedrock');
+  // ATTRIBUTION, and only where the attribution decides the wire on its own.
+  //
+  // `anthropic` does: everything Anthropic serves direct is on `/v1/messages`,
+  // so a private alias attributed to it takes that wire whatever it is called.
+  //
+  // `bedrock` does NOT, and used to be accepted here. Bedrock is a MULTI-FAMILY
+  // catalogue and this gateway serves exactly one of those families —
+  // `require_anthropic_family` in the gateway's
+  // `src/sdk/providers/bedrock/transformation.rs` refuses every other family on
+  // `/v1/messages`, because that route forwards an Anthropic Messages body and
+  // a Nova, Llama, Qwen, Mistral or DeepSeek model takes a different
+  // `InvokeModel` schema. Measured against the live served set on 2026-08-31:
+  // all 46 published `bedrock/` rows are NON-Anthropic, so the attribution arm
+  // was wrong for every model it fired on.
+  //
+  // It also failed in the more expensive direction. Returning `true` runs
+  // `toAnthropicMessagesRequest` BEFORE anything is sent, so the body that met
+  // the gateway's refusal had already had its OpenAI-only fields translated
+  // away — and the caller reading that 400 could not tell whether the request
+  // they wrote was the request that was refused. Returning `false` sends the
+  // body they wrote to the wire the gateway will judge it on.
+  return (provider ?? '').toLowerCase().includes('anthropic');
 }
 
 /**

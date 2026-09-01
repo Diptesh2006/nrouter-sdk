@@ -35,7 +35,7 @@ def main() -> None:
 
     with nRouter() as client:
         response = client.chat.completions.create(
-            model="anthropic/claude-sonnet-4-5-20250929",
+            model="gpt-5.4-mini",
             messages=messages,
             tools=tools,
             tool_choice="auto",
@@ -62,7 +62,7 @@ def main() -> None:
                     })
 
                     final_resp = client.chat.completions.create(
-                        model="anthropic/claude-sonnet-4-5-20250929",
+                        model="gpt-5.4-mini",
                         messages=messages,
                     )
                     print("\nFinal Model Response:")

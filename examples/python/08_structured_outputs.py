@@ -11,7 +11,7 @@ from nroutersdk import nRouter
 def main() -> None:
     with nRouter() as client:
         response = client.chat.completions.create(
-            model="anthropic/claude-sonnet-4-5-20250929",
+            model="gpt-5.4-mini",
             messages=[
                 {"role": "system", "content": "You extract user information into JSON with keys: name, age, skills (list)."},
                 {"role": "user", "content": "Alex is a 29-year-old engineer proficient in Rust and Python."}

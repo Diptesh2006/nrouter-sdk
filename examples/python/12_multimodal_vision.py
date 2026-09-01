@@ -10,7 +10,7 @@ from nroutersdk import nRouter
 def main() -> None:
     with nRouter() as client:
         response = client.chat.completions.create(
-            model="anthropic/claude-sonnet-4-5-20250929",
+            model="gpt-5.4-mini",
             messages=[
                 {
                     "role": "user",

@@ -44,7 +44,7 @@ func main() {
 	}
 
 	res, err := client.ChatCompletions(context.Background(), map[string]any{
-		"model": "claude-sonnet-4-5",
+		"model": "gpt-5.4-mini",
 		"messages": []any{
 			map[string]any{"role": "user", "content": "Hello!"},
 		},

@@ -43,7 +43,7 @@ library(nrouter)
 client <- nrouter_client()                  # reads NROUTER_API_KEY
 
 result <- nrouter_chat_completions(client, list(
-  model = "claude-sonnet-4-5",
+  model = "gpt-5.4-mini",
   messages = list(list(role = "user", content = "Hello!"))
 ))
 
@@ -85,7 +85,7 @@ nrouter_chat(list(list(role = "user", content = "Hello!")))
 print(result$meta)
 #> <nrouter_meta>
 #>   request_id: nrouter-a1b2c3d4
-#>   model:      claude-sonnet-4-5
+#>   model:      gpt-5.4-mini
 #>   cost:       $0.00042
 
 # Branch on the status, never on `cost` being falsy. An unpriced model reports

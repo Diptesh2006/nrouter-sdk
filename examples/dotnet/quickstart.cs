@@ -27,7 +27,7 @@ http.DefaultRequestHeaders.Add("Authorization", $"Bearer {nrouterKey}");
 // ━━━ 2. Chat (org defaults auto-apply) ━━━━━━━━━━━━━━━━━━━━━━
 // Cache, guardrails, and rate limits auto-apply from org config.
 var client = new ChatClient(
-    model: "claude-sonnet-4-5",
+    model: "gpt-5.4-mini",
     credential: new ApiKeyCredential(nrouterKey),
     options: new OpenAIClientOptions { Endpoint = new Uri($"{nrouterBase}/v1") }
 );

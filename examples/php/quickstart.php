@@ -31,14 +31,14 @@ $client = OpenAI::factory()
     ->make();
 
 $response = $client->chat()->create([
-    'model' => 'anthropic/claude-sonnet-4-5-20250929',
+    'model' => 'gpt-5.4-mini',
     'messages' => [['role' => 'user', 'content' => 'Hello!']],
 ]);
 echo $response->choices[0]->message->content . "\n";
 
 // With prompt template + variables
 $withPrompt = $client->chat()->create([
-    'model' => 'anthropic/claude-sonnet-4-5-20250929',
+    'model' => 'gpt-5.4-mini',
     'messages' => [['role' => 'user', 'content' => 'Q1 revenue was $4.2M...']],
     'nrouter_prompt_template_id' => 'your-summarizer-id',
     'nrouter_prompt_variables' => ['language' => 'Spanish', 'max_length' => '100'],
@@ -51,7 +51,7 @@ $withPrompt = $client->chat()->create([
 // Disable cache for a single request
 // Cache is enabled by default. Pass nrouter_cache: false for a fresh response.
 $noCacheResponse = $client->chat()->create([
-    'model' => 'anthropic/claude-sonnet-4-5-20250929',
+    'model' => 'gpt-5.4-mini',
     'messages' => [['role' => 'user', 'content' => 'What is the latest news?']],
     'nrouter_cache' => false,
 ]);
@@ -60,7 +60,7 @@ $noCacheResponse = $client->chat()->create([
 
 try {
     $client->chat()->create([
-        'model' => 'anthropic/claude-sonnet-4-5-20250929',
+        'model' => 'gpt-5.4-mini',
         'messages' => [['role' => 'user', 'content' => 'My SSN is 123-45-6789']],
     ]);
 } catch (\Exception $e) {

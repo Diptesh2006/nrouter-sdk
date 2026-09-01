@@ -42,7 +42,7 @@ val client = NRouter()                       // reads NROUTER_API_KEY
 
 val result = client.chatCompletions(
     JSONObject()
-        .put("model", "claude-sonnet-4-5")
+        .put("model", "gpt-5.4-mini")
         .put("messages", listOf(mapOf("role" to "user", "content" to "Hello!")))
 )
 

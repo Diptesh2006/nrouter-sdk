@@ -34,7 +34,7 @@ client = OpenAI::Client.new(
 
 response = client.chat(
   parameters: {
-    model: "anthropic/claude-sonnet-4-5-20250929",
+    model: "gpt-5.4-mini",
     messages: [{ role: "user", content: "Hello!" }],
   }
 )
@@ -44,7 +44,7 @@ puts response.dig("choices", 0, "message", "content")
 
 response = client.chat(
   parameters: {
-    model: "anthropic/claude-sonnet-4-5-20250929",
+    model: "gpt-5.4-mini",
     messages: [{ role: "user", content: "Summarize Q1 earnings..." }],
     nrouter_prompt_template_id: "your-summarizer-id",
     nrouter_prompt_variables: { language: "Spanish", max_length: "100" },
@@ -59,7 +59,7 @@ response = client.chat(
 # Cache is enabled by default. Pass nrouter_cache: false for a fresh response.
 response = client.chat(
   parameters: {
-    model: "anthropic/claude-sonnet-4-5-20250929",
+    model: "gpt-5.4-mini",
     messages: [{ role: "user", content: "What is the latest news?" }],
     nrouter_cache: false,
   }
@@ -70,7 +70,7 @@ response = client.chat(
 begin
   client.chat(
     parameters: {
-      model: "anthropic/claude-sonnet-4-5-20250929",
+      model: "gpt-5.4-mini",
       messages: [{ role: "user", content: "My SSN is 123-45-6789" }],
     }
   )

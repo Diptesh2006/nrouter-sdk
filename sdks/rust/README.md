@@ -33,7 +33,7 @@ use async_openai::types::chat::{
 
 let client = nrouter::client()?;               // reads NROUTER_API_KEY
 let request = CreateChatCompletionRequestArgs::default()
-    .model("claude-sonnet-4-5")
+    .model("gpt-5.4-mini")
     .messages(vec![ChatCompletionRequestUserMessageArgs::default()
         .content("Hello!").build()?.into()])
     .build()?;
@@ -54,7 +54,7 @@ use serde_json::json;
 
 let client = nrouter::http::Client::from_env()?;
 let out = client.chat_completions(&json!({
-    "model": "claude-sonnet-4-5",
+    "model": "gpt-5.4-mini",
     "messages": [{"role": "user", "content": "Hello!"}]
 })).await?;
 

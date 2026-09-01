@@ -62,7 +62,7 @@ from nroutersdk import nRouter
 # Uses context manager to ensure clean connection pool shutdown
 with nRouter() as client:
     response = client.chat.completions.create(
-        model="anthropic/claude-sonnet-4-5-20250929",
+        model="gpt-5.4-mini",
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "Hello from Python!"},
@@ -91,7 +91,7 @@ from nroutersdk import AsyncnRouter
 async def main():
     async with AsyncnRouter() as client:
         response = await client.chat.completions.create(
-            model="anthropic/claude-sonnet-4-5-20250929",
+            model="gpt-5.4-mini",
             messages=[{"role": "user", "content": "Explain quantum computing in one sentence."}],
         )
 
@@ -132,7 +132,7 @@ from nroutersdk import nRouter
 
 with nRouter() as client:
     stream = client.chat.completions.create(
-        model="anthropic/claude-sonnet-4-5-20250929",
+        model="gpt-5.4-mini",
         messages=[{"role": "user", "content": "Write a short poem about routers."}],
         stream=True,
     )
@@ -196,7 +196,7 @@ tools = [
 
 with nRouter() as client:
     response = client.chat.completions.create(
-        model="anthropic/claude-sonnet-4-5-20250929",
+        model="gpt-5.4-mini",
         messages=[{"role": "user", "content": "What is the stock price of AAPL?"}],
         tools=tools,
         tool_choice="auto",
@@ -218,7 +218,7 @@ from nroutersdk import nRouter
 
 with nRouter() as client:
     response = client.chat.completions.create(
-        model="anthropic/claude-sonnet-4-5-20250929",
+        model="gpt-5.4-mini",
         messages=[
             {"role": "system", "content": "Extract data into JSON with keys: name, title, company."},
             {"role": "user", "content": "Sarah Connor is the Lead Security Engineer at Cyberdyne."}
@@ -275,7 +275,7 @@ from nroutersdk import (
 with nRouter() as client:
     try:
         response = client.chat.completions.create(
-            model="claude-sonnet-4-5-20250929",
+            model="gpt-5.4-mini",
             messages=[{"role": "user", "content": "Analyze confidential data..."}],
         )
     except nRouterGuardrailBlockedError as e:
@@ -326,7 +326,7 @@ http_client = httpx.Client(
 
 with nRouter(http_client=http_client, max_retries=3) as client:
     response = client.chat.completions.create(
-        model="anthropic/claude-sonnet-4-5-20250929",
+        model="gpt-5.4-mini",
         messages=[{"role": "user", "content": "Hello behind enterprise proxy!"}],
     )
 ```

@@ -39,10 +39,36 @@ One key. One bill. The live multi-provider catalog. Guardrails, prompt templates
 tracking built in. Browse the exact models available now at
 [nrouter.ai/api/public/models](https://nrouter.ai/api/public/models).
 
-Live catalogue note: as of 2026-08-29, the public examples use Anthropic
-Claude models because those are the models currently live through the gateway.
-Other provider routes may exist in the SDK contract, but examples should use a
-model returned by your own `/v1/models` response before spending.
+### The model decides the route — a Claude id is not callable on every endpoint
+
+The gateway resolves a provider endpoint **per wire**, and a provider that
+serves no endpoint for a wire answers `404 model_unavailable_on_route`: the
+model exists, just not on the route it was asked for. Anthropic serves
+**`/v1/messages` only** — it has neither chat-completions nor Responses — so a
+`claude-*` id posted to `/v1/chat/completions` fails for a customer holding a
+valid key and a real model id.
+
+| You are calling | Use a model from |
+|---|---|
+| `/v1/chat/completions`, `/v1/completions`, `/v1/responses` | OpenAI, Azure Foundry, Vertex AI or Alibaba (for example `gpt-5.4-mini`) |
+| `/v1/messages`, `/v1/messages/count_tokens` | Anthropic (`claude-sonnet-4-5-20250929`) or any provider serving that wire |
+
+The JS/TS SDK is the one exception: `client.nr.chat()` selects `/v1/messages`
+itself for `claude-*` ids and translates the response back, so the examples
+below pass a Claude id to it deliberately.
+
+Every example here uses a model measured in the live catalogue on 2026-08-31.
+Confirm against your own key before spending — the catalogue is per-org:
+
+```bash
+curl -s https://api.nrouter.ai/v1/models -H "Authorization: Bearer $NROUTER_API_KEY"
+```
+
+`gpt-5.4-mini` is a reasoning model: give it a real token budget (~1024), or a
+small `max_tokens` is spent on hidden reasoning and the reply comes back empty.
+
+`conformance/doc_wires.py` gates every snippet in this repository against that
+table.
 
 ## Authentication & API Keys
 
@@ -84,7 +110,7 @@ from nroutersdk import nRouter
 
 client = nRouter()  # reads NROUTER_API_KEY from env
 response = client.chat.completions.create(
-    model="anthropic/claude-sonnet-4-5-20250929",
+    model="gpt-5.4-mini",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)
@@ -107,7 +133,7 @@ import com.openai.models.chat.completions.*;
 OpenAIClient client = NRouter.create(); // reads NROUTER_API_KEY
 ChatCompletion res = client.chat().completions().create(
     ChatCompletionCreateParams.builder()
-        .model("claude-sonnet-4-5-20250929")
+        .model("gpt-5.4-mini")
         .addMessage(ChatCompletionMessageParam.ofUser(
             ChatCompletionUserMessageParam.builder().content("Hello!").build()
         ))
@@ -126,7 +152,7 @@ import NRouter
 
 let client = try NRouter() // reads NROUTER_API_KEY
 let res = try await client.chatCompletions([
-    "model": "claude-sonnet-4-5-20250929",
+    "model": "gpt-5.4-mini",
     "messages": [["role": "user", "content": "Hello!"]]
 ])
 print(res.meta.isPriced ? "Cost: $\(res.meta.cost!)" : "Cost: unpriced")
@@ -147,7 +173,7 @@ use serde_json::json;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::from_env()?; // reads NROUTER_API_KEY
     let out = client.chat_completions(&json!({
-        "model": "claude-sonnet-4-5-20250929",
+        "model": "gpt-5.4-mini",
         "messages": [{"role": "user", "content": "Hello from Rust!"}]
     })).await?;
     println!("Response: {:?}", out.body);
@@ -167,7 +193,7 @@ import 'package:nrouter/nrouter.dart';
 
 final client = NRouter(apiKey: 'sk-nrouter-...');
 final result = await client.chatCompletions({
-  'model': 'claude-sonnet-4-5-20250929',
+  'model': 'gpt-5.4-mini',
   'messages': [{'role': 'user', 'content': 'Hello from Dart!'}],
 });
 print(result.body['choices']);
@@ -189,7 +215,7 @@ import org.json.JSONObject
 val client = NRouter() // reads NROUTER_API_KEY
 val res = client.chatCompletions(
     JSONObject()
-        .put("model", "claude-sonnet-4-5-20250929")
+        .put("model", "gpt-5.4-mini")
         .put("messages", listOf(mapOf("role" to "user", "content" to "Hello from Kotlin!")))
 )
 println("Cost: ${res.meta.cost?.let { "$$it" } ?: "unpriced"}")
@@ -335,7 +361,7 @@ client-only routing behavior.
 
 ```bash
 NROUTER_MODEL=my-production-router ./run-your-example   # alias: strategy + fallback
-NROUTER_MODEL=claude-sonnet-4-5-20250929 ./run-your-example  # concrete: pinned
+NROUTER_MODEL=gpt-5.4-mini ./run-your-example  # concrete: pinned
 ```
 
 ### Not Served By The Gateway

@@ -10,7 +10,7 @@ from nroutersdk import AsyncnRouter
 
 async def fetch_summary(client: AsyncnRouter, topic: str) -> str:
     response = await client.chat.completions.create(
-        model="anthropic/claude-sonnet-4-5-20250929",
+        model="gpt-5.4-mini",
         messages=[{"role": "user", "content": f"Give a 1-sentence summary of: {topic}"}],
         max_tokens=100,
     )

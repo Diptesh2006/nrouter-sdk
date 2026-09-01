@@ -1,7 +1,8 @@
 // nRouter Swift Example
 //
 // Demonstrates:
-// 1. Basic chat completion with Claude Sonnet
+// 1. Basic chat completion. The model must be one whose provider serves
+//    /v1/chat/completions — Anthropic serves /v1/messages only.
 // 2. Response metadata inspection (cost, tokens, request ID, cache)
 // 3. Error handling with typed NRouterError
 // 4. Custom base URL & configuration
@@ -27,7 +28,7 @@ struct NRouterExample {
             // ━━━ 2. Chat Completion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             print("--- Sending Chat Request ---")
             let requestBody: [String: Any] = [
-                "model": "claude-sonnet-4-5-20250929",
+                "model": "gpt-5.4-mini",
                 "messages": [
                     ["role": "system", "content": "You are a concise AI assistant."],
                     ["role": "user", "content": "Explain what an LLM Gateway is in two sentences."]

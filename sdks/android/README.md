@@ -59,7 +59,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun send(prompt: String) = viewModelScope.launch {
         val result = client.chatCompletions(
             JSONObject()
-                .put("model", "claude-sonnet-4-5")
+                .put("model", "gpt-5.4-mini")
                 .put("messages", listOf(mapOf("role" to "user", "content" to prompt)))
         )
         // The SDK hops to Dispatchers.IO itself — main-thread safe.

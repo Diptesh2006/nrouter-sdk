@@ -13,7 +13,7 @@ async fn main() {
     // A Smart Router alias activates its strategy/fallback chain; a concrete
     // model id pins the request to that model.
     let model = std::env::var("NROUTER_MODEL")
-        .unwrap_or_else(|_| "claude-sonnet-4-5-20250929".to_string());
+        .unwrap_or_else(|_| "gpt-5.4-mini".to_string());
     let response = client.chat_completions(&json!({
         "model": model,
         "messages": [{"role": "user", "content": "Hello, nRouter!"}]

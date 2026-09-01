@@ -32,7 +32,7 @@ import 'package:nrouter/nrouter.dart';
 final client = NRouter(apiKey: myKey);
 
 final result = await client.chatCompletions({
-  'model': 'claude-sonnet-4-5',
+  'model': 'gpt-5.4-mini',
   'messages': [{'role': 'user', 'content': 'Hello!'}],
 });
 

@@ -34,6 +34,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "spec" / "nrouter-sdk-spec.json"
 
+# The DOCUMENTED snippets are a second corpus with its own failure mode: an SDK
+# can encode the contract perfectly while `README.md` tells the customer to post
+# a Claude id at `/v1/chat/completions`, which the gateway answers 404. Imported
+# by path so this file keeps working whether it is run as a script or imported.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from doc_wires import check_doc_wires  # noqa: E402
+from doc_wires import self_test as doc_wires_self_test  # noqa: E402
+
 # Which files carry the contract, per SDK. A file listed here that does not
 # exist is an ERROR, not a skip: an SDK that vanished must not read as passing.
 SDK_SOURCES: dict[str, list[str]] = {
@@ -546,6 +554,7 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
 
     failures.extend(check_swift_manifests(root))
     failures.extend(check_release_versions(root, spec))
+    failures.extend(check_doc_wires(root, spec))
     return failures
 
 
@@ -566,6 +575,11 @@ def self_test() -> int:
 
     if check():
         problems.append("baseline check is not green; fix conformance first")
+
+    # The doc-wire half proves itself the same way, by planting each violation
+    # in a fixture tree and asserting it is reported.
+    if doc_wires_self_test():
+        problems.append("doc_wires self-test failed; see its own output above")
 
     # --- half one: the SPEC moves, every SDK must go red ---------------------
     for label, mutate in (

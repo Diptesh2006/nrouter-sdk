@@ -70,7 +70,7 @@ async function main() {
     baseURL: baseUrl,
   });
 
-  console.log('\n[2/3] Calling client.chat() with prompt template and sampling...');
+  console.log('\n[2/3] Calling client.nr.chat() with prompt template and sampling...');
   const promptSel = promptTemplate('support-bot', { email: 'demo@example.com' });
   const sampling = buildSamplingParams({
     model: 'anthropic/claude-sonnet-4-5',

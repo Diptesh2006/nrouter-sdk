@@ -11,7 +11,7 @@ def main() -> None:
     with nRouter() as client:
         print("Streaming response:")
         stream = client.chat.completions.create(
-            model="anthropic/claude-sonnet-4-5-20250929",
+            model="gpt-5.4-mini",
             messages=[{"role": "user", "content": "Write a short 4-line poem about routers."}],
             max_tokens=256,
             stream=True,

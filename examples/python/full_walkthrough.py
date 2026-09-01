@@ -25,7 +25,7 @@ if not os.environ.get("NROUTER_API_KEY"):
 # Reads NROUTER_API_KEY and defaults to https://api.nrouter.ai/v1.
 client = nRouter()
 
-MODEL = "anthropic/claude-sonnet-4-5-20250929"
+MODEL = "gpt-5.4-mini"
 
 # ━━━ 1. WHAT THIS KEY CAN REACH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Scoped to your key — you see exactly the models you may call.

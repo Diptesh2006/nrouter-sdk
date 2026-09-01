@@ -13,7 +13,7 @@ def main() -> None:
     with nRouter() as client:
         print("Sending chat completion request...")
         response = client.chat.completions.create(
-            model="anthropic/claude-sonnet-4-5-20250929",
+            model="gpt-5.4-mini",
             messages=[
                 {"role": "system", "content": "You are a concise AI assistant."},
                 {"role": "user", "content": "Explain quantum computing in one sentence."},

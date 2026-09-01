@@ -17,19 +17,19 @@ BASE="https://api.nrouter.ai"
 curl "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model": "anthropic/claude-sonnet-4-5-20250929", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"model": "gpt-5.4-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
 
 # ━━━ 2. SEE COST + USAGE IN RESPONSE HEADERS ━━━━━━━━━━━━━━━
 
 curl -i "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model": "anthropic/claude-sonnet-4-5-20250929", "messages": [{"role": "user", "content": "Hi"}]}'
+  -d '{"model": "gpt-5.4-mini", "messages": [{"role": "user", "content": "Hi"}]}'
 # Response headers:
 #   x-nr-request-id: nrouter-a1b2c3d4e5f67890
 #   x-nr-request-cost: 0.000015
 #   x-nr-cost-status: exact
-#   x-nr-model: anthropic/claude-sonnet-4-5-20250929
+#   x-nr-model: openai/gpt-5.4-mini
 #   x-nr-input-tokens: 8
 #   x-nr-output-tokens: 4
 #   x-nr-total-tokens: 12
@@ -42,7 +42,7 @@ curl "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "anthropic/claude-sonnet-4-5-20250929",
+    "model": "gpt-5.4-mini",
     "messages": [{"role": "user", "content": "Q1 revenue was $4.2M..."}],
     "nrouter_prompt_template_id": "your-summarizer-id",
     "nrouter_prompt_variables": {"language": "Spanish", "max_length": "100"}
@@ -59,7 +59,7 @@ curl "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "anthropic/claude-sonnet-4-5-20250929",
+    "model": "gpt-5.4-mini",
     "messages": [{"role": "user", "content": "What is the latest news?"}],
     "nrouter_cache": false
   }'
@@ -69,7 +69,7 @@ curl "$BASE/v1/chat/completions" \
 curl "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model": "anthropic/claude-sonnet-4-5-20250929", "messages": [{"role": "user", "content": "My SSN is 123-45-6789"}]}'
+  -d '{"model": "gpt-5.4-mini", "messages": [{"role": "user", "content": "My SSN is 123-45-6789"}]}'
 # Returns 400: {"error": "Request blocked by guardrail: PII detected", "code": "guardrail_blocked"}
 
 # ━━━ 5. STREAMING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -77,7 +77,7 @@ curl "$BASE/v1/chat/completions" \
 curl -N "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model": "anthropic/claude-sonnet-4-5-20250929", "messages": [{"role": "user", "content": "Count to 10"}], "stream": true}'
+  -d '{"model": "gpt-5.4-mini", "messages": [{"role": "user", "content": "Count to 10"}], "stream": true}'
 
 # ━━━ 6. AUDIO (TTS) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -107,12 +107,12 @@ curl "$BASE/v1/images/generations" \
   -H "Content-Type: application/json" \
   -d '{"model": "dall-e-3", "prompt": "A cat astronaut on Mars", "size": "1024x1024"}'
 
-# ━━━ 9. MODERATIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-curl "$BASE/v1/moderations" \
-  -H "Authorization: Bearer $NROUTER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"input": "I want to harm someone"}'
+# ━━━ 9. NOT MOUNTED BY THE GATEWAY ━━━━━━━━━━━━━━━━━━━━━━━━
+# spec/nrouter-sdk-spec.json › unsupported_endpoints lists every path the
+# gateway does not serve — moderations, rerank, OCR, image edits, files,
+# fine-tuning, batches, assistants/threads, vector stores, uploads,
+# containers, conversations and webhooks. Calling one returns 404. This
+# file used to demonstrate a POST to the moderations path; it never worked.
 
 # ━━━ 10. LIST MODELS + PRICING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -123,7 +123,7 @@ curl "$BASE/v1/chat/completions" \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "anthropic/claude-sonnet-4-5-20250929",
+    "model": "gpt-5.4-mini",
     "messages": [{"role": "user", "content": "What is the weather in Tokyo?"}],
     "tools": [{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}]
   }'

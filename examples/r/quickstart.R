@@ -5,7 +5,7 @@ library(nrouter)
 
 # A Smart Router alias activates its strategy/fallback chain; a concrete model
 # id pins the request to that model.
-model <- Sys.getenv("NROUTER_MODEL", "claude-sonnet-4-5-20250929")
+model <- Sys.getenv("NROUTER_MODEL", "gpt-5.4-mini")
 client <- nrouter_client()
 
 response <- nrouter_chat_completions(client, list(

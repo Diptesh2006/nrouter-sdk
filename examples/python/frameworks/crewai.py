@@ -14,7 +14,7 @@ from crewai import Agent, Task, Crew
 # nRouter SDK for guardrails, credits, prompts.
 # CrewAI uses env vars (OPENAI_API_KEY/OPENAI_API_BASE) for LLM calls.
 client = nRouter()  # reads NROUTER_API_KEY from env
-MODEL = "anthropic/claude-sonnet-4-5-20250929"
+MODEL = "gpt-5.4-mini"
 
 # ━━━ 1. SEE WHAT THIS KEY CAN REACH ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -27,12 +27,13 @@ print("Models:", [m.id for m in client.models.list().data])
 
 # ━━━ 2. MULTI-MODEL AGENTS (each can use a different model) ━
 
-# Researcher uses Claude (best for analysis)
+# Every agent below goes through LiteLLM/OpenAI chat-completions, so the model
+# must belong to a provider that serves that wire.
 researcher = Agent(
     role="Researcher",
     goal="Find accurate information about a topic",
     backstory="You are an expert researcher with attention to detail.",
-    llm="anthropic/claude-sonnet-4-5-20250929",
+    llm="gpt-5.4-mini",
     verbose=True,
 )
 
@@ -41,7 +42,7 @@ writer = Agent(
     role="Writer",
     goal="Write clear, engaging content",
     backstory="You are a skilled technical writer.",
-    llm="anthropic/claude-sonnet-4-5-20250929",
+    llm="gpt-5.4-mini",
     verbose=True,
 )
 

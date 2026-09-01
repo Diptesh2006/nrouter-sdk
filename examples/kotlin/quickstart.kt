@@ -30,7 +30,7 @@ fun main() = runBlocking {
         // ━━━ 2. Chat Completion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         println("--- Sending Chat Request ---")
         val requestBody = JSONObject()
-            .put("model", "claude-sonnet-4-5-20250929")
+            .put("model", "gpt-5.4-mini")
             .put("messages", JSONArray().apply {
                 put(JSONObject().put("role", "system").put("content", "You are a helpful assistant."))
                 put(JSONObject().put("role", "user").put("content", "Explain what an LLM Gateway is in two sentences."))

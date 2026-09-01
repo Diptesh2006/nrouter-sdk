@@ -49,7 +49,7 @@ import NRouter
 let client = try NRouter()                     // reads NROUTER_API_KEY
 
 let result = try await client.chatCompletions([
-    "model": "claude-sonnet-4-5",
+    "model": "gpt-5.4-mini",
     "messages": [["role": "user", "content": "Hello!"]],
 ])
 ```

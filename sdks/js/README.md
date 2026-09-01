@@ -8,8 +8,11 @@ SDK for the [nRouter](https://nrouter.ai) LLM gateway: one API key for models
 across six provider clouds. It wraps the official `openai` package with the
 same API surface, pre-configured for nRouter.
 
-As of 2026-08-29, the runnable examples use an Anthropic Claude model returned
-by the public catalogue. The SDK does not restrict you to Anthropic: pass any
+The examples below pass a `claude-*` id on purpose: `client.nr.chat()` sends
+Claude ids to `/v1/messages` itself (the only wire Anthropic serves) and
+translates the response back to an OpenAI-shaped completion. The plain
+`client.chat.completions.create()` surface does **not** do that — give it a
+model whose provider serves chat-completions, such as `gpt-5.4-mini`. Pass any
 model returned by `client.nrouterModels.list()` for your key.
 
 ## Install

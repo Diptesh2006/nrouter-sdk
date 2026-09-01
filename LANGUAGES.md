@@ -9,6 +9,20 @@ api_key   →  your NROUTER_API_KEY
 
 That's it. Guardrails, prompt templates, credit tracking, and cost headers all work automatically regardless of language.
 
+**Pick a model that serves the wire you are calling.** The gateway resolves a
+provider endpoint per wire, so a provider that serves no endpoint for a wire
+answers `404 model_unavailable_on_route` — the model exists, just not on the
+route it was asked for. Anthropic serves `/v1/messages` only, so a `claude-*`
+id sent through an OpenAI SDK's `chat.completions` fails with a valid key and a
+real model id. Every OpenAI-SDK example on this page therefore uses
+`gpt-5.4-mini`; the native-Messages examples use a Claude id. Both were present
+in the live catalogue on 2026-08-31 — confirm against your own key, which sees
+its own catalogue:
+
+```bash
+curl -s https://api.nrouter.ai/v1/models -H "Authorization: Bearer $NROUTER_API_KEY"
+```
+
 ---
 
 ## Cost Transparency
@@ -67,7 +81,7 @@ curl https://api.nrouter.ai/v1/chat/completions \
   -H "Authorization: Bearer $NROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-sonnet-4-5",
+    "model": "gpt-5.4-mini",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 
@@ -121,7 +135,7 @@ curl https://api.nrouter.ai/v1/chat/completions \
   -H "Content-Type: application/json" \
   -N \
   -d '{
-    "model": "claude-sonnet-4-5",
+    "model": "gpt-5.4-mini",
     "messages": [{"role": "user", "content": "Count to 10"}],
     "stream": true
   }'
@@ -143,7 +157,7 @@ client = nRouter()  # reads NROUTER_API_KEY from env
 
 # Chat
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5",
+    model="gpt-5.4-mini",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)
@@ -193,7 +207,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="claude-sonnet-4-5",
+    model="gpt-5.4-mini",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)
@@ -238,7 +252,7 @@ const client = new OpenAI({
 
 // Chat
 const response = await client.chat.completions.create({
-  model: "claude-sonnet-4-5",
+  model: "gpt-5.4-mini",
   messages: [{ role: "user", content: "Hello!" }],
 });
 console.log(response.choices[0].message.content);
@@ -305,7 +319,7 @@ client cannot do without `.WithRawResponse()` plumbing at every call site:
 ```go
 client, _ := nrouter.NewFromEnv() // reads NROUTER_API_KEY
 res, err := client.ChatCompletions(ctx, map[string]any{
-    "model":    "claude-sonnet-4-5",
+    "model":    "gpt-5.4-mini",
     "messages": []any{map[string]any{"role": "user", "content": "Hello!"}},
 })
 // res.Meta.Cost is nil when unpriced. Nil is not zero.
@@ -338,7 +352,7 @@ func main() {
     // Chat
     response, err := client.Chat.Completions.New(context.Background(),
         openai.ChatCompletionNewParams{
-            Model: "claude-sonnet-4-5",
+            Model: "gpt-5.4-mini",
             Messages: []openai.ChatCompletionMessageParamUnion{
                 openai.UserMessage("Hello!"),
             },
@@ -382,7 +396,7 @@ public class nRouterExample {
         // Chat
         ChatCompletion response = client.chat().completions().create(
             ChatCompletionCreateParams.builder()
-                .model("claude-sonnet-4-5")
+                .model("gpt-5.4-mini")
                 .addMessage(ChatCompletionMessageParam.ofUser(
                     ChatCompletionUserMessageParam.builder()
                         .content("Hello!")
@@ -415,7 +429,7 @@ client = OpenAI::Client.new(
 # Chat
 response = client.chat(
   parameters: {
-    model: "claude-sonnet-4-5",
+    model: "gpt-5.4-mini",
     messages: [{ role: "user", content: "Hello!" }],
   }
 )
@@ -472,7 +486,7 @@ $client = OpenAI::factory()
 
 // Chat
 $response = $client->chat()->create([
-    'model' => 'claude-sonnet-4-5',
+    'model' => 'gpt-5.4-mini',
     'messages' => [
         ['role' => 'user', 'content' => 'Hello!'],
     ],
@@ -512,7 +526,7 @@ using OpenAI.Chat;
 
 // Configure client
 var client = new ChatClient(
-    model: "claude-sonnet-4-5",
+    model: "gpt-5.4-mini",
     credential: new ApiKeyCredential(Environment.GetEnvironmentVariable("NROUTER_API_KEY")!),
     options: new OpenAIClientOptions
     {
@@ -544,7 +558,7 @@ use serde_json::json;
 
 let client = nrouter::http::Client::from_env()?;      // reads NROUTER_API_KEY
 let out = client.chat_completions(&json!({
-    "model": "claude-sonnet-4-5",
+    "model": "gpt-5.4-mini",
     "messages": [{"role": "user", "content": "Hello!"}]
 })).await?;
 
@@ -583,7 +597,7 @@ async fn main() {
     let client = Client::with_config(config);
 
     let request = CreateChatCompletionRequestArgs::default()
-        .model("claude-sonnet-4-5")
+        .model("gpt-5.4-mini")
         .messages(vec![
             ChatCompletionRequestUserMessageArgs::default()
                 .content("Hello!")
@@ -615,7 +629,7 @@ val client = NRouter()                        // reads NROUTER_API_KEY
 
 val result = client.chatCompletions(
     JSONObject()
-        .put("model", "claude-sonnet-4-5")
+        .put("model", "gpt-5.4-mini")
         .put("messages", listOf(mapOf("role" to "user", "content" to "Hello!")))
 )
 
@@ -641,7 +655,7 @@ val client = OpenAI(
 
 val response = client.chatCompletion(
     ChatCompletionRequest(
-        model = ModelId("claude-sonnet-4-5"),
+        model = ModelId("gpt-5.4-mini"),
         messages = listOf(
             ChatMessage(role = ChatRole.User, content = "Hello!")
         ),
@@ -665,7 +679,7 @@ import NRouter
 let client = try NRouter(apiKey: myKey)        // no env on iOS — pass the key
 
 let result = try await client.chatCompletions([
-    "model": "claude-sonnet-4-5",
+    "model": "gpt-5.4-mini",
     "messages": [["role": "user", "content": "Hello!"]],
 ])
 
@@ -689,7 +703,7 @@ let openAI = OpenAI(configuration: configuration)
 
 let query = ChatQuery(
     messages: [.init(role: .user, content: "Hello!")],
-    model: .init("claude-sonnet-4-5")
+    model: .init("gpt-5.4-mini")
 )
 
 let result = try await openAI.chats(query: query)
@@ -712,7 +726,7 @@ import 'package:nrouter/nrouter.dart';
 final client = NRouter(apiKey: myKey);
 
 final result = await client.chatCompletions({
-  'model': 'claude-sonnet-4-5',
+  'model': 'gpt-5.4-mini',
   'messages': [{'role': 'user', 'content': 'Hello!'}],
 });
 
@@ -742,7 +756,7 @@ void main() async {
   OpenAI.baseUrl = 'https://api.nrouter.ai';
 
   final response = await OpenAI.instance.chat.create(
-    model: 'claude-sonnet-4-5',
+    model: 'gpt-5.4-mini',
     messages: [
       OpenAIChatCompletionChoiceMessageModel(
         role: OpenAIChatMessageRole.user,
@@ -766,7 +780,7 @@ config :openai,
 
 # Usage
 {:ok, response} = OpenAI.chat_completion(
-  model: "claude-sonnet-4-5",
+  model: "gpt-5.4-mini",
   messages: [%{role: "user", content: "Hello!"}]
 )
 IO.puts(hd(response.choices)["message"]["content"])
@@ -780,7 +794,7 @@ IO.puts(hd(response.choices)["message"]["content"])
 # Quick one-liner
 http POST https://api.nrouter.ai/v1/chat/completions \
   Authorization:"Bearer $NROUTER_API_KEY" \
-  model=claude-sonnet-4-5 \
+  model=gpt-5.4-mini \
   messages:='[{"role":"user","content":"Hello!"}]'
 ```
 

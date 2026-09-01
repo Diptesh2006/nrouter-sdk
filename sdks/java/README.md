@@ -35,7 +35,7 @@ OpenAIClient client = NRouter.create(); // reads NROUTER_API_KEY from env
 
 ChatCompletion response = client.chat().completions().create(
         ChatCompletionCreateParams.builder()
-                .model("claude-sonnet-4-5")
+                .model("gpt-5.4-mini")
                 .addMessage(ChatCompletionMessageParam.ofUser(
                         ChatCompletionUserMessageParam.builder()
                                 .content("Hello!")

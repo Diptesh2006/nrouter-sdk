@@ -258,22 +258,46 @@ export async function chat(
     );
   }
 
-  // SDK-026 — A GUARDRAIL BLOCK ARRIVES AS HTTP 200.
+  // SDK-026 — A 2xx CARRYING AN ERROR ENVELOPE IS A REFUSAL, NOT A COMPLETION.
   //
-  // The gateway serves PostCallVerdict::Blocked by REPLACING the body with
-  // {"error":{"type":"guardrail_blocked","message":...}} while keeping the
-  // UPSTREAM status: axum_status is computed from the provider's status before
-  // the verdict is consulted (chat_completions.rs:527 vs ~598). So the one
-  // refusal a caller most needs to see arrives labelled 200, and every "2xx =
-  // success" client hands it back as a completion with no `choices`. The
-  // application shows an empty answer and the guardrail protects nobody
-  // downstream, while reading as configured in the dashboard.
+  // ⚠️ RE-DERIVED FROM THE GATEWAY. This block used to assert "a guardrail
+  // block arrives as HTTP 200" and cite a status computed before the verdict
+  // was consulted. That is NO LONGER TRUE on the buffered path and keeping the
+  // claim here would teach the next reader to branch on a status the gateway
+  // stopped sending:
+  //
+  //   * `PostCallVerdict::client_status` (postcall.rs:224-231) converts a
+  //     blocked verdict over a SUCCESSFUL upstream response to 400, and returns
+  //     the upstream status untouched otherwise.
+  //   * Every buffered handler now applies it BEFORE building the response —
+  //     chat_completions.rs:545, messages.rs:514, responses.rs:595,
+  //     completions.rs:585, multimodal.rs:1528, audio.rs:1406, and the cache
+  //     replay at response_cache.rs:407.
+  //
+  // So a post-call guardrail block over a 2xx upstream reaches this SDK as a
+  // 400 and is thrown by `gatewayFailure` above, never here. Streaming is the
+  // one case that cannot be fixed this way — the status line is long gone by
+  // the time an output guardrail decides — and that arrives as a terminal
+  // `event: error` SSE frame, which is ./stream's to read, not this function's.
+  //
+  // THIS GUARD IS STILL LOAD-BEARING, for a DIFFERENT producer. On
+  // `PostCallVerdict::Clean` the gateway serves the upstream bytes UNTOUCHED
+  // (postcall.rs:187-192), so a provider that answers 200 with an error
+  // document — several do — passes through with its 2xx intact. Deleting this
+  // because "the gateway sends 400 now" would hand that body back as a
+  // completion with no `choices`: an empty answer for a request that was
+  // billed, which is exactly the failure the original block existed to stop.
   //
   // The test is deliberately narrow. A real completion never carries a
-  // top-level `error`, and the withheld document carries nothing ELSE — so
+  // top-level `error`, and a withheld document carries nothing ELSE — so
   // requiring both (an error object with a message, AND no completion-shaped
   // key beside it) cannot swallow a legitimate reply whose payload happens to
   // mention an error.
+  //
+  // `envelope.code` is read from `error.type` when `error.code` is absent
+  // (errors.ts `errorEnvelopeOnSuccess`), because the gateway's error documents
+  // carry NO `code` field at all — keying on `code` alone is what made
+  // `guardrail_blocked` unreachable across these SDKs.
   const envelope = errorEnvelopeOnSuccess(decoded);
   if (envelope) {
     throw createError(envelope.message, {

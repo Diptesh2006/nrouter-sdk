@@ -94,6 +94,22 @@
       "always": false
     }
   },
+  "error_envelope": {
+    "shape": {
+      "error": {
+        "type": "string",
+        "message": "string"
+      }
+    },
+    "no_code_field": true,
+    "description": "Every gateway refusal body is {\"error\":{\"type\",\"message\"}}. There is NO `code` field on any error response, so a client that classifies on `error.code` alone can never reach a typed code. Read `error.type`, then fall back to the HTTP status, then to the message.",
+    "type_values": {
+      "gateway_error": "The gateway's own error type rendered this refusal. It is the literal `type` for EVERY such refusal — authentication, credits, model, rate limit, service, and a PRE-call guardrail block alike — so `type` alone does not identify the code here; the HTTP status does.",
+      "guardrail_blocked": "An OUTPUT (post-call) guardrail withheld an otherwise successful provider response. This is the one `type` that carries a stable code."
+    },
+    "join_key": "x-nr-request-id",
+    "join_key_note": "Always present on every response, success or refusal. It is the only join key between a refusal shown to a user and the request record behind it, so surface it wherever an error is displayed."
+  },
   "errors": {
     "invalid_request": {
       "http": 400,
@@ -103,7 +119,12 @@
     "guardrail_blocked": {
       "http": 400,
       "class": "nRouterGuardrailBlockedError",
-      "description": "Guardrail denied the request"
+      "description": "A guardrail denied the request (pre-call) or withheld the response (post-call)",
+      "detection": {
+        "buffered": "HTTP 400 AND (`error.type` == \"guardrail_blocked\" OR the message contains \"guardrail\"). Both arms are required: a post-call block sends the stable `type`, while a pre-call block is rendered by the gateway's generic error path as `type` \"gateway_error\" with a message beginning \"request blocked by a guardrail\".",
+        "streaming": "A stream's status line is already sent when an output guardrail decides, so the cut arrives INSIDE a 200 response as a terminal `event: error` SSE frame whose data is the same {\"error\":{\"type\":\"guardrail_blocked\",...}} document. A streaming client that only inspects the HTTP status will read a withheld response as a successful, empty one.",
+        "not_2xx_buffered": "On a buffered route a post-call block over a successful upstream response is converted to 400 before the response is built, so it never arrives as a 2xx. A 2xx that nonetheless carries an error envelope is a provider-origin document passed through unchanged, not a guardrail verdict."
+      }
     },
     "invalid_api_key": {
       "http": 401,
@@ -258,14 +279,14 @@
       "path": "/v1/videos/{id}",
       "sdk": "videos.retrieve()",
       "features": [],
-      "note": "Collection is free \u2014 the customer is billed when the video is CREATED, not when its status is polled or its bytes are downloaded (gateway src/http/videos.rs: \"Create bills; collection is free\")."
+      "note": "Collection is free — the customer is billed when the video is CREATED, not when its status is polled or its bytes are downloaded (gateway src/http/videos.rs: \"Create bills; collection is free\")."
     },
     {
       "method": "GET",
       "path": "/v1/videos/{id}/content",
       "sdk": "videos.download_content()",
       "features": [],
-      "note": "Collection is free \u2014 the customer is billed when the video is CREATED, not when its status is polled or its bytes are downloaded (gateway src/http/videos.rs: \"Create bills; collection is free\")."
+      "note": "Collection is free — the customer is billed when the video is CREATED, not when its status is polled or its bytes are downloaded (gateway src/http/videos.rs: \"Create bills; collection is free\")."
     }
   ],
   "unsupported_endpoints": {

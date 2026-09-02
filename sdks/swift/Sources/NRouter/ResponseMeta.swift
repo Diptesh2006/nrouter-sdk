@@ -22,6 +22,10 @@ public struct NRouterResponseMeta: Equatable, Sendable {
     public var cacheWriteTokens: Int?
     /// On a 429, which limit measured the refusal.
     public var limitSource: String?
+    /// Set when this request crossed a soft budget you configured; it still
+    /// served. `<scope> soft_budget <spend>/<ceiling>`, e.g.
+    /// `org soft_budget 80.00/100.00`.
+    public var budgetWarning: String?
     /// On a 401, the gateway's stable reason.
     public var authReason: String?
     /// `hit` or `miss`; absent when the response cache did not participate.
@@ -41,6 +45,7 @@ public struct NRouterResponseMeta: Equatable, Sendable {
         "x-nr-cache-read-tokens",
         "x-nr-cache-write-tokens",
         "x-nr-limit-source",
+        "x-nr-budget-warning",
         "x-nr-auth-reason",
         "x-nr-response-cache",
         "x-nr-response-cache-age",
@@ -64,6 +69,7 @@ public struct NRouterResponseMeta: Equatable, Sendable {
         cacheReadTokens = int("x-nr-cache-read-tokens")
         cacheWriteTokens = int("x-nr-cache-write-tokens")
         limitSource = lookup("x-nr-limit-source")
+        budgetWarning = lookup("x-nr-budget-warning")
         authReason = lookup("x-nr-auth-reason")
         responseCache = lookup("x-nr-response-cache")
         responseCacheAge = int("x-nr-response-cache-age")

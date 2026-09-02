@@ -67,9 +67,9 @@ match out.meta.cost {
 }
 ```
 
-`ResponseMeta` carries all thirteen `x-nr-*` headers: `request_id`, `cost`,
+`ResponseMeta` carries all fourteen `x-nr-*` headers: `request_id`, `cost`,
 `cost_status`, `model`, `input_tokens`, `output_tokens`, `total_tokens`,
-`cache_read_tokens`, `cache_write_tokens`, `limit_source`, `auth_reason`,
+`cache_read_tokens`, `cache_write_tokens`, `limit_source`, `budget_warning`, `auth_reason`,
 `response_cache`, `response_cache_age`.
 
 ## Streaming

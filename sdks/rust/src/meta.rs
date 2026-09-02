@@ -23,6 +23,10 @@ pub struct ResponseMeta {
     pub cache_write_tokens: Option<u64>,
     /// On a 429, which limit measured the refusal.
     pub limit_source: Option<String>,
+    /// Set when this request crossed a soft budget you configured; it still
+    /// served. `<scope> soft_budget <spend>/<ceiling>`, e.g.
+    /// `org soft_budget 80.00/100.00`.
+    pub budget_warning: Option<String>,
     /// On a 401, the gateway's stable reason.
     pub auth_reason: Option<String>,
     /// `hit` or `miss`; absent when the response cache did not participate.
@@ -32,7 +36,7 @@ pub struct ResponseMeta {
 }
 
 /// Every header this SDK reads, exactly as the spec names them.
-pub const HEADER_NAMES: [&str; 13] = [
+pub const HEADER_NAMES: [&str; 14] = [
     "x-nr-request-id",
     "x-nr-request-cost",
     "x-nr-cost-status",
@@ -43,6 +47,7 @@ pub const HEADER_NAMES: [&str; 13] = [
     "x-nr-cache-read-tokens",
     "x-nr-cache-write-tokens",
     "x-nr-limit-source",
+    "x-nr-budget-warning",
     "x-nr-auth-reason",
     "x-nr-response-cache",
     "x-nr-response-cache-age",
@@ -69,6 +74,7 @@ impl ResponseMeta {
             cache_read_tokens: num("x-nr-cache-read-tokens"),
             cache_write_tokens: num("x-nr-cache-write-tokens"),
             limit_source: get("x-nr-limit-source"),
+            budget_warning: get("x-nr-budget-warning"),
             auth_reason: get("x-nr-auth-reason"),
             response_cache: get("x-nr-response-cache"),
             response_cache_age: num("x-nr-response-cache-age"),

@@ -244,15 +244,15 @@ nothing):
 | Language | Install | Registry URL | Registry status | Package | Typed errors | `x-nr-*` metadata |
 |----------|---------|--------------|---|---------|---|---|
 | **Python** | `pip install nrouter-sdk` | [pypi.org/project/nrouter-sdk](https://pypi.org/project/nrouter-sdk/) | ✅ PUBLISHED | [`sdks/python/`](sdks/python/) | ✅ typed wrappers | ✅ `client.last_response` |
-| **TypeScript / JS** | `npm install @nrouter_ai/sdk` | [npmjs.com/package/@nrouter_ai/sdk](https://www.npmjs.com/package/@nrouter_ai/sdk) | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | ✅ 9 codes | ✅ 13 headers |
-| **Java** | Maven `ai.nrouter:nrouter-sdk` | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | ✅ 9 codes (native HTTP surface) | ✅ 13 headers (native HTTP surface) |
-| **Kotlin** | local Maven artifact | — | SOURCE PREVIEW | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 13 headers |
-| **Android** | local Maven artifact | — | SOURCE PREVIEW | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 13 headers |
-| **Rust** | Cargo path dependency | — | SOURCE PREVIEW | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 13 headers |
-| **Dart / Flutter** | Dart path dependency | — | SOURCE PREVIEW | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 13 headers |
-| **Swift** | SwiftPM, this repo's URL | [github.com/nRouterAI/nrouter-sdk](https://github.com/nRouterAI/nrouter-sdk) | ✅ git tag `2.2.1` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 13 headers |
-| **R** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | [nrouterai.r-universe.dev/nrouter](https://nrouterai.r-universe.dev/nrouter) | 🧪 PUBLIC PREVIEW | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 13 headers |
-| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go/v2@v2.2.1` | [pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go/v2](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go/v2) | ✅ git tag `sdks/go/v2.2.1` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 13 headers |
+| **TypeScript / JS** | `npm install @nrouter_ai/sdk` | [npmjs.com/package/@nrouter_ai/sdk](https://www.npmjs.com/package/@nrouter_ai/sdk) | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | ✅ 9 codes | ✅ 14 headers |
+| **Java** | Maven `ai.nrouter:nrouter-sdk` | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | ✅ 9 codes (native HTTP surface) | ✅ 14 headers (native HTTP surface) |
+| **Kotlin** | local Maven artifact | — | SOURCE PREVIEW | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 14 headers |
+| **Android** | local Maven artifact | — | SOURCE PREVIEW | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 14 headers |
+| **Rust** | Cargo path dependency | — | SOURCE PREVIEW | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 14 headers |
+| **Dart / Flutter** | Dart path dependency | — | SOURCE PREVIEW | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 14 headers |
+| **Swift** | SwiftPM, this repo's URL | [github.com/nRouterAI/nrouter-sdk](https://github.com/nRouterAI/nrouter-sdk) | ✅ git tag `2.2.1` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 14 headers |
+| **R** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | [nrouterai.r-universe.dev/nrouter](https://nrouterai.r-universe.dev/nrouter) | 🧪 PUBLIC PREVIEW | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 14 headers |
+| **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go/v2@v2.2.1` | [pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go/v2](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go/v2) | ✅ git tag `sdks/go/v2.2.1` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 14 headers |
 
 Verify any row rather than trusting it:
 
@@ -266,7 +266,7 @@ curl -s https://nrouterai.r-universe.dev/src/contrib/PACKAGES | grep -A4 '^Packa
 ```
 
 Java keeps its vendor-compatible OpenAI factory and adds a Java 11 native HTTP
-surface for all thirteen `x-nr-*` headers and nine typed gateway errors.
+surface for all fourteen `x-nr-*` headers and nine typed gateway errors.
 JavaScript/TypeScript and the six first-party native clients expose the same
 contract. Android delegates those guarantees to Kotlin; Python adds the same
 nRouter typing and metadata capture around its vendor client.
@@ -435,6 +435,7 @@ conditional; `x-nr-request-id` is the only header present on every response.
 | `x-nr-cache-read-tokens` | integer | Cache-read tokens; emitted only when nonzero |
 | `x-nr-cache-write-tokens` | integer | Cache-write tokens; emitted only when nonzero |
 | `x-nr-limit-source` | string | `key`, `plan`, `team`, `user`, or `budget` on 429 responses |
+| `x-nr-budget-warning` | string | A soft budget you configured was crossed by this request, which still served; `<scope> soft_budget <spend>/<ceiling>`, e.g. `org soft_budget 80.00/100.00` |
 
 Python SDK captures these automatically in `client.last_response`. Other languages read them from HTTP response headers.
 

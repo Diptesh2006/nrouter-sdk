@@ -93,9 +93,9 @@ print("request \(meta.requestID ?? "-") | model \(meta.model ?? "-")")
 print(meta.isPriced ? "cost $\(meta.cost!)" : "cost unpriced")
 ```
 
-`NRouterResponseMeta` carries all thirteen `x-nr-*` headers: `requestID`,
+`NRouterResponseMeta` carries all fourteen `x-nr-*` headers: `requestID`,
 `cost`, `costStatus`, `model`, `inputTokens`, `outputTokens`, `totalTokens`,
-`cacheReadTokens`, `cacheWriteTokens`, `limitSource`, `authReason`,
+`cacheReadTokens`, `cacheWriteTokens`, `limitSource`, `budgetWarning`, `authReason`,
 `responseCache`, `responseCacheAge`.
 
 `meta` is `Sendable`, so cost and token counts cross actor boundaries freely.

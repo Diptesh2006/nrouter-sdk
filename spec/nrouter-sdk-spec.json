@@ -65,6 +65,13 @@
         "budget"
       ]
     },
+    "x-nr-budget-warning": {
+      "type": "string",
+      "description": "A soft budget you configured was crossed by this request, which still served; absent otherwise. Value: <scope> soft_budget <spend>/<ceiling> — scope is org, team or user; spend is the USD already committed in the budget window before this request; ceiling is the hard budget; both to two decimals",
+      "always": false,
+      "format": "<scope> soft_budget <spend>/<ceiling>",
+      "example": "org soft_budget 80.00/100.00"
+    },
     "x-nr-auth-reason": {
       "type": "string",
       "description": "Machine-readable reason a virtual key was refused",

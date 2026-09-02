@@ -12,9 +12,10 @@ test_that("every spec header is read", {
     "x-nr-request-id", "x-nr-request-cost", "x-nr-cost-status", "x-nr-model",
     "x-nr-input-tokens", "x-nr-output-tokens", "x-nr-total-tokens",
     "x-nr-cache-read-tokens", "x-nr-cache-write-tokens", "x-nr-limit-source",
-    "x-nr-auth-reason", "x-nr-response-cache", "x-nr-response-cache-age"
+    "x-nr-auth-reason", "x-nr-response-cache", "x-nr-response-cache-age",
+    "x-nr-budget-warning"
   )
-  expect_length(nrouter_header_names(), 13)
+  expect_length(nrouter_header_names(), 14)
   for (name in expected) {
     expect_true(name %in% nrouter_header_names(), info = name)
   }
@@ -78,13 +79,15 @@ test_that("a priced response parses its numbers", {
     "x-nr-cost-status"       = "exact",
     "x-nr-input-tokens"      = "11",
     "x-nr-response-cache"    = "hit",
-    "x-nr-response-cache-age" = "7"
+    "x-nr-response-cache-age" = "7",
+    "x-nr-budget-warning"     = "org soft_budget 80.00/100.00"
   ))
   expect_equal(meta$cost, 0.00042)
   expect_true(nrouter_is_priced(meta))
   expect_equal(meta$input_tokens, 11)
   expect_equal(meta$response_cache, "hit")
   expect_equal(meta$response_cache_age, 7)
+  expect_equal(meta$budget_warning, "org soft_budget 80.00/100.00")
 })
 
 test_that("header lookup is case-insensitive", {

@@ -29,6 +29,8 @@ export interface ResponseMeta {
   cacheWriteTokens: number | null;
   /** Which limit measured a 429: key | plan | team | user | budget. Null means the gateway did not say — never guess. */
   limitSource: string | null;
+  /** Set when this request crossed a soft budget you configured (it still served): `<scope> soft_budget <spend>/<ceiling>`, e.g. `org soft_budget 80.00/100.00`. */
+  budgetWarning: string | null;
   /** The gateway's stable reason for refusing a virtual key on a 401. */
   authReason: string | null;
   /** `hit` or `miss`; null when the response cache did not participate. */
@@ -53,6 +55,7 @@ export const HEADER_NAMES = [
   'x-nr-cache-read-tokens',
   'x-nr-cache-write-tokens',
   'x-nr-limit-source',
+  'x-nr-budget-warning',
   'x-nr-auth-reason',
   'x-nr-response-cache',
   'x-nr-response-cache-age',

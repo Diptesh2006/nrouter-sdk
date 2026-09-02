@@ -11,8 +11,9 @@ import org.junit.jupiter.api.Test;
 class NRouterHttpClientTest {
     @Test
     void publishesTheCompleteResponseHeaderContract() {
-        assertEquals(13, NRouterResponseMeta.HEADER_NAMES.size());
-        assertEquals(13, NRouterResponseMeta.HEADER_NAMES.stream().distinct().count());
+        assertEquals(14, NRouterResponseMeta.HEADER_NAMES.size());
+        assertEquals(14, NRouterResponseMeta.HEADER_NAMES.stream().distinct().count());
+        assertTrue(NRouterResponseMeta.HEADER_NAMES.contains("x-nr-budget-warning"));
         assertTrue(NRouterResponseMeta.HEADER_NAMES.contains("x-nr-request-id"));
         assertTrue(NRouterResponseMeta.HEADER_NAMES.contains("x-nr-response-cache-age"));
     }

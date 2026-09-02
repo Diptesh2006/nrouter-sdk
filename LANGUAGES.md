@@ -110,6 +110,7 @@ x-nr-total-tokens: 60
 | `x-nr-cache-read-tokens` | Cache-read tokens; emitted only when nonzero |
 | `x-nr-cache-write-tokens` | Cache-write tokens; emitted only when nonzero |
 | `x-nr-limit-source` | Rate-limit source (`key`, `plan`, `team`, `user`, or `budget`) on 429 |
+| `x-nr-budget-warning` | A soft budget you configured was crossed; the request still served (`<scope> soft_budget <spend>/<ceiling>`) |
 
 ### Platform Fee (Already Deducted)
 
@@ -371,7 +372,7 @@ const tools = await client.chat.completions.create({
 
 ## Go
 
-A branded SDK lives in [`sdks/go/`](sdks/go/). It hands back all thirteen
+A branded SDK lives in [`sdks/go/`](sdks/go/). It hands back all fourteen
 `x-nr-*` headers and types the gateway's nine error codes, which the vendor
 client cannot do without `.WithRawResponse()` plumbing at every call site:
 
@@ -692,7 +693,7 @@ val result = client.chatCompletions(
         .put("messages", listOf(mapOf("role" to "user", "content" to "Hello!")))
 )
 
-// Typed errors from the gateway's nine codes, and all 13 x-nr-* headers.
+// Typed errors from the gateway's nine codes, and all 14 x-nr-* headers.
 // Unpriced is unknown, not free — never render a null cost as 0.
 println(if (result.meta.isPriced) "cost $${result.meta.cost}" else "unpriced")
 ```

@@ -1,6 +1,6 @@
 {
   "source": "nrouter-rust-gateway/src/http/nr_headers.rs::all_emitted_names",
-  "source_commit": "393ba66feb452fef188c0a02ee1fcc709b9d8e65",
+  "source_commit": "ad214e8f93d1591f7fabba59b97987c5067f16e5",
   "headers": [
     "x-nr-request-id",
     "x-nr-request-cost",
@@ -12,6 +12,7 @@
     "x-nr-cache-read-tokens",
     "x-nr-cache-write-tokens",
     "x-nr-limit-source",
+    "x-nr-budget-warning",
     "x-nr-auth-reason",
     "x-nr-response-cache",
     "x-nr-response-cache-age"

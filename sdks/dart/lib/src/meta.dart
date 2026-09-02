@@ -16,6 +16,7 @@ class NRouterResponseMeta {
     this.cacheReadTokens,
     this.cacheWriteTokens,
     this.limitSource,
+    this.budgetWarning,
     this.authReason,
     this.responseCache,
     this.responseCacheAge,
@@ -41,6 +42,11 @@ class NRouterResponseMeta {
   /// On a 429, which limit measured the refusal.
   final String? limitSource;
 
+  /// Set when this request crossed a soft budget you configured; it still
+  /// served. `<scope> soft_budget <spend>/<ceiling>`, e.g.
+  /// `org soft_budget 80.00/100.00`.
+  final String? budgetWarning;
+
   /// On a 401, the gateway's stable reason.
   final String? authReason;
 
@@ -62,6 +68,7 @@ class NRouterResponseMeta {
     'x-nr-cache-read-tokens',
     'x-nr-cache-write-tokens',
     'x-nr-limit-source',
+    'x-nr-budget-warning',
     'x-nr-auth-reason',
     'x-nr-response-cache',
     'x-nr-response-cache-age',
@@ -87,6 +94,7 @@ class NRouterResponseMeta {
       cacheReadTokens: asInt('x-nr-cache-read-tokens'),
       cacheWriteTokens: asInt('x-nr-cache-write-tokens'),
       limitSource: get('x-nr-limit-source'),
+      budgetWarning: get('x-nr-budget-warning'),
       authReason: get('x-nr-auth-reason'),
       responseCache: get('x-nr-response-cache'),
       responseCacheAge: asInt('x-nr-response-cache-age'),

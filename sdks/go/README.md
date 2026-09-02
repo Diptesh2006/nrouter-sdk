@@ -75,7 +75,7 @@ response, and the gateway's nine error codes arrive as typed values.
 
 ## Response metadata
 
-`Response.Meta` carries all thirteen `x-nr-*` headers. Every numeric field is a
+`Response.Meta` carries all fourteen `x-nr-*` headers. Every numeric field is a
 pointer, deliberately:
 
 | Field | Header | Nil means |
@@ -87,6 +87,7 @@ pointer, deliberately:
 | `InputTokens` / `OutputTokens` / `TotalTokens` | `x-nr-*-tokens` | not measured |
 | `CacheReadTokens` / `CacheWriteTokens` | `x-nr-cache-*-tokens` | zero, so omitted |
 | `LimitSource` | `x-nr-limit-source` | the gateway did not say which limit |
+| `BudgetWarning` | `x-nr-budget-warning` | no soft budget was crossed (`<scope> soft_budget <spend>/<ceiling>` when one was) |
 | `AuthReason` | `x-nr-auth-reason` | — |
 | `ResponseCache` / `ResponseCacheAge` | `x-nr-response-cache*` | the cache did not participate |
 

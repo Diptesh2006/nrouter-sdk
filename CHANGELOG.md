@@ -9,6 +9,14 @@ Dates are the registry upload date, which is the only date a consumer can
 observe. Versions are immutable once published; nothing here is ever rewritten
 to correct a release, only appended to.
 
+## Unreleased
+
+- Adds the fourteenth response header, `x-nr-budget-warning`, to the spec and to
+  every SDK's response metadata (`budget_warning` / `budgetWarning` /
+  `BudgetWarning`). It is present only when a request crossed a soft budget the
+  customer configured; the request still served. Value grammar:
+  `<scope> soft_budget <spend>/<ceiling>`, e.g. `org soft_budget 80.00/100.00`.
+
 ## Coordinated SDK release — 2.2.1 — 2026-08-31
 
 - Migrates the Python SDK to OpenAI 3.6's `httpx2` transport contract and pins

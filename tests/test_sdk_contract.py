@@ -5,7 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
-import httpx2 as httpx
+import httpx
 
 
 # The SDK is this repo now, not a subdirectory of nrouter-ent-ai-hub. It moved
@@ -168,6 +168,7 @@ class ClientContractTests(unittest.TestCase):
                 "x-nr-limit-source": "key",
                 "x-nr-response-cache": "hit",
                 "x-nr-response-cache-age": "3",
+                "x-nr-budget-warning": "org soft_budget 80.00/100.00",
             }
         )
         self.assertEqual(metadata.request_id, "req_contract")
@@ -182,6 +183,7 @@ class ClientContractTests(unittest.TestCase):
         self.assertEqual(metadata.limit_source, "key")
         self.assertEqual(metadata.response_cache, "hit")
         self.assertEqual(metadata.response_cache_age, 3)
+        self.assertEqual(metadata.budget_warning, "org soft_budget 80.00/100.00")
 
     def test_unpriced_response_omits_amount_without_claiming_zero(self) -> None:
         metadata = nRouterResponseMeta.from_headers(

@@ -3,7 +3,7 @@ package ai.nrouter.sdk;
 import java.net.http.HttpHeaders;
 import java.util.List;
 
-/** The thirteen customer-visible x-nr-* response headers. */
+/** The fourteen customer-visible x-nr-* response headers. */
 public final class NRouterResponseMeta {
     /** Every customer-visible response header this SDK parses. */
     public static final List<String> HEADER_NAMES = List.of(
@@ -17,6 +17,7 @@ public final class NRouterResponseMeta {
             "x-nr-cache-read-tokens",
             "x-nr-cache-write-tokens",
             "x-nr-limit-source",
+            "x-nr-budget-warning",
             "x-nr-auth-reason",
             "x-nr-response-cache",
             "x-nr-response-cache-age");
@@ -31,6 +32,7 @@ public final class NRouterResponseMeta {
     private final Long cacheReadTokens;
     private final Long cacheWriteTokens;
     private final String limitSource;
+    private final String budgetWarning;
     private final String authReason;
     private final String responseCache;
     private final Long responseCacheAge;
@@ -46,6 +48,7 @@ public final class NRouterResponseMeta {
         cacheReadTokens = integer(headers, "x-nr-cache-read-tokens");
         cacheWriteTokens = integer(headers, "x-nr-cache-write-tokens");
         limitSource = value(headers, "x-nr-limit-source");
+        budgetWarning = value(headers, "x-nr-budget-warning");
         authReason = value(headers, "x-nr-auth-reason");
         responseCache = value(headers, "x-nr-response-cache");
         responseCacheAge = integer(headers, "x-nr-response-cache-age");
@@ -77,6 +80,8 @@ public final class NRouterResponseMeta {
     public Long cacheReadTokens() { return cacheReadTokens; }
     public Long cacheWriteTokens() { return cacheWriteTokens; }
     public String limitSource() { return limitSource; }
+    /** Set when this request crossed a soft budget you configured (it still served): {@code <scope> soft_budget <spend>/<ceiling>}. */
+    public String budgetWarning() { return budgetWarning; }
     public String authReason() { return authReason; }
     public String responseCache() { return responseCache; }
     public Long responseCacheAge() { return responseCacheAge; }

@@ -289,7 +289,8 @@ curl -s https://nrouterai.r-universe.dev/src/contrib/PACKAGES | grep -A4 '^Packa
 ```
 
 Java keeps its vendor-compatible OpenAI factory and adds a Java 11 native HTTP
-surface for all fourteen `x-nr-*` headers and nine typed gateway errors.
+surface for all 15 gateway operations, four incremental SSE wires, all fourteen
+`x-nr-*` headers and nine typed gateway errors.
 JavaScript/TypeScript and the six first-party native clients expose the same
 contract. Android delegates those guarantees to Kotlin; Python adds the same
 nRouter typing and metadata capture around its vendor client.

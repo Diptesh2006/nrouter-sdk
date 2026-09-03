@@ -109,6 +109,22 @@ if (response.meta().isPriced()) {
 HTTP status plus the same response metadata. A missing cost header remains
 unknown—it is never converted to zero.
 
+The native client covers every operation in the canonical gateway spec:
+
+| Capability | Named Java helpers |
+|---|---|
+| Text | `chatCompletions`, `completions`, `messages`, `responses`, `countTokens` |
+| Discovery | `models`, `model` |
+| Image and embeddings | `imagesGenerations`, `embeddings` |
+| Audio | `audioSpeech`, `audioTranscriptions`, `audioTranslations` |
+| Video | `createVideo`, `retrieveVideo`, `downloadVideoContent` |
+| Incremental SSE | `chatCompletionsStream`, `completionsStream`, `messagesStream`, `responsesStream` |
+
+Audio uploads use multipart bodies and reject CR/LF header injection in field
+names and filenames. Speech and video downloads return `NRouterBinaryResponse`
+so bytes are never coerced through JSON or text. A malformed JSON success keeps
+its status and `x-nr-*` metadata and warns that the request may have been billed.
+
 ## Features & Capabilities
 
 - **Key Validation & Base URL**: Auto-reads `NROUTER_API_KEY`, enforces `sk-nrouter-` prefix, defaults to `https://api.nrouter.ai/v1`.

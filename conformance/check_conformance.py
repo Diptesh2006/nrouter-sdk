@@ -136,7 +136,7 @@ RELEASE_METADATA_PATHS = {
 # sibling package. Every supported operation must therefore appear in their
 # executable source. This is a source-level cross-language gate; each SDK's own
 # wire tests prove that the named helper sends the path correctly.
-FIRST_PARTY_NATIVE = {"go", "kotlin", "swift", "rust", "dart", "r"}
+FIRST_PARTY_NATIVE = {"go", "java", "kotlin", "swift", "rust", "dart", "r"}
 
 # The four text-generation wires are genuinely incremental in every native
 # transport. Keep that a contract rather than a README claim.
@@ -179,6 +179,7 @@ def native_helper_pattern(sdk: str, basename: str) -> str:
     snake = snake_case(basename)
     patterns = {
         "go": rf"func\s+\(c \*Client\)\s+{basename[0].upper() + basename[1:]}\(",
+        "java": rf"public\s+NRouter(?:Http|Binary)Response\s+{basename}\(",
         "kotlin": rf"public\s+suspend\s+fun\s+{basename}\(",
         "swift": rf"public\s+func\s+{basename}\(",
         "rust": rf"pub\s+async\s+fn\s+{snake}\(",
@@ -192,6 +193,7 @@ def stream_helper_pattern(sdk: str, basename: str) -> str:
     snake = snake_case(basename)
     patterns = {
         "go": rf"func\s+\(c \*Client\)\s+{basename[0].upper() + basename[1:]}\(",
+        "java": rf"public\s+NRouterStreamResponse\s+{basename}\(",
         "kotlin": rf"public\s+fun\s+{basename}\(",
         "swift": rf"public\s+func\s+{basename}\(",
         "rust": rf"pub\s+async\s+fn\s+{snake}\(",
@@ -673,6 +675,34 @@ def self_test() -> int:
         failures = check(root=fake_root)
         if not any("messagesStream" in f and "go" in f for f in failures):
             problems.append("deleting a real streaming helper did not fail the check")
+        victim.write_text(text)
+
+        # Java's native metadata surface is additive to openai-java. Losing a
+        # named native helper must not hide behind the vendor factory.
+        victim = fake_root / "sdks/java/src/main/java/ai/nrouter/sdk/NRouterHttpClient.java"
+        text = victim.read_text()
+        victim.write_text(
+            text.replace(
+                "public NRouterHttpResponse embeddings(",
+                "public NRouterHttpResponse removedEmbeddings(",
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/embeddings" in f and "java" in f for f in failures):
+            problems.append("deleting a real Java endpoint helper did not fail the check")
+        victim.write_text(text)
+
+        victim.write_text(
+            text.replace(
+                "public NRouterStreamResponse messagesStream(",
+                "public NRouterStreamResponse removedMessagesStream(",
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("messagesStream" in f and "java" in f for f in failures):
+            problems.append("deleting a real Java streaming helper did not fail the check")
         victim.write_text(text)
 
         # Delete a real native helper while leaving its path string behind.

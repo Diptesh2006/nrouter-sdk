@@ -1,74 +1,41 @@
-// nRouter — Java
-// OpenAI Java SDK + guardrails (automatic) + prompt templates + cost tracking.
-//
-// Maven: com.openai:openai-java:2.2.0
-//
-// Guardrails, prompt templates, and cost tracking are all server-side.
-// Blocked requests return 400 with {"error": "...", "code": "guardrail_blocked"}.
-// Cost is in the x-nr-request-cost response header when the model is priced.
+// nRouter Java SDK — Claude Messages, metadata, managed prompts and SSE.
+// Maven: ai.nrouter:nrouter-sdk:2.2.1
 
-import com.openai.client.OpenAIClient;
-import com.openai.client.okhttp.OpenAIOkHttpClient;
-import com.openai.models.*;
-import java.net.URI;
+import ai.nrouter.sdk.NRouter;
+import ai.nrouter.sdk.NRouterHttpClient;
+import ai.nrouter.sdk.NRouterHttpResponse;
+import ai.nrouter.sdk.NRouterStreamResponse;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
-public class nRouterExample {
-    static final String NROUTER_BASE = "https://api.nrouter.ai";
-    static final String NROUTER_KEY = System.getenv("NROUTER_API_KEY");
+class nRouterExample {
+    public static void main(String[] args) {
+        NRouterHttpClient client = NRouter.httpClient(System.getenv("NROUTER_API_KEY"));
 
-    public static void main(String[] args) throws Exception {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", "claude-haiku-4-5-20251001");
+        body.put("max_tokens", 256);
+        body.put("messages", List.of(Map.of("role", "user", "content", "Summarize this release.")));
+        body.putAll(NRouter.buildExtraBody(
+                "your-summarizer-id",
+                Map.of("audience", "SDK users"),
+                null,
+                false));
 
-        // Guardrails, prompt templates, rate limits and budgets are configured in
-        // the dashboard and enforced server-side on every request. There is
-        // deliberately no endpoint to list or override them: a request cannot opt
-        // out of its own org policy. Balances and spend history live at
-        // https://app.nrouter.ai — org billing data, not inference. Per-request
-        // cost arrives on the x-nr-request-cost response header.
+        NRouterHttpResponse response = client.messages(body);
+        System.out.println(response.body().at("/content/0/text").asText());
+        System.out.println("request=" + response.meta().requestId());
+        System.out.println(response.meta().isPriced()
+                ? "cost=$" + response.meta().cost()
+                : "cost=unpriced");
 
-        // ━━━ 1. Chat (org defaults auto-apply) ━━━━━━━━━━━━━━━━
-        // Cache, guardrails, and rate limits auto-apply from org config.
-        OpenAIClient client = OpenAIOkHttpClient.builder()
-                .apiKey(NROUTER_KEY)
-                .baseUrl(NROUTER_BASE + "/v1")
-                .build();
-
-        ChatCompletion response = client.chat().completions().create(
-                ChatCompletionCreateParams.builder()
-                        .model("gpt-5.4-mini")
-                        .addMessage(ChatCompletionMessageParam.ofUser(
-                                ChatCompletionUserMessageParam.builder()
-                                        .content("Hello!")
-                                        .build()
-                        ))
-                        .build()
-        );
-        System.out.println(response.choices().get(0).message().content());
-
-        // Guardrails are assigned per key, team or org in the dashboard and
-        // apply automatically — the narrowest assignment wins. There is no
-        // per-request override to send in the body.
-        //
-        // Per-request overrides (via raw HTTP POST):
-        // The Java SDK does not support extra body fields natively — use cURL or
-        // a raw HTTP POST with these fields in the JSON body:
-        //   "nrouter_prompt_template_id": "your-summarizer-id"
-        //   "nrouter_prompt_variables": {"language": "Spanish", "max_length": "100"}
-        //   "nrouter_cache": false   // disable cache for this request
-
-        // ━━━ 2. PII blocked by guardrail ━━━━━━━━━━━━━━━━━━━━━
-        try {
-            client.chat().completions().create(
-                ChatCompletionCreateParams.builder()
-                    .model("gpt-5.4-mini")
-                    .addMessage(ChatCompletionMessageParam.ofUser(
-                        ChatCompletionUserMessageParam.builder()
-                            .content("My SSN is 123-45-6789")
-                            .build()
-                    ))
-                    .build()
-            );
-        } catch (Exception e) {
-            System.out.println("Guardrail blocked: " + e.getMessage());
+        // Streaming is incremental. Closing the response closes the HTTP body stream.
+        try (NRouterStreamResponse stream = client.messagesStream(body)) {
+            stream.lines().forEach(System.out::println);
         }
+
+        // Guardrails, budgets and routing are assigned in the dashboard and
+        // enforced by the gateway; a request cannot override its own tenancy.
     }
 }

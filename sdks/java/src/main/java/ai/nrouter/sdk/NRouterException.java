@@ -28,6 +28,10 @@ public final class NRouterException extends RuntimeException {
         return new NRouterException(Kind.TRANSPORT, message, null, 0, null);
     }
 
+    static NRouterException transport(String message, int status, NRouterResponseMeta meta) {
+        return new NRouterException(Kind.TRANSPORT, message, null, status, meta);
+    }
+
     private static Kind classify(String code, String message, int status) {
         if (code != null) {
             switch (code) {

@@ -306,77 +306,11 @@
     "containers": "Containers API is not yet available via nRouter.",
     "conversations": "Conversations API is not yet available via nRouter.",
     "webhooks": "Webhooks API is not yet available via nRouter.",
+    "control_plane": "Dashboard credit, guardrail, prompt and pricing APIs are not gateway SDK operations and are not mounted under /v1.",
     "edits": "Image editing is not mounted by the gateway. Listed as supported until 2026-08-21; a client calling it received a 404.",
     "moderations": "Moderation is not mounted by the gateway. Listed as supported until 2026-08-21; a client calling it received a 404.",
     "rerank": "Reranking is not mounted by the gateway. Listed as supported until 2026-08-21; a client calling it received a 404.",
     "ocr": "OCR is not mounted by the gateway. Listed as supported until 2026-08-21; a client calling it received a 404."
-  },
-  "nrouter_apis": {
-    "credits": {
-      "balance": {
-        "method": "GET",
-        "path": "/api/credits/balance"
-      },
-      "history": {
-        "method": "GET",
-        "path": "/api/credits/history",
-        "params": [
-          "limit",
-          "offset"
-        ]
-      }
-    },
-    "guardrails": {
-      "list": {
-        "method": "GET",
-        "path": "/nrouter/guardrail/list"
-      },
-      "get": {
-        "method": "GET",
-        "path": "/nrouter/guardrail/info",
-        "params": [
-          "guardrail_id"
-        ]
-      },
-      "logs": {
-        "method": "GET",
-        "path": "/nrouter/guardrail/logs",
-        "params": [
-          "limit"
-        ]
-      }
-    },
-    "prompts": {
-      "list": {
-        "method": "GET",
-        "path": "/nrouter/prompt/list"
-      },
-      "get": {
-        "method": "GET",
-        "path": "/nrouter/prompt/info",
-        "params": [
-          "prompt_id"
-        ]
-      },
-      "diff": {
-        "method": "GET",
-        "path": "/nrouter/prompt/version/diff",
-        "params": [
-          "v1",
-          "v2"
-        ]
-      }
-    },
-    "models": {
-      "list": {
-        "method": "GET",
-        "path": "/v1/models"
-      },
-      "pricing": {
-        "method": "GET",
-        "path": "/api/models/pricing"
-      }
-    }
   },
   "extra_body_fields": {
     "nrouter_prompt_template_id": {

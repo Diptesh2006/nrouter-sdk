@@ -29,6 +29,17 @@ from nroutersdk import (  # noqa: E402
 
 
 class SpecContractTests(unittest.TestCase):
+    def test_spec_does_not_advertise_unmounted_control_plane(self) -> None:
+        spec = json.loads((SDK_ROOT / "spec" / "nrouter-sdk-spec.json").read_text())
+        mounted_paths = {endpoint["path"] for endpoint in spec["supported_endpoints"]}
+        self.assertIn("/v1/models", mounted_paths)
+        self.assertIn("control_plane", spec["unsupported_endpoints"])
+        self.assertNotIn(
+            "nrouter_apis",
+            spec,
+            "control-plane/dashboard APIs are not part of the gateway SDK contract",
+        )
+
     def test_spec_uses_only_canonical_public_contract(self) -> None:
         spec_path = SDK_ROOT / "spec" / "nrouter-sdk-spec.json"
         spec = json.loads(spec_path.read_text())

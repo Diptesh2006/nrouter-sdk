@@ -98,6 +98,7 @@ if (meta.isPriced) println("cost $${meta.cost}") else println("cost unpriced")
 | `inputTokens` / `outputTokens` / `totalTokens` | `x-nr-*-tokens` | Token counts |
 | `cacheReadTokens` / `cacheWriteTokens` | `x-nr-cache-*-tokens` | Provider cache tokens |
 | `limitSource` | `x-nr-limit-source` | On a 429, which ceiling refused |
+| `budgetWarning` | `x-nr-budget-warning` | A soft budget you configured was crossed; the request still served (`<scope> soft_budget <spend>/<ceiling>`) |
 | `authReason` | `x-nr-auth-reason` | On a 401, the gateway's stable reason |
 | `responseCache` / `responseCacheAge` | `x-nr-response-cache*` | `hit`/`miss` and age in seconds |
 

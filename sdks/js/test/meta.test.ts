@@ -1,5 +1,5 @@
 // Case 1 + Case 2 from the review brief: unpriced is not free, and every one
-// of the thirteen `x-nr-*` headers has a real parse site.
+// of the fourteen `x-nr-*` headers has a real parse site.
 //
 // Ported from sdks/go/client_test.go (TestAllThirteenHeadersAreRead,
 // TestUnpricedIsNilNotZero, TestUnparseableNumericHeaderIsNilNotZero), with
@@ -39,13 +39,14 @@ const FIXTURE: Record<string, string> = {
   'x-nr-auth-reason': 'key_blocked',
   'x-nr-response-cache': 'hit',
   'x-nr-response-cache-age': '12',
+  'x-nr-budget-warning': 'org soft_budget 80.00/100.00',
 };
 
 test('HEADER_NAMES and this test fixture agree in BOTH directions', () => {
   assert.equal(
     HEADER_NAMES.length,
-    13,
-    'the spec fixes thirteen response headers'
+    14,
+    'the spec fixes fourteen response headers'
   );
   for (const name of HEADER_NAMES) {
     assert.ok(
@@ -67,7 +68,7 @@ test('meta re-exports the same HEADER_NAMES array, not a second copy', () => {
   assert.equal(meta.HEADER_NAMES, HEADER_NAMES);
 });
 
-test('every one of the thirteen headers is actually read', () => {
+test('every one of the fourteen headers is actually read', () => {
   const parsed = metaFromHeaders(FIXTURE);
 
   assert.equal(parsed.requestId, 'nrouter-abc123');
@@ -83,6 +84,7 @@ test('every one of the thirteen headers is actually read', () => {
   assert.equal(parsed.authReason, 'key_blocked');
   assert.equal(parsed.responseCache, 'hit');
   assert.equal(parsed.responseCacheAge, 12);
+  assert.equal(parsed.budgetWarning, 'org soft_budget 80.00/100.00');
   assert.equal(isPriced(parsed), true);
 
   // Nothing was invented: the parsed object has exactly the declared fields.
@@ -93,7 +95,7 @@ test('every one of the thirteen headers is actually read', () => {
 });
 
 test('each header on its own moves at least one field off EMPTY_META', () => {
-  // The strong form of "all thirteen are read". A name added to HEADER_NAMES
+  // The strong form of "all fourteen are read". A name added to HEADER_NAMES
   // with no parse site produces a meta identical to EMPTY_META, and this loop
   // is what turns that silent no-op into a failing test.
   for (const name of HEADER_NAMES) {

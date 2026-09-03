@@ -7,7 +7,7 @@
 nrouter_header_names()
 }
 \value{
-A character vector of 13 header names.
+A character vector of 14 header names.
 }
 \description{
 Exactly the names in \code{spec/nrouter-sdk-spec.json}.

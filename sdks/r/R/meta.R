@@ -38,6 +38,7 @@ nrouter_meta <- function(headers = list()) {
       cache_read_tokens  = get_num("x-nr-cache-read-tokens"),
       cache_write_tokens = get_num("x-nr-cache-write-tokens"),
       limit_source       = get_chr("x-nr-limit-source"),
+      budget_warning     = get_chr("x-nr-budget-warning"),
       auth_reason        = get_chr("x-nr-auth-reason"),
       response_cache     = get_chr("x-nr-response-cache"),
       response_cache_age = get_num("x-nr-response-cache-age")
@@ -48,7 +49,7 @@ nrouter_meta <- function(headers = list()) {
 #' Every response header this SDK reads
 #'
 #' Exactly the names in \code{spec/nrouter-sdk-spec.json}.
-#' @return A character vector of 13 header names.
+#' @return A character vector of 14 header names.
 #' @export
 nrouter_header_names <- function() {
   c(
@@ -62,6 +63,7 @@ nrouter_header_names <- function() {
     "x-nr-cache-read-tokens",
     "x-nr-cache-write-tokens",
     "x-nr-limit-source",
+    "x-nr-budget-warning",
     "x-nr-auth-reason",
     "x-nr-response-cache",
     "x-nr-response-cache-age"

@@ -8,7 +8,7 @@ serving ten SDKs is only as correct as the one that drifted.
 
 This gate closes that. It reads `spec/nrouter-sdk-spec.json` — the source of
 truth under Rule #14 — and asserts that every SDK's source literally contains
-the base URL, the environment variable, the key prefix, all thirteen `x-nr-*`
+the base URL, the environment variable, the key prefix, all fourteen `x-nr-*`
 headers and all nine error codes. The six first-party native transports must
 also expose a named helper for every supported operation. Change the spec and
 every SDK goes red until it is updated; drop a header or endpoint helper from
@@ -59,7 +59,7 @@ SDK_SOURCES: dict[str, list[str]] = {
         "sdks/python/nroutersdk/_errors.py",
         "sdks/python/nroutersdk/_response.py",
     ],
-    # js was WRAPPER_ONLY until it grew a native surface: it now owns the 13
+    # js was WRAPPER_ONLY until it grew a native surface: it now owns the 14
     # headers, the 9 typed error classes and the status dispatch itself, so it
     # is held to the same contract as every other native SDK.
     "js": [

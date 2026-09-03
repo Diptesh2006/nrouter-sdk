@@ -220,7 +220,7 @@ def test_a_code_when_present_beats_the_status():
 def test_the_header_name_list_matches_what_is_parsed():
     from nroutersdk import nRouterResponseMeta
 
-    assert len(nRouterResponseMeta.HEADER_NAMES) == 13
+    assert len(nRouterResponseMeta.HEADER_NAMES) == 14
     meta = nRouterResponseMeta.from_headers(
         {name: "1" for name in nRouterResponseMeta.HEADER_NAMES}
     )
@@ -230,6 +230,7 @@ def test_the_header_name_list_matches_what_is_parsed():
     assert meta.cost is not None
     assert meta.limit_source is not None
     assert meta.response_cache is not None
+    assert meta.budget_warning is not None
 
 
 def test_auth_reason_reaches_the_metadata():

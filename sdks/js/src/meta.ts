@@ -54,6 +54,7 @@ export const EMPTY_META: ResponseMeta = Object.freeze({
   cacheReadTokens: null,
   cacheWriteTokens: null,
   limitSource: null,
+  budgetWarning: null,
   authReason: null,
   responseCache: null,
   responseCacheAge: null,
@@ -163,6 +164,7 @@ export function metaFromLookup(get: (name: string) => string | null | undefined)
     cacheReadTokens: count(get('x-nr-cache-read-tokens')),
     cacheWriteTokens: count(get('x-nr-cache-write-tokens')),
     limitSource: text(get('x-nr-limit-source')),
+    budgetWarning: text(get('x-nr-budget-warning')),
     authReason: text(get('x-nr-auth-reason')),
     responseCache: text(get('x-nr-response-cache')),
     responseCacheAge: count(get('x-nr-response-cache-age')),
@@ -184,7 +186,7 @@ function isHeadersLike(source: HeaderSource): source is HeadersLike {
  * object would return `undefined` for correctly-spelled headers and report a
  * fully-metered response as having no metadata at all.
  *
- * Only the thirteen names in `HEADER_NAMES` are read, so the index is built
+ * Only the fourteen names in `HEADER_NAMES` are read, so the index is built
  * from the caller's keys once rather than scanned per lookup.
  */
 export function metaFromHeaders(headers: HeaderSource): ResponseMeta {

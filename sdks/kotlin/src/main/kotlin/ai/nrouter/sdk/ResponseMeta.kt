@@ -26,6 +26,12 @@ public data class NRouterResponseMeta(
     val cacheWriteTokens: Long? = null,
     /** On a 429, which limit measured the refusal. */
     val limitSource: String? = null,
+    /**
+     * Set when this request crossed a soft budget you configured; it still
+     * served. `<scope> soft_budget <spend>/<ceiling>`, e.g.
+     * `org soft_budget 80.00/100.00`.
+     */
+    val budgetWarning: String? = null,
     /** On a 401, the gateway's stable reason. */
     val authReason: String? = null,
     /** `hit` or `miss`; absent when the response cache did not participate. */
@@ -50,6 +56,7 @@ public data class NRouterResponseMeta(
             "x-nr-cache-read-tokens",
             "x-nr-cache-write-tokens",
             "x-nr-limit-source",
+            "x-nr-budget-warning",
             "x-nr-auth-reason",
             "x-nr-response-cache",
             "x-nr-response-cache-age",
@@ -75,6 +82,7 @@ public data class NRouterResponseMeta(
                 cacheReadTokens = num("x-nr-cache-read-tokens"),
                 cacheWriteTokens = num("x-nr-cache-write-tokens"),
                 limitSource = lookup("x-nr-limit-source"),
+                budgetWarning = lookup("x-nr-budget-warning"),
                 authReason = lookup("x-nr-auth-reason"),
                 responseCache = lookup("x-nr-response-cache"),
                 responseCacheAge = num("x-nr-response-cache-age"),

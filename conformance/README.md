@@ -6,7 +6,7 @@ gateway serving ten clients is only as correct as the one that drifted.
 
 This gate closes that gap. It reads `spec/nrouter-sdk-spec.json` — the source of
 truth under Rule #14 — and asserts every SDK's source encodes the same base URL,
-environment variable, key prefix, thirteen `x-nr-*` headers and nine error codes.
+environment variable, key prefix, fourteen `x-nr-*` headers and nine error codes.
 For the six first-party native transports it also requires a named helper for
 every operation the spec marks supported, plus incremental streaming helpers
 for chat completions, legacy completions, Messages, and Responses.
@@ -56,7 +56,7 @@ with each other. Neither replaces the other.
 ## Exemptions, stated rather than silent
 
 - **`java`** — the vendor-compatible factory remains, while the additive Java
-  11 HTTP surface now owns and is checked for all thirteen metadata headers and
+  11 HTTP surface now owns and is checked for all fourteen metadata headers and
   all nine gateway error codes.
 - **`android`** — delegates every wire concern to the shared `sdks/kotlin`
   artifact. It must *prove* the delegation by referencing

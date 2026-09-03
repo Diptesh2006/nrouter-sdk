@@ -40,6 +40,11 @@ type ResponseMeta struct {
 	// customer raises the wrong limit.
 	LimitSource string
 
+	// BudgetWarning is set when this request crossed a soft budget you
+	// configured; the request still served. Its value is
+	// "<scope> soft_budget <spend>/<ceiling>", e.g. "org soft_budget 80.00/100.00".
+	BudgetWarning string
+
 	// AuthReason is the gateway's stable reason for refusing a virtual key on
 	// a 401, e.g. "key_route_not_allowed".
 	AuthReason string
@@ -67,6 +72,7 @@ var HeaderNames = []string{
 	"x-nr-cache-read-tokens",
 	"x-nr-cache-write-tokens",
 	"x-nr-limit-source",
+	"x-nr-budget-warning",
 	"x-nr-auth-reason",
 	"x-nr-response-cache",
 	"x-nr-response-cache-age",
@@ -102,6 +108,7 @@ func MetaFromLookup(get func(string) string) ResponseMeta {
 		CacheReadTokens:  num("x-nr-cache-read-tokens"),
 		CacheWriteTokens: num("x-nr-cache-write-tokens"),
 		LimitSource:      get("x-nr-limit-source"),
+		BudgetWarning:    get("x-nr-budget-warning"),
 		AuthReason:       get("x-nr-auth-reason"),
 		ResponseCache:    get("x-nr-response-cache"),
 		ResponseCacheAge: num("x-nr-response-cache-age"),

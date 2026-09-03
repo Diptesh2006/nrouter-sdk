@@ -249,6 +249,7 @@ print("Cache Write Tokens:", meta.cache_write_tokens)
 print("Gateway Cache:     ", meta.response_cache)     # "hit", "miss", or None
 print("Cache Age (s):     ", meta.response_cache_age) # seconds on hits
 print("Limit Source:      ", meta.limit_source)       # "key", "team", "org", or None
+print("Budget Warning:    ", meta.budget_warning)     # "org soft_budget 80.00/100.00" when a soft budget was crossed
 ```
 
 > **Note on Cost Accuracy:** Unpriced models return `cost=None` and `cost_status="unpriced"`. Never treat `None` as `$0.00` — free routes (like `/v1/messages/count_tokens`) emit no cost header, while billable inferences always track usage.

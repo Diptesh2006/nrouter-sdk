@@ -823,6 +823,157 @@ export function chatText(res: NRouterResponse<Record<string, unknown>>): string 
 }
 
 /**
+ * Why an empty completion was empty. `chatText()`'s `''` collapses all of
+ * these into one string; this names them apart.
+ *
+ * `reasoning_budget_exhausted_possible` is the one that costs money silently:
+ * a reasoning model spends its whole output allowance thinking and returns no
+ * visible text. Observed on `gpt-5` — 128 output tokens billed, `''` returned,
+ * and the same prompt answering normally once given more headroom.
+ *
+ * It stays `_possible`, never a bare assertion. `finish_reason: "length"` on
+ * an empty turn proves the budget was HIT; it does not prove reasoning was
+ * what consumed it, and a provider that reported no `reasoning_tokens` gives
+ * us nothing to promote a suspicion into a fact with.
+ */
+export type ChatTextCondition =
+  /** Text came back. Nothing to explain. */
+  | 'ok'
+  /** Empty content with tool calls beside it — OpenAI's convention, not a failure. */
+  | 'tool_calls_only'
+  /** Empty text, and the response evidences the output budget being spent invisibly. */
+  | 'reasoning_budget_exhausted_possible'
+  /**
+   * Empty text, the output budget ran out, and the provider reported
+   * `reasoning_tokens: 0` — so whatever consumed it, reasoning did not. Same
+   * remedy, different diagnosis: a reported zero is a MEASUREMENT, and naming
+   * it a reasoning failure would contradict the evidence in the response.
+   */
+  | 'output_budget_exhausted'
+  /** Empty text with output tokens billed, and no signal saying why. */
+  | 'empty_but_billed'
+  /** Empty text with nothing billed against it. A model may simply say nothing. */
+  | 'empty_completion';
+
+/** What `chatText()` returned, plus the reason it returned it. */
+export interface ChatTextDiagnostic {
+  /** Byte-identical to `chatText(res)`. */
+  text: string;
+  empty: boolean;
+  condition: ChatTextCondition;
+  /** `choices[0].finish_reason` as the body reported it; `null` when absent. */
+  finishReason: string | null;
+  /** `usage.completion_tokens`, falling back to the `x-nr-output-tokens` header. Never a guessed 0. */
+  outputTokens: number | null;
+  /** `usage.completion_tokens_details.reasoning_tokens`. `null` when the provider did not report one. */
+  reasoningTokens: number | null;
+  /** Operator-readable sentence naming the remedy, or `null` when there is nothing to warn about. */
+  warning: string | null;
+}
+
+/**
+ * Explain an empty completion instead of collapsing every cause into `''`.
+ *
+ * ADDITIVE, deliberately. `chatText()` keeps returning `''` and keeps not
+ * throwing — that contract is pinned in `test/chat.test.ts` and callers build
+ * on it. This is the companion accessor for the caller who needs to tell "the
+ * model said nothing" apart from "the model spent the whole budget thinking",
+ * which are the same string today.
+ *
+ * Both signals are ALREADY in the body the SDK is holding; nothing here calls
+ * anything or costs anything:
+ *
+ *   * `choices[0].finish_reason === 'length'` — the output allowance ran out
+ *     mid-turn. On the Anthropic wire the same fact arrives as
+ *     `stop_reason: "max_tokens"`, and `toOpenAIChatCompletion()` has already
+ *     mapped it before this function ever sees the document.
+ *   * `usage.completion_tokens_details.reasoning_tokens` — output tokens that
+ *     produced no visible text. The gateway does not rewrite a provider's
+ *     usage block; it only reads it to price the request, keeping
+ *     `completion_tokens` whole and treating `reasoning_tokens` as a subset,
+ *     so the detail block reaches us exactly as the provider sent it.
+ *
+ * Counts are `number | null` for the same reason every count in `ResponseMeta`
+ * is (Rule #28): a missing count is unknown, and reporting unknown as `0`
+ * would tell a caller their reasoning model thought for free.
+ */
+export function chatTextDiagnostic(
+  res: NRouterResponse<Record<string, unknown>>,
+): ChatTextDiagnostic {
+  const text = chatText(res);
+  const choice = Array.isArray(res.body['choices']) ? (res.body['choices'] as unknown[])[0] : null;
+
+  const rawFinish = pluck(choice, 'finish_reason');
+  const finishReason = typeof rawFinish === 'string' ? rawFinish : null;
+
+  const usage = asObject(res.body['usage']);
+  const details = usage === null ? null : asObject(usage['completion_tokens_details']);
+  // The header measures the same thing the body does, so it is a fallback for
+  // a body that carried no usage block — not a second, competing number.
+  const outputTokens =
+    (usage === null ? null : finite(usage['completion_tokens'])) ?? res.meta.outputTokens ?? null;
+  const reasoningTokens = details === null ? null : finite(details['reasoning_tokens']);
+
+  const toolCalls = pluck(pluck(choice, 'message'), 'tool_calls');
+  const hasToolCalls = Array.isArray(toolCalls) && toolCalls.length > 0;
+  const billed = outputTokens !== null && outputTokens > 0;
+
+  if (text.length > 0) {
+    return { text, empty: false, condition: 'ok', finishReason, outputTokens, reasoningTokens, warning: null };
+  }
+  if (hasToolCalls) {
+    return {
+      text,
+      empty: true,
+      condition: 'tool_calls_only',
+      finishReason,
+      outputTokens,
+      reasoningTokens,
+      warning: null,
+    };
+  }
+
+  let condition: ChatTextCondition = 'empty_completion';
+  let warning: string | null = null;
+
+  // Positive reasoning tokens stand ALONE. They are themselves proof that
+  // output was produced and none of it was visible, so gating them on a
+  // separately reported `completion_tokens` would discard the finding exactly
+  // when the provider reported the detail block and no total.
+  const reasoned = reasoningTokens !== null && reasoningTokens > 0;
+  // A reported `0` is a measurement, not a missing value: the provider has
+  // said reasoning consumed nothing. `null` is the absent case, and the two
+  // must not collapse — Anthropic reports no detail block at all and counts
+  // thinking inside `output_tokens`, so `null` keeps the suspicion alive.
+  const reasoningRuledOut = reasoningTokens === 0;
+  const outOfBudget = finishReason === 'length';
+
+  if (reasoned || (outOfBudget && !reasoningRuledOut)) {
+    condition = 'reasoning_budget_exhausted_possible';
+    const spent = outputTokens === null ? 'an unreported number of' : String(outputTokens);
+    const invisible = reasoned ? ` (${reasoningTokens} of them reasoning)` : '';
+    warning =
+      `the model returned no visible text after spending ${spent} output tokens${invisible}` +
+      `${outOfBudget ? ' and stopped at the output limit' : ''}. ` +
+      'This is the reasoning-budget-exhausted signature: raise the output-token ' +
+      'budget (max_completion_tokens, or max_tokens on the Anthropic wire) and retry.';
+  } else if (outOfBudget) {
+    condition = 'output_budget_exhausted';
+    const spent = outputTokens === null ? 'an unreported number of' : String(outputTokens);
+    warning =
+      `the model stopped at the output limit having produced no visible text, ` +
+      `after ${spent} output tokens none of which the provider attributed to thinking. ` +
+      'Raise the output-token budget (max_completion_tokens, or max_tokens on the ' +
+      'Anthropic wire) and retry.';
+  } else if (billed) {
+    condition = 'empty_but_billed';
+    warning = `the model returned no visible text, and ${outputTokens} output tokens were billed for it.`;
+  }
+
+  return { text, empty: true, condition, finishReason, outputTokens, reasoningTokens, warning };
+}
+
+/**
  * Run the same options against several models at once — the playground's
  * side-by-side compare, as one call.
  *

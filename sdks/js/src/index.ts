@@ -123,7 +123,19 @@ export {
   type SystemVariableName,
 } from './prompts';
 
-export { chatText, compareError, COMPARE_ERROR_KEY, type ChatRunner, type ChatRunnerResponse } from './chat';
+// chatTextDiagnostic is re-exported here deliberately: index.ts uses an explicit named
+// list, not export *, so an accessor added to chat.ts is unreachable to a package
+// consumer until it appears on this line (DIPTESH-094).
+export {
+  chatText,
+  chatTextDiagnostic,
+  compareError,
+  COMPARE_ERROR_KEY,
+  type ChatRunner,
+  type ChatRunnerResponse,
+  type ChatTextDiagnostic,
+  type ChatTextCondition,
+} from './chat';
 
 export {
   parseSSE,

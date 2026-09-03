@@ -235,6 +235,62 @@ class _nRouterModels:
         return cast(dict, self._c._nrouter_get("/v1/models"))
 
 
+def _messages_payload(
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    prompt_template_id: str | None,
+    prompt_variables: dict[str, str] | None,
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Build one `/v1/messages` body, vetting the caller's escape hatch.
+
+    THE MESSAGES WIRE IS THE ONLY ROUTE TO A MANAGED PROMPT FOR CLAUDE. The
+    gateway resolves a provider endpoint per WIRE and answers 404
+    `model_unavailable_on_route` for an Anthropic-family model on
+    `/v1/chat/completions` (see `DEFAULT_MODEL` above and `tests/test_defaults.py`),
+    and `_nRouterChat.chat()` posts only to chat-completions. So the named
+    prompt options that path already had were unreachable for exactly the
+    provider family this endpoint exists to serve; a Claude caller had to type
+    the wire field names into `**kwargs` themselves.
+
+    That also meant `**kwargs` was an UNVETTED body hatch on the one path they
+    could use. `vet_extra` refuses two shapes here, both broken rather than
+    merely unmodelled — a tenancy key (gateway §4f gate 5: tenancy comes from
+    the authenticated virtual key alone, and a body-supplied identifier
+    attributes no spend while reaching the provider as an unrecognized
+    argument) and `__proto__`. Refused, never stripped: stripping leaves the
+    caller believing they attributed spend somewhere, and that belief is wrong
+    forever and silently. Everything else still passes straight through, which
+    is what keeps an option this SDK does not model yet from being a blocker.
+
+    Ordering mirrors the JS SDK's `buildFeatureBody`
+    (`{...body, ...buildExtraBody(opts)}`, `sdks/js/src/client.ts` ->
+    `sdks/js/src/options.ts`): the named option wins over a raw kwarg of the
+    same wire name, so the two SDKs resolve that collision identically.
+
+    `build_extra_body` is the ONE mapper to the spec's `extra_body_fields`
+    (Rule #14) and OMITS what the caller did not set — omission and emptiness
+    mean different things on this wire.
+    """
+    vet_extra(kwargs)
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "stream": False,
+        **kwargs,
+    }
+    payload.update(
+        build_extra_body(
+            prompt_template_id=prompt_template_id,
+            prompt_variables=prompt_variables,
+        )
+    )
+    return payload
+
+
 class _Messages:
     """Anthropic-compatible Messages API.
 
@@ -254,19 +310,35 @@ class _Messages:
         messages: list[dict[str, Any]],
         max_tokens: int,
         stream: bool = False,
+        prompt_template_id: str | None = None,
+        prompt_variables: dict[str, str] | None = None,
         **kwargs,
     ) -> dict:
+        """Send a buffered Messages request, optionally with a managed prompt.
+
+        Args:
+            model: Model id served on `/v1/messages`.
+            messages: Anthropic-shaped turns.
+            max_tokens: Required by this wire.
+            stream: Refused; see the class docstring.
+            prompt_template_id: Override the org/team/key prompt assignment.
+            prompt_variables: Jinja2 variables. Meaningful WITHOUT a template
+                id too — the gateway then renders the assigned template with
+                them.
+            **kwargs: Any other body field, vetted by `vet_extra`.
+        """
         if stream:
             raise NotImplementedError(
                 "messages.create(stream=True) is not available until the SDK SSE stream contract is tested"
             )
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "stream": False,
-            **kwargs,
-        }
+        payload = _messages_payload(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            prompt_template_id=prompt_template_id,
+            prompt_variables=prompt_variables,
+            kwargs=kwargs,
+        )
         return cast(dict, self._c._nrouter_post("/v1/messages", json=payload))
 
     def count_tokens(
@@ -299,19 +371,23 @@ class _AsyncMessages:
         messages: list[dict[str, Any]],
         max_tokens: int,
         stream: bool = False,
+        prompt_template_id: str | None = None,
+        prompt_variables: dict[str, str] | None = None,
         **kwargs,
     ) -> dict:
+        """See :meth:`_Messages.create`. Same surface, same vetting."""
         if stream:
             raise NotImplementedError(
                 "messages.create(stream=True) is not available until the SDK SSE stream contract is tested"
             )
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "stream": False,
-            **kwargs,
-        }
+        payload = _messages_payload(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            prompt_template_id=prompt_template_id,
+            prompt_variables=prompt_variables,
+            kwargs=kwargs,
+        )
         return cast(dict, await self._c._nrouter_post("/v1/messages", json=payload))
 
     async def count_tokens(

@@ -13,11 +13,20 @@ SDK and code examples for the [nRouter](https://nrouter.ai) LLM gateway.
 
 ## Supported today: JavaScript/TypeScript, Python, and Java
 
-**Three SDKs are supported.** R is a registry-distributed public preview;
-Swift and Go use immutable source-resolution tags. Kotlin, Android, Rust, and
-Dart / Flutter build from this repository. All ten share release version
-`2.2.1` and are held to the same conformance and security gates. Distribution
-does not broaden the support commitment.
+**Three SDKs are supported.** npm, PyPI and Maven Central carry those three.
+The rest are distributed but not supported: Kotlin and Android on Maven Central,
+Rust on crates.io, Dart / Flutter on pub.dev and R on R-universe are
+**registry-distributed public previews**, and Swift and Go resolve immutable git
+tags. Every SDK here is held to the same conformance and security gates.
+**Distribution does not broaden the support commitment.**
+
+⚠️ **Repository source is `2.2.1` for all ten, but four registry artifacts lag
+that train** — Kotlin, Android and Rust serve `2.1.0`, Dart serves `2.1.1`. The
+install snippets below pin the version each registry *actually serves*, because
+asking for `2.2.1` there fails to resolve. Every version on this page was read
+from the registry on 2026-09-02; re-verify with the commands under
+[SDK Ecosystem & Status](#sdk-ecosystem--status) rather than trusting the
+number.
 
 | SDK | Registry | Registry URL | Package | Version |
 |---|---|---|---|---|
@@ -162,7 +171,7 @@ print(res.meta.isPriced ? "Cost: $\(res.meta.cost!)" : "Cost: unpriced")
 ```toml
 # Cargo.toml
 [dependencies]
-nrouter = { path = "sdks/rust" } # from a checkout of this repository
+nrouter = "2.1.0" # crates.io; 2.2.1 is not yet published there
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 ```rust
@@ -185,8 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```yaml
 # pubspec.yaml
 dependencies:
-  nrouter:
-    path: sdks/dart # from a checkout of this repository
+  nrouter: ^2.1.1 # pub.dev; 2.2.1 is not yet published there
 ```
 ```dart
 import 'package:nrouter/nrouter.dart';
@@ -203,9 +211,9 @@ client.close();
 ### Kotlin
 ```kotlin
 // build.gradle.kts
-repositories { mavenLocal() }
+repositories { mavenCentral() }
 dependencies {
-    implementation("ai.nrouter:nrouter-sdk-kotlin:2.2.1")
+    implementation("ai.nrouter:nrouter-sdk-kotlin:2.1.0") // latest on Central
 }
 ```
 ```kotlin
@@ -224,9 +232,9 @@ println("Cost: ${res.meta.cost?.let { "$$it" } ?: "unpriced"}")
 ### Android
 ```kotlin
 // app/build.gradle.kts
-repositories { mavenLocal() }
+repositories { mavenCentral() }
 dependencies {
-    implementation("ai.nrouter:nrouter-sdk-android:2.2.1")
+    implementation("ai.nrouter:nrouter-sdk-android:2.1.0") // latest on Central
 }
 ```
 
@@ -238,18 +246,20 @@ but Dart also resolve `NROUTER_API_KEY` (Dart requires an explicit key — `dart
 not exist in a Flutter web build, so an environment fallback would silently resolve to
 nothing):
 
-> **Distribution status is a fact, not an intention.** Source-only packages
-> are built and packaged by CI but are not claimed to exist on a registry.
+> **Distribution status is a fact, not an intention.** Every row below was read
+> from the registry itself on 2026-09-02, not from an intent to publish. Where a
+> registry serves an older version than this repository's `2.2.1` source, the
+> row says which version it actually serves — that is the version that resolves.
 
 | Language | Install | Registry URL | Registry status | Package | Typed errors | `x-nr-*` metadata |
 |----------|---------|--------------|---|---------|---|---|
 | **Python** | `pip install nrouter-sdk` | [pypi.org/project/nrouter-sdk](https://pypi.org/project/nrouter-sdk/) | ✅ PUBLISHED | [`sdks/python/`](sdks/python/) | ✅ typed wrappers | ✅ `client.last_response` |
 | **TypeScript / JS** | `npm install @nrouter_ai/sdk` | [npmjs.com/package/@nrouter_ai/sdk](https://www.npmjs.com/package/@nrouter_ai/sdk) | ✅ PUBLISHED | [`sdks/js/`](sdks/js/) | ✅ 9 codes | ✅ 14 headers |
 | **Java** | Maven `ai.nrouter:nrouter-sdk` | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | ✅ PUBLISHED | [`sdks/java/`](sdks/java/) | ✅ 9 codes (native HTTP surface) | ✅ 14 headers (native HTTP surface) |
-| **Kotlin** | local Maven artifact | — | SOURCE PREVIEW | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 14 headers |
-| **Android** | local Maven artifact | — | SOURCE PREVIEW | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 14 headers |
-| **Rust** | Cargo path dependency | — | SOURCE PREVIEW | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 14 headers |
-| **Dart / Flutter** | Dart path dependency | — | SOURCE PREVIEW | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 14 headers |
+| **Kotlin** | Maven `ai.nrouter:nrouter-sdk-kotlin:2.1.0` | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-kotlin) | 🧪 PUBLIC PREVIEW — serves `2.1.0` | [`sdks/kotlin/`](sdks/kotlin/) | ✅ 9 codes | ✅ 14 headers |
+| **Android** | Maven `ai.nrouter:nrouter-sdk-android:2.1.0` | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-android) | 🧪 PUBLIC PREVIEW — serves `2.1.0` | [`sdks/android/`](sdks/android/) | ✅ 9 codes | ✅ 14 headers |
+| **Rust** | `cargo add nrouter@2.1.0` | [crates.io/crates/nrouter](https://crates.io/crates/nrouter) | 🧪 PUBLIC PREVIEW — serves `2.1.0` | [`sdks/rust/`](sdks/rust/) | ✅ 9 codes | ✅ 14 headers |
+| **Dart / Flutter** | `dart pub add nrouter` | [pub.dev/packages/nrouter](https://pub.dev/packages/nrouter) | 🧪 PUBLIC PREVIEW — serves `2.1.1` | [`sdks/dart/`](sdks/dart/) | ✅ 9 codes | ✅ 14 headers |
 | **Swift** | SwiftPM, this repo's URL | [github.com/nRouterAI/nrouter-sdk](https://github.com/nRouterAI/nrouter-sdk) | ✅ git tag `2.2.1` | [`sdks/swift/`](sdks/swift/) | ✅ 9 codes | ✅ 14 headers |
 | **R** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | [nrouterai.r-universe.dev/nrouter](https://nrouterai.r-universe.dev/nrouter) | 🧪 PUBLIC PREVIEW | [`sdks/r/`](sdks/r/) | ✅ 9 classed conditions | ✅ 14 headers |
 | **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go/v2@v2.2.1` | [pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go/v2](https://pkg.go.dev/github.com/nRouterAI/nrouter-sdk/sdks/go/v2) | ✅ git tag `sdks/go/v2.2.1` | [`sdks/go/`](sdks/go/) | ✅ 9 codes | ✅ 14 headers |
@@ -257,8 +267,21 @@ nothing):
 Verify any row rather than trusting it:
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" https://pypi.org/pypi/nrouter-sdk/json
-curl -s -o /dev/null -w "%{http_code}\n" https://registry.npmjs.org/@nrouter_ai%2Fsdk
+# Ask each registry what it SERVES, not whether a page exists.
+curl -s https://pypi.org/pypi/nrouter-sdk/json | python3 -c 'import sys,json;print("pypi",json.load(sys.stdin)["info"]["version"])'
+curl -s https://registry.npmjs.org/@nrouter_ai%2Fsdk | python3 -c 'import sys,json;print("npm",json.load(sys.stdin)["dist-tags"]["latest"])'
+
+# Maven Central. Use repo1 metadata, NOT search.maven.org — its solr index
+# returns zero hits for ai.nrouter while the artifacts are demonstrably there,
+# so an "empty" search page is an index gap, never proof of an absent release.
+for a in nrouter-sdk nrouter-sdk-kotlin nrouter-sdk-android; do
+  echo -n "maven $a "
+  curl -s "https://repo1.maven.org/maven2/ai/nrouter/$a/maven-metadata.xml" | grep -o '<release>[^<]*'
+done
+
+curl -s -H 'User-Agent: nrouter-check' https://crates.io/api/v1/crates/nrouter | python3 -c 'import sys,json;print("crates.io",json.load(sys.stdin)["crate"]["max_version"])'
+curl -s https://pub.dev/api/packages/nrouter | python3 -c 'import sys,json;print("pub.dev",json.load(sys.stdin)["latest"]["version"])'
+
 # Go has no registry: proxy.golang.org serves whatever a git tag points at, and
 # it case-encodes the path (each uppercase letter becomes '!' + lowercase).
 curl -s https://proxy.golang.org/github.com/n!router!a!i/nrouter-sdk/sdks/go/v2/@v/list
@@ -389,10 +412,10 @@ example for any of these without first adding the route to the gateway and the s
 | **Python (branded)** | `pip install nrouter-sdk` | [`sdks/python/`](sdks/python/) · [`examples/python/`](examples/python/), [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb) |
 | **TypeScript / JS (branded)** | `npm install @nrouter_ai/sdk` | [`sdks/js/`](sdks/js/) · [`examples/typescript/quickstart.ts`](examples/typescript/quickstart.ts), [`examples/javascript/quickstart.js`](examples/javascript/quickstart.js) |
 | **Java (branded)** | `ai.nrouter:nrouter-sdk` | [`sdks/java/`](sdks/java/) · [`examples/java/quickstart.java`](examples/java/quickstart.java) |
-| **Kotlin (branded)** | local Maven artifact | [`sdks/kotlin/`](sdks/kotlin/) · [`examples/kotlin/quickstart.kt`](examples/kotlin/quickstart.kt) |
-| **Android (branded)** | local Maven artifact | [`sdks/android/`](sdks/android/) |
-| **Rust (branded)** | Cargo path dependency | [`sdks/rust/`](sdks/rust/) · [`examples/rust/quickstart.rs`](examples/rust/quickstart.rs) |
-| **Dart / Flutter (branded)** | Dart path dependency | [`sdks/dart/`](sdks/dart/) · [`examples/dart/quickstart.dart`](examples/dart/quickstart.dart) |
+| **Kotlin (branded)** | Maven `ai.nrouter:nrouter-sdk-kotlin:2.1.0` | [`sdks/kotlin/`](sdks/kotlin/) · [`examples/kotlin/quickstart.kt`](examples/kotlin/quickstart.kt) |
+| **Android (branded)** | Maven `ai.nrouter:nrouter-sdk-android:2.1.0` | [`sdks/android/`](sdks/android/) |
+| **Rust (branded)** | `cargo add nrouter@2.1.0` | [`sdks/rust/`](sdks/rust/) · [`examples/rust/quickstart.rs`](examples/rust/quickstart.rs) |
+| **Dart / Flutter (branded)** | `dart pub add nrouter` | [`sdks/dart/`](sdks/dart/) · [`examples/dart/quickstart.dart`](examples/dart/quickstart.dart) |
 | **R (branded)** | `install.packages("nrouter", repos = c(nrouterai = "https://nrouterai.r-universe.dev", CRAN = "https://cloud.r-project.org"))` | [`sdks/r/`](sdks/r/) · [`examples/r/quickstart.R`](examples/r/quickstart.R) |
 | **Node.js / TypeScript (plain openai)** | `npm install openai` | [`examples/typescript/node.ts`](examples/typescript/node.ts) |
 | **Go** | `go get github.com/nRouterAI/nrouter-sdk/sdks/go/v2@v2.2.1`, or plain `openai-go` | [`examples/go/quickstart.go`](examples/go/quickstart.go) |
@@ -454,11 +477,11 @@ nrouter-sdk/
 │   ├── python/                      ← Branded SDK → pip install nrouter-sdk
 │   ├── js/                          ← Branded SDK → npm install @nrouter_ai/sdk
 │   ├── java/                        ← Branded SDK → Maven ai.nrouter:nrouter-sdk
-│   ├── kotlin/                      ← Source-preview Kotlin SDK
-│   ├── android/                     ← Source-preview Android AAR
+│   ├── kotlin/                      ← Branded SDK → Maven ai.nrouter:nrouter-sdk-kotlin
+│   ├── android/                     ← Branded SDK → Maven ai.nrouter:nrouter-sdk-android
 │   ├── swift/                       ← SwiftPM package from the root git tag
-│   ├── rust/                        ← Source-preview Rust SDK
-│   ├── dart/                        ← Source-preview Dart/Flutter SDK
+│   ├── rust/                        ← Branded SDK → crates.io nrouter
+│   ├── dart/                        ← Branded SDK → pub.dev nrouter
 │   ├── go/                          ← Branded SDK → tagged Go module
 │   └── r/                           ← Branded SDK → R-universe public preview
 └── examples/

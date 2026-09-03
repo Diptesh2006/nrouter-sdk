@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>nRouter JS SDK Test UI</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>nRouter JS SDK Test UI</h1>
+          <p>Local interface for exercising the installed JS SDK through a server-side API key.</p>
+        </div>
+        <button id="healthBtn" type="button">Check</button>
+      </header>
+
+      <section class="status" id="status">
+        <span class="dot"></span>
+        <span>Not checked yet</span>
+      </section>
+
+      <section class="grid">
+        <form class="panel" id="chatForm">
+          <h2>Agent Request</h2>
+          <label>
+            Model
+            <input id="model" name="model" value="claude-haiku-4-5-20251001" />
+          </label>
+          <label>
+            System prompt
+            <textarea id="systemPrompt" name="systemPrompt" rows="3">You are a concise SDK test agent.</textarea>
+          </label>
+          <label>
+            User prompt
+            <textarea id="prompt" name="prompt" rows="5">Reply with exactly: SDK UI OK</textarea>
+          </label>
+          <label>
+            Max tokens
+            <input id="maxTokens" name="maxTokens" type="number" min="1" max="4096" value="128" />
+          </label>
+          <div class="actions">
+            <button type="submit" data-endpoint="/api/chat">Run chat</button>
+            <button type="button" id="messagesBtn">Run messages</button>
+            <button type="button" id="guardrailBtn">Guardrail check</button>
+          </div>
+        </form>
+
+        <section class="panel">
+          <div class="panelHead">
+            <h2>Models</h2>
+            <button id="modelsBtn" type="button">List</button>
+          </div>
+          <div id="models" class="list muted">No models loaded</div>
+        </section>
+      </section>
+
+      <section class="panel outputPanel">
+        <h2>Result</h2>
+        <pre id="output">Run a test to see output.</pre>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

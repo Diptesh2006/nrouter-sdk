@@ -5,7 +5,9 @@ import sys
 import unittest
 from pathlib import Path
 
-import httpx
+# OpenAI 3.x and this SDK use the separately distributed `httpx2` package;
+# keep the familiar local alias so request/response fixtures mirror client.py.
+import httpx2 as httpx
 
 
 # The SDK is this repo now, not a subdirectory of nrouter-ent-ai-hub. It moved
@@ -51,22 +53,95 @@ class SpecContractTests(unittest.TestCase):
         )
         try:
             if gateway_contract.exists():
-                emitted_headers = set(
-                    re.findall(
-                        r'^pub const [A-Z_]+: &str = "(x-nr-[^"]+)";',
-                        gateway_contract.read_text(),
-                        flags=re.MULTILINE,
-                    )
+                gateway_text = re.sub(
+                    r"/\*.*?\*/", "", gateway_contract.read_text(), flags=re.DOTALL
                 )
+                emitted_body = re.search(
+                    r"pub fn all_emitted_names\(\).*?\{\s*&\[(.*?)\]\s*\}",
+                    gateway_text,
+                    flags=re.DOTALL,
+                )
+                self.assertIsNotNone(emitted_body, "gateway all_emitted_names() is missing")
                 cache_contract = gateway_contract.parents[1] / "proxy" / "cache.rs"
-                if cache_contract.exists():
-                    emitted_headers.update(
-                        re.findall(
-                            r'^pub const [A-Z_]+: &str = "(x-nr-[^"]+)";',
-                            cache_contract.read_text(),
-                            flags=re.MULTILINE,
-                        )
+                cache_text = re.sub(
+                    r"/\*.*?\*/",
+                    "",
+                    cache_contract.read_text() if cache_contract.exists() else "",
+                    flags=re.DOTALL,
+                )
+                definition_pattern = r'^pub const ([A-Z_]+): &str = "(x-nr-[^"]+)";'
+                all_gateway_definitions = dict(
+                    re.findall(definition_pattern, gateway_text, flags=re.MULTILINE)
+                )
+                internal_body = re.search(
+                    r"pub const INTERNAL_WEBHOOK_HEADERS:.*?=\s*&\[(.*?)\];",
+                    gateway_text,
+                    flags=re.DOTALL,
+                )
+                self.assertIsNotNone(
+                    internal_body, "gateway internal-header registry is missing"
+                )
+                internal_names = {
+                    entry.strip()
+                    for entry in re.sub(
+                        r"//.*$", "", internal_body.group(1), flags=re.MULTILINE
+                    ).split(",")
+                    if entry.strip()
+                }
+                self.assertTrue(internal_names, "gateway internal-header registry is empty")
+                self.assertEqual(
+                    internal_names - all_gateway_definitions.keys(),
+                    set(),
+                )
+                gateway_definitions = {
+                    name: value
+                    for name, value in all_gateway_definitions.items()
+                    if name not in internal_names
+                }
+                cache_pairs = re.findall(
+                    definition_pattern,
+                    cache_text,
+                    flags=re.MULTILINE,
+                )
+                cache_definitions = {
+                    f"crate::proxy::cache::{name}": value
+                    for name, value in cache_pairs
+                }
+                definitions = gateway_definitions | cache_definitions
+                definitions.update(
+                    {
+                        name: value
+                        for name, value in cache_pairs
+                        if name not in gateway_definitions
+                    }
+                )
+                uncommented_body = re.sub(
+                    r"//.*$", "", emitted_body.group(1), flags=re.MULTILINE
+                )
+                entries = [
+                    entry.strip() for entry in uncommented_body.split(",") if entry.strip()
+                ]
+                referenced = []
+                invalid_entries = []
+                for entry in entries:
+                    match = re.fullmatch(
+                        r"(?:crate::proxy::cache::)?[A-Z][A-Z0-9_]*", entry
                     )
+                    if match:
+                        referenced.append(match.group(0))
+                    else:
+                        invalid_entries.append(entry)
+                self.assertFalse(
+                    invalid_entries,
+                    f"gateway emitted-header registry has unparseable entries: {invalid_entries}",
+                )
+                self.assertTrue(referenced, "gateway all_emitted_names() is empty")
+                self.assertEqual(set(referenced) - definitions.keys(), set())
+                emitted_headers = {definitions[name] for name in referenced}
+                declared_public_headers = set(gateway_definitions.values()) | {
+                    value for _, value in cache_pairs
+                }
+                self.assertEqual(declared_public_headers, emitted_headers)
                 self.assertEqual(response_headers, emitted_headers)
         except (OSError, PermissionError):
             pass

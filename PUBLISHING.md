@@ -13,14 +13,39 @@ Three supported registry packages publish from merge-triggered workflows:
 | `nrouter-sdk` (Python) | [pypi.org](https://pypi.org/project/nrouter-sdk/) | `.github/workflows/publish-pypi.yml` | `sdks/python/pyproject.toml` |
 | `ai.nrouter:nrouter-sdk` (Java) | [Maven Central](https://central.sonatype.com/) | `.github/workflows/publish-maven.yml` | `sdks/java/pom.xml` |
 
-The other SDKs keep the same version but use source distribution:
+The other seven are **public previews, not supported packages**. Six of them
+are nevertheless reachable from a real registry — a preview is a support scope,
+not a distribution method, and calling these "source checkout" sends a reader
+looking for a git URL when `cargo add` already works.
 
-| target | distribution | verification |
-|---|---|---|
-| Kotlin / Android / Rust / Dart | source checkout | their `publish-*` workflow builds and packages only |
-| Swift | bare SemVer git tag | `.github/workflows/publish-swift.yml` |
-| Go | `sdks/go/v*` git tag | `.github/workflows/publish-go.yml` |
-| R | [R-universe public preview](https://nrouterai.r-universe.dev/nrouter) | `.github/workflows/publish-r.yml` |
+Versions below were read FROM each registry on 2026-09-03. Re-derive them with
+the block under [To verify what a registry serves](#to-verify-what-a-registry-serves)
+rather than trusting this table; the README carries the same values for the
+install snippets.
+
+| target | distribution | serves today | can this pipeline advance it? |
+|---|---|---|---|
+| Kotlin | Maven Central `ai.nrouter:nrouter-sdk-kotlin` ([central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-kotlin)) | `2.1.0` | **No — frozen.** `publish-kotlin.yml` builds and `publishToMavenLocal` only |
+| Android | Maven Central `ai.nrouter:nrouter-sdk-android` ([central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-android)) | `2.1.0` | **No — frozen.** `publish-android.yml` builds and `publishToMavenLocal` only |
+| Rust | crates.io `nrouter` ([crates.io/crates/nrouter](https://crates.io/crates/nrouter)) | `2.1.0` | **No — frozen.** `Cargo.toml` declares `publish = false` |
+| Dart / Flutter | pub.dev `nrouter` ([pub.dev/packages/nrouter](https://pub.dev/packages/nrouter)) | `2.1.1` | **No — frozen.** `pubspec.yaml` declares `publish_to: none` |
+| R | [R-universe](https://nrouterai.r-universe.dev/nrouter) | `2.2.1` | Yes — R-universe rebuilds from `main` |
+| Swift | bare SemVer git tag, resolved by SwiftPM | `2.2.1` | Yes — tag the release commit |
+| Go | `sdks/go/v*` git tag, resolved by `proxy.golang.org` | `v2.2.1` | Yes — tag the release commit |
+
+🛑 **The four frozen rows are a DELIBERATE decision, not a broken pipeline, and
+the freeze is test-enforced.** `tests/test_release_versions.py::test_sdk_version_3_source_only_workflows_cannot_publish`
+asserts that neither Maven workflow reads a `secrets.` value, that neither Gradle
+build carries a `signing {}` block, that Rust keeps `publish = false` and that
+Dart keeps `publish_to: none`. Re-arming any of those four turns that test RED,
+which is the point: a preview must not acquire release credentials by accident.
+
+The consequence to state plainly to a user: **those four registry artifacts are
+stuck at the version above and will not follow the source version.** That is why
+the README pins its install snippets to what each registry actually serves
+instead of to `2.2.1`. Advancing one is a scoped decision that moves the SDK out
+of preview — bump the support scope, the test, and the workflow together, or not
+at all.
 
 ## To release
 
@@ -44,6 +69,27 @@ build, package, and conformance verification.
 makes merge-triggered safe: registry versions are immutable, so re-running on
 every merge would otherwise fail constantly. The `already published?` step turns
 the no-change case into a quiet green no-op instead.
+
+## To verify what a registry serves
+
+Ask each registry what it SERVES, not whether a page exists. A 200 on a project
+page proves the name is taken, not that the version you expect is downloadable.
+
+```bash
+curl -s https://pypi.org/pypi/nrouter-sdk/json | python3 -c 'import sys,json;print("pypi",json.load(sys.stdin)["info"]["version"])'
+curl -s https://registry.npmjs.org/@nrouter_ai%2Fsdk | python3 -c 'import sys,json;print("npm",json.load(sys.stdin)["dist-tags"]["latest"])'
+
+# Maven Central: use repo1 metadata, NOT search.maven.org — its solr index lags.
+for a in nrouter-sdk nrouter-sdk-kotlin nrouter-sdk-android; do
+  echo -n "maven $a "
+  curl -s "https://repo1.maven.org/maven2/ai/nrouter/$a/maven-metadata.xml" | grep -o '<release>[^<]*'
+done
+
+curl -s -H 'User-Agent: nrouter-check' https://crates.io/api/v1/crates/nrouter | python3 -c 'import sys,json;print("crates.io",json.load(sys.stdin)["crate"]["max_version"])'
+curl -s https://pub.dev/api/packages/nrouter | python3 -c 'import sys,json;print("pub.dev",json.load(sys.stdin)["latest"]["version"])'
+curl -s https://proxy.golang.org/github.com/n!router!a!i/nrouter-sdk/sdks/go/v2/@latest
+curl -s https://nrouterai.r-universe.dev/src/contrib/PACKAGES | grep -A1 '^Package: nrouter$'
+```
 
 ## Secrets
 

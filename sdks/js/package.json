@@ -4,24 +4,31 @@
   "description": "nRouter SDK — one API key for models across six provider clouds. Native OpenAI and Anthropic wire formats, plus embeddings, audio, images and video.",
   "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
-    "docs"
+    "docs/README.md",
+    "docs/cost.md",
+    "docs/errors.md",
+    "docs/guardrails.md",
+    "docs/memory.md",
+    "docs/prompts.md",
+    "docs/routing.md"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
-    "test": "npm run build && node test/smoke.js"
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc && node -e \"require('node:fs').copyFileSync('src/index.mjs','dist/index.mjs')\"",
+    "test": "npm run build && node test/smoke.js && node test/package-entry.cjs && node test/package-entry.mjs"
   },
   "keywords": [
     "llm",

@@ -17,7 +17,15 @@
  * `client.embeddings`, `client.images` all work as they always did.
  */
 
-export { nRouter, NRouterSurface, DEFAULT_BASE_URL, ENV_KEY, KEY_PREFIX } from './client';
+export {
+  nRouter,
+  NRouterSurface,
+  DEFAULT_BASE_URL,
+  DEFAULT_BODY_IDLE_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  ENV_KEY,
+  KEY_PREFIX,
+} from './client';
 
 // The contract: metadata, options and the wire shapes.
 export {

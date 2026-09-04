@@ -59,6 +59,68 @@ export const KEY_PREFIX = 'sk-nrouter-';
 export const DEFAULT_MAX_RETRIES = 0;
 
 /**
+ * Maximum silence between response-body chunks. Ten seconds above the
+ * gateway's 120s provider-read deadline lets its structured timeout arrive
+ * before this transport backstop races it.
+ */
+export const DEFAULT_BODY_IDLE_TIMEOUT_MS = 130_000;
+/** Finite pre-header/request deadline inherited by every vendor and native path. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
+
+function withBodyIdleTimeout(response: Response, timeoutMs: number): Response {
+  if (!response.body) return response;
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = new Error(`response body remained idle for ${timeoutMs}ms`);
+      idle.name = 'TimeoutError';
+      try {
+        const result = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              reject(idle);
+              void reader.cancel(idle).catch(() => {
+                // The timeout error is the customer-visible failure. A broken
+                // custom stream cancel hook must not become an unhandled rejection.
+              });
+            }, timeoutMs);
+          }),
+        ]);
+        if (result.done) {
+          controller.close();
+        } else {
+          controller.enqueue(result.value);
+        }
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  const bounded = new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+  const bodyProperties = new Set([
+    'arrayBuffer', 'blob', 'bytes', 'clone', 'formData', 'json', 'text', 'body', 'bodyUsed',
+  ]);
+  return new Proxy(response, {
+    get(target, property) {
+      const owner = bodyProperties.has(String(property)) ? bounded : target;
+      const value = Reflect.get(owner, property, owner);
+      return typeof value === 'function' ? value.bind(owner) : value;
+    },
+  });
+}
+
+/**
  * Resolve and validate a key: the explicit argument first, then the
  * environment.
  *
@@ -310,6 +372,8 @@ type NRouterOptions = Omit<
   | 'project'
 > & {
   apiKey?: string;
+  /** Maximum silence between response body chunks, in milliseconds. */
+  bodyIdleTimeoutMs?: number;
   /**
    * `headers` is omitted deliberately. The constructor discards it — the
    * vendor spreads `fetchOptions` onto the request after the headers this SDK
@@ -519,6 +583,10 @@ export class nRouter extends OpenAI {
   constructor(options: NRouterOptions = {}) {
     const apiKey = resolveApiKey(options?.apiKey);
     const baseURL = options?.baseURL || DEFAULT_BASE_URL;
+    const bodyIdleTimeoutMs = options.bodyIdleTimeoutMs ?? DEFAULT_BODY_IDLE_TIMEOUT_MS;
+    if (!Number.isFinite(bodyIdleTimeoutMs) || bodyIdleTimeoutMs <= 0) {
+      throw configurationError('bodyIdleTimeoutMs must be a positive finite number');
+    }
 
     // MEASURED against openai 7.8.0, with OPENAI_CUSTOM_HEADERS and
     // OPENAI_ORG_ID set in the environment: `nr.chat()` sent
@@ -580,7 +648,7 @@ export class nRouter extends OpenAI {
     // would fail to disable anything. Rule #36: multi-tenancy and zero credit
     // leak.
     const self: { client?: { apiKey?: unknown } } = {};
-    const pinnedFetch = ((url: unknown, init?: RequestInit) => {
+    const pinnedFetch = (async (url: unknown, init?: RequestInit) => {
       // Read, not validated. Validation happens in the `apiKey` SETTER
       // installed after `super()`: throwing from inside `fetch` gets wrapped by
       // the vendor into a RETRYABLE "Connection error.", so a caller's
@@ -599,7 +667,8 @@ export class nRouter extends OpenAI {
       headers.set('Authorization', `Bearer ${current}`);
       headers.delete('OpenAI-Organization');
       headers.delete('OpenAI-Project');
-      return callerFetch(url as never, { ...(init ?? {}), headers });
+      const response = await callerFetch(url as never, { ...(init ?? {}), headers });
+      return withBodyIdleTimeout(response, bodyIdleTimeoutMs);
     }) as typeof fetch;
     Object.defineProperty(pinnedFetch, UNWRAPPED_FETCH, {
       value: callerFetch,
@@ -617,6 +686,7 @@ export class nRouter extends OpenAI {
       // rather than overwritten. See DEFAULT_MAX_RETRIES for why the vendor's
       // 2 cannot be inherited on a billed POST.
       maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
+      timeout: options.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS,
       organization: null,
       project: null,
       defaultHeaders: nrouterHeaders(options.defaultHeaders, apiKey),

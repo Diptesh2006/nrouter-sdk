@@ -319,6 +319,68 @@ test('a body-read failure keeps the status and request id', async () => {
   );
 });
 
+test('post-header stalls are bounded while active response bodies remain open', async () => {
+  let stalled!: ReadableStreamDefaultController<Uint8Array>;
+  const stalledClient = new nRouter({
+    apiKey: TEST_KEY,
+    bodyIdleTimeoutMs: 75,
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stalled = controller;
+            controller.enqueue(new TextEncoder().encode('{"choices":'));
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'x-nr-request-id': 'idle-js' },
+        },
+      ),
+  });
+  try {
+    await assert.rejects(
+      Promise.race([
+        stalledClient.nr.chat({ model: 'm', prompt: 'x' }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('post-header body stall was left unbounded')), 1000),
+        ),
+      ]),
+      (err: unknown) => {
+        const error = err as { message: string; status?: number; requestId?: string };
+        assert.match(error.message, /idle/);
+        assert.equal(error.status, 200);
+        assert.equal(error.requestId, 'idle-js');
+        return true;
+      },
+    );
+  } finally {
+    stalled.error(new Error('test cleanup'));
+  }
+
+  const pieces = ['{"choices":[', '{"message":', '{"content":"ok"}}', ']}'];
+  const activeClient = new nRouter({
+    apiKey: TEST_KEY,
+    bodyIdleTimeoutMs: 75,
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            for (const piece of pieces) {
+              controller.enqueue(new TextEncoder().encode(piece));
+              await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+  });
+
+  const active = await activeClient.nr.chat({ model: 'm', prompt: 'x' });
+  assert.equal((active.body.choices as any[])[0].message.content, 'ok');
+});
+
 // Byte bodies must reach the wire as bytes. HISTORY, because the shape of this
 // test changed with the dependency and the reason did not: under openai 4 the
 // client JSON-stringified a Uint8Array into {"0":82,"1":73,…} unless

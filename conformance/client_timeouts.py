@@ -173,6 +173,31 @@ DECLARED_TIMEOUTS: dict[str, Declared] = {
             ),
         ),
     ),
+    "js": Declared(
+        source="sdks/js/src/client.ts",
+        values=(
+            (
+                "request/pre-header",
+                re.compile(r"\bDEFAULT_REQUEST_TIMEOUT_MS\s*=\s*([\d_]+)"),
+                "600_000",
+            ),
+            (
+                "body-idle",
+                re.compile(r"\bDEFAULT_BODY_IDLE_TIMEOUT_MS\s*=\s*([\d_]+)"),
+                "130_000",
+            ),
+        ),
+        applies=(
+            (
+                "hand the request deadline to the vendor client",
+                re.compile(r"timeout:\s*options\.timeout\s*\?\?\s*DEFAULT_REQUEST_TIMEOUT_MS"),
+            ),
+            (
+                "wrap every fetch response body",
+                re.compile(r"withBodyIdleTimeout\(response,\s*bodyIdleTimeoutMs\)"),
+            ),
+        ),
+    ),
     "go": Declared(
         source="sdks/go/client.go",
         values=(
@@ -434,13 +459,6 @@ AUXILIARY_TIMEOUT_APPLICATIONS: tuple[
 #     these must move into DECLARED_TIMEOUTS with the site that applies it, or
 #     it goes unchecked forever — the hole a registry-only gate always has.
 INHERITED_TIMEOUTS: dict[str, Inherited] = {
-    "js": Inherited(
-        transport="the openai-node vendor client",
-        seconds=600.0,
-        note="every request goes through the vendor pipeline, so the vendor's own "
-        "600 s default applies and a caller's `timeout` option overrides it",
-        dirs=("sdks/js/src",),
-    ),
     "android": Inherited(
         transport="the shared sdks/kotlin client",
         seconds=120.0,
@@ -556,6 +574,11 @@ def _is_comment(line: str) -> bool:
     return any(stripped.startswith(prefix) for prefix in COMMENT_PREFIXES)
 
 
+def _executable_text(text: str) -> str:
+    """Drop full-line comments before matching application sites."""
+    return "\n".join(line for line in text.splitlines() if not _is_comment(line))
+
+
 def _sdk_dirs(root: Path) -> set[str]:
     base = root / "sdks"
     if not base.is_dir():
@@ -597,6 +620,7 @@ def check_client_timeouts(root: Path = ROOT) -> list[str]:
             )
             continue
         text = path.read_text(errors="replace")
+        executable = _executable_text(text)
         for label, pattern, expected in rule.values:
             match = pattern.search(text)
             if match is None:
@@ -618,7 +642,7 @@ def check_client_timeouts(root: Path = ROOT) -> list[str]:
                     f"honest case aborts a request the customer is billed for anyway."
                 )
         for label, pattern in rule.applies:
-            if pattern.search(text) is None:
+            if pattern.search(executable) is None:
                 failures.append(
                     f"{rule.source}: {sdk} declares its timeouts but the site that "
                     f"applies them ({label}) is gone. A constant nobody wires in is "
@@ -630,7 +654,7 @@ def check_client_timeouts(root: Path = ROOT) -> list[str]:
         if not path.is_file():
             failures.append(f"{source}: {sdk} timeout application file is missing")
             continue
-        matches = pattern.findall(path.read_text(errors="replace"))
+        matches = pattern.findall(_executable_text(path.read_text(errors="replace")))
         if len(matches) < minimum:
             failures.append(
                 f"{source}: {sdk} does not {label}. The shared timeout helper "
@@ -804,6 +828,10 @@ _CLEAN: dict[str, str] = {
     ),
     "sdks/js/src/client.ts": (
         "export const DEFAULT_MAX_RETRIES = 0;\n"
+        "export const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;\n"
+        "export const DEFAULT_BODY_IDLE_TIMEOUT_MS = 130_000;\n"
+        "return withBodyIdleTimeout(response, bodyIdleTimeoutMs);\n"
+        "const deadline = { timeout: options.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS };\n"
         "const options = {\n"
         "  ...(req.method === 'GET' ? {} : { maxRetries: 0 }),\n"
         "};\n"
@@ -981,18 +1009,32 @@ def self_test() -> int:
                 DART,
                 _CLEAN[DART].replace(
                     "response = _withBodyIdleTimeout(s);\n",
-                    "",
+                    "// response = _withBodyIdleTimeout(s);\n",
                 ),
             )
         )
         if not any("wrap its SSE response" in f for f in found):
             problems.append(f"an unbounded Dart SSE body NOT reported: {found}")
 
-        # 4g. Java has separate buffered and SSE consumers of its idle wrapper.
-        java = "sdks/java/src/main/java/ai/nrouter/sdk/NRouterHttpClient.java"
+        # 4g. Multipart has its own application site too.
         found = check_client_timeouts(
             _with(
                 tmp / "d7",
+                DART,
+                _CLEAN[DART].replace(
+                    "final boundedMultipartResponse = _withBodyIdleTimeout(s);\n",
+                    "",
+                ),
+            )
+        )
+        if not any("wrap multipart response bodies" in f for f in found):
+            problems.append(f"an unbounded Dart multipart body NOT reported: {found}")
+
+        # 4h. Java has separate buffered and SSE consumers of its idle wrapper.
+        java = "sdks/java/src/main/java/ai/nrouter/sdk/NRouterHttpClient.java"
+        found = check_client_timeouts(
+            _with(
+                tmp / "d8",
                 java,
                 _CLEAN[java].replace(
                     "new IdleTimeoutInputStream(body, timeout);\n",
@@ -1003,6 +1045,35 @@ def self_test() -> int:
         )
         if not any("(1/2 sites)" in f for f in found):
             problems.append(f"an unbounded Java body path NOT reported: {found}")
+
+        # 4i. JS must wrap the response returned by the caller's fetch.
+        found = check_client_timeouts(
+            _with(
+                tmp / "d9",
+                JS,
+                _CLEAN[JS].replace(
+                    "return withBodyIdleTimeout(response, bodyIdleTimeoutMs);\n",
+                    "",
+                ),
+            )
+        )
+        if not any("the site that applies them" in f for f in found):
+            problems.append(f"an unbounded JS response body NOT reported: {found}")
+
+        # 4j. The wrapper begins after headers, so the vendor request deadline
+        #     remains independently load-bearing.
+        found = check_client_timeouts(
+            _with(
+                tmp / "d10",
+                JS,
+                _CLEAN[JS].replace(
+                    "const deadline = { timeout: options.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS };\n",
+                    "",
+                ),
+            )
+        )
+        if not any("hand the request deadline" in f for f in found):
+            problems.append(f"an unbounded JS header wait NOT reported: {found}")
 
         # 5. a timeout APPEARING in an SDK registered as inheriting one must be
         #    reported — the hole a registry-only gate always has, and the reason
@@ -1133,7 +1204,7 @@ def self_test() -> int:
         for problem in problems:
             print(f"SELF-TEST FAIL {problem}")
         return 1
-    print("OK  client_timeouts self-test: 21 planted cases, all reported")
+    print("OK  client_timeouts self-test: 24 planted cases, all reported")
     return 0
 
 

@@ -322,6 +322,21 @@ The same command runs `scripts/security-audit.sh` and fails on known advisories
 across npm, PyPI, Maven/Gradle, Cargo and Dart dependency graphs. Install
 `osv-scanner` and `pip-audit`.
 
+It also runs `scripts/sast.sh`, which is a **different** check and not a
+substitute for either direction: `security-audit.sh` looks for known
+vulnerabilities in third-party dependencies, `sast.sh` runs static analysis over
+the code in this repository. It uses semgrep's `p/default` ruleset — install
+`semgrep`, or the lane is reported `SKIPPED` and named, never passed. Prove it
+bites before trusting a green run:
+
+```bash
+scripts/sast.sh --self-test
+```
+
+That plants a git-tracked file containing a command injection and fails unless
+the scan reports it. Tracked is deliberate: semgrep scans git-tracked files
+only, so an untracked probe is skipped and the scan still exits 0.
+
 Each language is an independent lane, so one absent toolchain no longer blocks
 the rest. A lane whose prerequisites are missing is reported `SKIPPED`, named,
 and counted separately — it is never a pass, and the summary says so in as many

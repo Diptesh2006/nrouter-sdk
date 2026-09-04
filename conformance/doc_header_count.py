@@ -186,8 +186,14 @@ def check_doc_header_count(root: Path = ROOT) -> list[str]:
 # A quantifier that GOVERNS the header set. It must appear BEFORE the `x-nr-`
 # marker: "every `x-nr-*` header" is a claim about the set, while "`x-nr-*`
 # headers with every response" is a claim about frequency and is honest.
+# "the following" is deliberately ABSENT and its absence is the rule, not an
+# oversight. It is a DEICTIC pointer -- "these ones" -- not a quantifier over
+# the set, so "The following `x-nr-*` headers are relevant to billing:" over a
+# two-row table is honest PARTIAL documentation and refusing it is the
+# false-positive failure this gate exists to avoid. "only the following" stays,
+# because "only" is the quantifier that turns the pointer into a closed set.
 _COMPLETENESS = (
-    r"(?:every|all|each|only the following|the following|the full set of|"
+    r"(?:every|all|each|only the following|the full set of|"
     r"the complete set of|the entire set of|exhaustive|complete list of)"
 )
 # The `|` exclusion is inherited from the count patterns above and for the same
@@ -198,22 +204,63 @@ PROMISE_RE = re.compile(
     re.IGNORECASE,
 )
 _BACKTICKED = re.compile(r"`[^`\n]+`")
-_BULLET = re.compile(r"^\s*[-*+]\s")
+# An ORDERED list enumerates exactly as a bulleted one does. Recognising only
+# `-*+` let a numbered list walk past the gate, and "the headers are:" over
+# `1.` `2.` `3.` is exactly the shape an author reaches for.
+_LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d{1,3}[.)])\s")
 _FENCE = re.compile(r"^\s*(```|~~~)")
+# A SETEXT heading bounds a section exactly as an ATX `#` one does. Without it a
+# promise in the section above keeps scanning into the section below, widening
+# the window past the author's intent -- a false-positive source.
+_SETEXT = re.compile(r"^\s*(?:={2,}|-{2,})\s*$")
+# `x-nr-` appearing IN a block is what makes that block self-evidently about the
+# header set. This is a relatedness test, never a NAME comparison: it never asks
+# which headers are listed, only whether the block is talking about them at all.
+_XNR = re.compile(r"x-nr-", re.IGNORECASE)
+
+
+def _is_table_delim(line: str) -> bool:
+    """A markdown table's separator row, piped or pipe-less.
+
+    Requires a `|`, so a `---` horizontal rule and a setext underline are not
+    mistaken for one. This is what makes a PIPE-LESS table (`Field | Header`
+    over `--- | ---`) detectable: the delimiter row, not a leading `|`, is what
+    actually distinguishes a table from a paragraph in GFM.
+    """
+    stripped = line.strip()
+    return "|" in stripped and "-" in stripped and set(stripped) <= set("|-: \t")
 
 
 def _blocks(text: str) -> list[tuple[str, int, list[str]]]:
     """Split a document into (kind, first_lineno, lines) blocks.
 
     Blank lines are separators and are dropped. The kinds that matter are
-    `heading` (which bounds a promise's section), `table` and `list` (either of
-    which can BE the enumeration), `fence` (skipped over -- Kotlin puts a code
-    example between its promise and its table, so a fence must not end the
-    scan) and `para`.
+    `heading` (ATX `#` or SETEXT underline -- either bounds a promise's
+    section, and either can itself CARRY the promise), `table` (piped or
+    pipe-less) and `list` (bulleted or numbered) -- either of which can BE the
+    enumeration -- `fence` (skipped over -- Kotlin puts a code example between
+    its promise and its table, so a fence must not end the scan) and `para`.
     """
     lines = text.splitlines()
     out: list[tuple[str, int, list[str]]] = []
     i, n = 0, len(lines)
+
+    def starts_table(k: int) -> bool:
+        return (
+            lines[k].strip().startswith("|")
+            or (k + 1 < n and "|" in lines[k] and _is_table_delim(lines[k + 1]))
+        )
+
+    def starts_setext(k: int) -> bool:
+        # The underline alone is not a heading; it needs the text line above it,
+        # and that text line must not itself be a table row or a fence.
+        return (
+            k + 1 < n
+            and _SETEXT.match(lines[k + 1]) is not None
+            and not _is_table_delim(lines[k + 1])
+            and bool(lines[k].strip())
+        )
+
     while i < n:
         stripped = lines[i].strip()
         if not stripped:
@@ -231,20 +278,27 @@ def _blocks(text: str) -> list[tuple[str, int, list[str]]]:
             out.append(("heading", i + 1, [lines[i]]))
             i += 1
             continue
-        if stripped.startswith("|"):
+        # Table BEFORE setext: `--- | ---` is a delimiter row, not an underline.
+        if starts_table(i):
             j = i
-            while j < n and lines[j].strip().startswith("|"):
+            while j < n and lines[j].strip() and "|" in lines[j]:
                 j += 1
             out.append(("table", i + 1, lines[i:j]))
             i = j
             continue
-        kind = "list" if _BULLET.match(lines[i]) else "para"
+        if starts_setext(i):
+            out.append(("heading", i + 1, [lines[i], lines[i + 1]]))
+            i += 2
+            continue
+        kind = "list" if _LIST_ITEM.match(lines[i]) else "para"
         j = i + 1
         while j < n:
             nxt = lines[j]
-            if not nxt.strip() or nxt.strip().startswith(("#", "|")) or _FENCE.match(nxt):
+            if not nxt.strip() or nxt.strip().startswith("#") or _FENCE.match(nxt):
                 break
-            if kind == "para" and _BULLET.match(nxt):
+            if starts_table(j) or starts_setext(j):
+                break
+            if kind == "para" and _LIST_ITEM.match(nxt):
                 break
             j += 1
         out.append((kind, i + 1, lines[i:j]))
@@ -258,9 +312,33 @@ def _is_enumeration(kind: str, lines: list[str]) -> bool:
         # A one-row table is a shape, not a list. Header + separator + a row.
         return len(lines) >= 3
     if kind == "list":
-        items = [ln for ln in lines if _BULLET.match(ln) and "`" in ln]
+        items = [ln for ln in lines if _LIST_ITEM.match(ln) and "`" in ln]
         return len(items) >= 3
     return False
+
+
+def _inline_enumeration(tail: str) -> int:
+    """Items in an inline list the promise INTRODUCES, else 0.
+
+    The promise must hand off with a colon within a short span, and only the
+    clause up to the first sentence end counts. Reading to the end of the block
+    instead made "carries every `x-nr-*` header the gateway emits. See
+    `docs/cost.md`, `docs/errors.md`, and `docs/routing.md`." look like an
+    inline enumeration of headers -- honest prose, refused.
+
+    Three items is the floor: two is a pair, not a list, and `CLAUDE.md`'s
+    "`sk-nrouter-` prefix, every `x-nr-*` header and nine error codes" must
+    stay clean.
+    """
+    intro = re.match(r"[^:.\n]{0,40}:\s*(.*)$", tail, re.S)
+    if not intro:
+        return 0
+    clause = intro.group(1)
+    stop = re.search(r"\.(?=\s|$)", clause)
+    if stop:
+        clause = clause[: stop.start()]
+    items = _BACKTICKED.findall(clause)
+    return len(items) if len(items) >= 3 and clause.count("`,") >= 2 else 0
 
 
 def check_doc_header_enumeration(root: Path = ROOT) -> list[str]:
@@ -273,7 +351,10 @@ def check_doc_header_enumeration(root: Path = ROOT) -> list[str]:
             continue
         blocks = _blocks(text)
         for idx, (kind, lineno, lines) in enumerate(blocks):
-            if kind not in ("para", "list"):
+            # A HEADING carries a promise as readily as a paragraph does --
+            # "## All `x-nr-*` headers" over a table is the exact stale
+            # exhaustive-list shape, in the most natural place to write one.
+            if kind not in ("para", "list", "heading"):
                 continue
             # Join the block's lines: markdown hard-wraps, and the Dart/Rust/R
             # promises run their list across three physical lines.
@@ -283,24 +364,52 @@ def check_doc_header_enumeration(root: Path = ROOT) -> list[str]:
                 continue
 
             where = ""
-            tail = joined[match.end() :]
-            # (a) the enumeration is INLINE, in the same sentence: three or more
-            #     backticked items separated by commas. Two is a pair, not a
-            #     list, and `CLAUDE.md`'s "`sk-nrouter-` prefix, every `x-nr-*`
-            #     header and nine error codes" must stay clean.
-            if len(_BACKTICKED.findall(tail)) >= 3 and tail.count("`,") >= 2:
-                where = f"an inline list of {len(_BACKTICKED.findall(tail))} items"
+            inline = _inline_enumeration(joined[match.end() :])
+            # (a) the enumeration is INLINE, in the same clause the promise
+            #     introduces: `... every x-nr-* header: `a`, `b`, `c``.
+            if inline:
+                where = f"an inline list of {inline} items"
             else:
-                # (b) the enumeration is a TABLE or BULLET LIST later in the same
+                # (b) the enumeration is a TABLE or LIST later in the same
                 #     section. Bounded by the next heading, so a plans table two
                 #     sections down is not dragged in; fences are stepped over,
                 #     never treated as a boundary.
+                #
+                #     RELATEDNESS, not name matching. The gate still never asks
+                #     WHICH headers a block lists -- only whether that block is
+                #     the promise's enumeration at all. A block qualifies when:
+                #
+                #       * it mentions `x-nr-` itself, so it is self-evidently
+                #         about the header set however its fields are spelled;
+                #       * or the promise INTRODUCES it -- the promise block ends
+                #         in a colon and nothing but a fence stands between --
+                #         which is how the Go and bullet-list shapes read even
+                #         though their rows use each SDK's own spelling;
+                #       * or the promise is the section HEADING, which scopes the
+                #         whole section to the header set.
+                #
+                #     Without this, ANY later table in the section was assumed to
+                #     be the enumeration, so a retry-options table under an
+                #     honest sentence failed the build. A gate that fires on
+                #     correct writing is the one that gets switched off.
+                introduces = joined.rstrip().endswith(":")
+                intervening = False
                 for nkind, nline, nlines in blocks[idx + 1 :]:
                     if nkind == "heading":
                         break
-                    if _is_enumeration(nkind, nlines):
+                    if nkind == "fence":
+                        continue
+                    is_enum = _is_enumeration(nkind, nlines)
+                    if is_enum and (
+                        any(_XNR.search(ln) for ln in nlines)
+                        or kind == "heading"
+                        or (introduces and not intervening)
+                    ):
                         where = f"the {nkind} at line {nline}"
                         break
+                    # Anything else -- prose, or an enumeration ruled unrelated
+                    # -- separates the promise from whatever follows it.
+                    intervening = True
             if not where:
                 continue
             failures.append(
@@ -502,6 +611,77 @@ def self_test(root: Path = ROOT) -> int:
         "promise, then a heading, then an unrelated table",
         "## Contract\n\nThe gate covers every `x-nr-*` header.\n\n"
         "## Plans\n\n| Plan | Fee |\n|---|---|\n| Tier 1 | 4% |\n",
+        False,
+    )
+
+    # ---- SDKENUM-001 review round 2 ---------------------------------------
+    # gpt-5.6-sol [HIGH]: a promise written as a HEADING was never examined,
+    # which is the most natural place an author puts one.
+    ecase(
+        "heading promise then a table",
+        "## All `x-nr-*` headers\n\n"
+        "| Field | Header |\n|---|---|\n"
+        "| `requestId` | `x-nr-request-id` |\n| `cost` | `x-nr-request-cost` |\n",
+        True,
+    )
+    # gpt-5.6-sol [MEDIUM]: a pipe-less markdown table is a valid table and was
+    # invisible, so the enumeration under a promise went unseen.
+    ecase(
+        "promise then a pipe-less table",
+        "`Response.Meta` carries every `x-nr-*` header:\n\n"
+        "Field | Header | Nil means\n"
+        "----- | ------ | ---------\n"
+        "`RequestID` | `x-nr-request-id` | -\n"
+        "`Cost` | `x-nr-request-cost` | unpriced\n",
+        True,
+    )
+    # gpt-5.6-sol [MEDIUM]: an ORDERED list enumerates exactly as a bulleted one
+    # does, and only `-*+` were recognised.
+    ecase(
+        "promise then a numbered list",
+        "It exposes all `x-nr-*` headers:\n\n"
+        "1. `request_id` - the id\n2. `cost` - USD\n3. `model` - the model\n",
+        True,
+    )
+    # gpt-5.6-sol [MEDIUM], the FALSE-POSITIVE direction: an unrelated table
+    # later in the same section is not the promise's enumeration. Honest
+    # documentation must stay quiet, or the gate gets switched off.
+    ecase(
+        "promise, intervening prose, then an UNRELATED table",
+        "## Response metadata\n\n"
+        "`Response.Meta` carries every `x-nr-*` header the gateway emits; the\n"
+        "authoritative set is spec/gateway-response-headers.json.\n\n"
+        "Retries are configured separately.\n\n"
+        "| Option | Default |\n|---|---|\n| `maxRetries` | `2` |\n| `timeout` | `60s` |\n",
+        False,
+    )
+    # claude-opus-4-6-thinking [MEDIUM]: "the following" SELECTS, it does not
+    # quantify. An explicitly partial table is honest partial documentation.
+    ecase(
+        "'the following' over an honest subset",
+        "## Billing\n\n"
+        "The following `x-nr-*` headers are relevant to billing:\n\n"
+        "| Header | Meaning |\n|---|---|\n"
+        "| `x-nr-request-cost` | USD, absent when unpriced |\n"
+        "| `x-nr-cost-status` | `exact` or `unpriced` |\n",
+        False,
+    )
+    # claude-opus-4-6-thinking [LOW]: a setext heading bounds a section exactly
+    # as an ATX one does.
+    ecase(
+        "promise, setext heading, then an unrelated table",
+        "The gate covers every `x-nr-*` header.\n\n"
+        "Plans\n-----\n\n"
+        "| Plan | Fee |\n|---|---|\n| Tier 1 | 4% |\n",
+        False,
+    )
+    # claude-opus-4-6-thinking [LOW]: the inline heuristic read to the end of
+    # the block, so trailing prose citing three files looked like an inline
+    # enumeration of headers.
+    ecase(
+        "promise then trailing prose naming other backticked things",
+        "`ResponseMeta` carries every `x-nr-*` header the gateway emits. See\n"
+        "`docs/cost.md`, `docs/errors.md`, and `docs/routing.md` for details.\n",
         False,
     )
 

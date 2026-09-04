@@ -267,6 +267,20 @@ summary() {
     printf '%s' "$SKIPPED_LANES" | while IFS='|' read -r n why; do
       [ -n "$n" ] && printf '  - %-28s %s\n' "$n" "$why"
     done
+    # SDKCI-004. The hint below is Python-only, so a semgrep skip used to be
+    # answered with `pip install -e sdks/python[dev]` — advice that does not
+    # install semgrep and sends the reader somewhere useless. The SAST lane is
+    # the local stand-in for hosted CodeQL analysis, so name its remedy
+    # specifically rather than letting it inherit the generic one.
+    case "$SKIPPED_LANES" in
+      *semgrep*)
+        printf '\nThe first-party SAST lane did not run. It mirrors the CodeQL gate that\n'
+        printf 'stands in for hosted CodeQL analysis, so nothing scanned this\n'
+        printf 'code. Install semgrep:\n'
+        printf '  brew install semgrep            # macOS\n'
+        printf '  python3 -m pip install --user semgrep\n'
+        ;;
+    esac
     printf '\nPython prerequisites, including the SDK itself, install in one step:\n'
     printf "  %s -m pip install -e '%s/sdks/python[dev]'\n" "${PYTHON_BIN:-python3}" "$ROOT"
     printf '\nOr without touching that interpreter:\n'
@@ -473,9 +487,9 @@ run_lane "dependency security audit" "osv-scanner pip-audit npm" \
 
 # SDKCI-004 — FIRST-PARTY static analysis, which the lane above does not do: it
 # audits third-party advisories, this scans the code we wrote. It mirrors the
-# CodeQL default setup that has been dead org-wide since the 2026-09-02 Actions
-# billing lock, on a world-readable repo. Its own --self-test plants a tracked
-# injection and refuses to pass unless the gate reports it.
+# CodeQL default setup while that hosted analysis is dormant. Its own
+# --self-test plants a tracked injection and refuses to pass unless the gate
+# reports it.
 run_lane "first-party SAST (CodeQL mirror)" "semgrep git" \
   "'$ROOT/scripts/sast.sh'"
 

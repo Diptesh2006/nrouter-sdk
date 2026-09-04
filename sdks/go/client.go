@@ -557,7 +557,7 @@ func newIdleReadCloser(source io.ReadCloser, timeout time.Duration, cancel conte
 
 func (r *idleReadCloser) Read(target []byte) (int, error) {
 	if r.timedOut.Load() {
-		return 0, fmt.Errorf("%w: response body remained idle for %s", context.DeadlineExceeded, r.timeout)
+		return 0, fmt.Errorf("%w: %w: response body remained idle for %s", os.ErrDeadlineExceeded, context.DeadlineExceeded, r.timeout)
 	}
 	if len(target) == 0 {
 		return 0, nil
@@ -573,13 +573,16 @@ func (r *idleReadCloser) Read(target []byte) (int, error) {
 		<-fired
 	}
 	if r.timedOut.Load() {
-		return n, fmt.Errorf("%w: response body remained idle for %s", context.DeadlineExceeded, r.timeout)
+		return n, fmt.Errorf("%w: %w: response body remained idle for %s", os.ErrDeadlineExceeded, context.DeadlineExceeded, r.timeout)
 	}
 	return n, err
 }
 
 func (r *idleReadCloser) Close() (err error) {
 	r.closeOnce.Do(func() {
+		// Cancel first so an early close interrupts a blocked transport read.
+		// A fully consumed net/http body has already returned its connection to
+		// the idle pool at EOF; the reuse regression test pins that behavior.
 		r.cancel()
 		err = r.source.Close()
 	})

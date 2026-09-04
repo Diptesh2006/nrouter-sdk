@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -1173,10 +1176,45 @@ func TestPostHeaderBodyStallsAreCutForBinaryAndStreamingResponses(t *testing.T) 
 				if !errors.As(got, &typed) || typed.Kind != KindTransport {
 					t.Fatalf("got %v; want a typed transport idle-timeout", got)
 				}
+				if !errors.Is(got, os.ErrDeadlineExceeded) {
+					t.Fatalf("got %v; want errors.Is(..., os.ErrDeadlineExceeded)", got)
+				}
+				if !errors.Is(got, context.DeadlineExceeded) {
+					t.Fatalf("got %v; want context deadline compatibility", got)
+				}
 			case <-time.After(2 * time.Second):
 				t.Fatal("post-header body stall was left unbounded")
 			}
 		})
+	}
+}
+
+func TestBodyIdleWrapperPreservesConnectionReuse(t *testing.T) {
+	var mu sync.Mutex
+	var peers []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		peers = append(peers, req.RemoteAddr)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := New(testKey, WithBaseURL(srv.URL), WithHTTPClient(srv.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, callErr := client.Models(context.Background()); callErr != nil {
+			t.Fatal(callErr)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(peers) != 2 || peers[0] != peers[1] {
+		t.Fatalf("connections = %v; want the fully-read connection reused", peers)
 	}
 }
 

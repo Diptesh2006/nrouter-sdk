@@ -1,6 +1,7 @@
 package ai.nrouter.sdk;
 
 import com.openai.client.OpenAIClient;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
@@ -8,9 +9,22 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class NRouterTest {
+
+    @Test
+    void vendorRequestDeadlineOutlivesTheGatewayStreamingSla() {
+        assertEquals(Duration.ofSeconds(900), NRouterHttpClient.GATEWAY_STREAMING_DEADLINE);
+        assertEquals(Duration.ofSeconds(410), NRouterHttpClient.GATEWAY_MAX_TIME_TO_FIRST_BYTE);
+        assertTrue(
+                NRouterHttpClient.DEFAULT_REQUEST_TIMEOUT.compareTo(
+                        NRouterHttpClient.GATEWAY_MAX_TIME_TO_FIRST_BYTE.plus(
+                                NRouterHttpClient.GATEWAY_STREAMING_DEADLINE)) > 0,
+                "the SDK must not truncate a stream the gateway still considers healthy");
+        assertEquals(NRouterHttpClient.DEFAULT_REQUEST_TIMEOUT, NRouter.timeoutProfile().request());
+    }
 
     @Test
     void rejectsInvalidKeysBeforeBuildingClient() {

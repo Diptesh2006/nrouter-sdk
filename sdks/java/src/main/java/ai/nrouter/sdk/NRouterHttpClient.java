@@ -55,15 +55,20 @@ public final class NRouterHttpClient {
      * <p>Sized against the gateway's own worst honest case, not against a
      * comfortable average: it may make up to three provider attempts with up to
      * 20s of cumulative backoff between them, holding a 120s between-bytes read
-     * timeout on each. Ten minutes sits comfortably above that and comfortably
-     * below infinity.
+     * timeout on each. The gateway may spend about 410s reaching the first
+     * byte, then permits a healthy stream to run for 900s. Twenty-three minutes
+     * covers both phases with 70s of delivery margin while remaining finite.
      *
      * <p>Erring high is deliberate. A client that gives up while the gateway is
      * still completing the call aborts a request that the gateway settles and
      * BILLS: the customer pays for tokens they never receive, and it is
      * indistinguishable from us being broken.
      */
-    public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofMinutes(10);
+    static final Duration GATEWAY_STREAMING_DEADLINE = Duration.ofSeconds(900);
+    static final Duration GATEWAY_MAX_TIME_TO_FIRST_BYTE = Duration.ofSeconds(410);
+
+    /** Seventy seconds beyond the gateway's longest healthy full exchange. */
+    public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofMinutes(23);
 
     /**
      * Gap-between-bytes ceiling. The JDK's {@link HttpClient} has no socket

@@ -52,9 +52,8 @@ public final class NRouter {
         return OpenAIOkHttpClient.builder()
                 .apiKey(resolved)
                 .baseUrl(baseUrl != null ? baseUrl : DEFAULT_BASE_URL)
-                // Same numbers as the native client, from the same constants —
-                // two clients against one gateway must not disagree about how
-                // long an inference is allowed to take.
+                // Both Java surfaces share one timeout profile, including the
+                // margin beyond the gateway's longest healthy stream.
                 .timeout(OPENAI_TIMEOUT)
                 // NOT the library default of 2. The gateway reserves credit once
                 // per customer request and owns retry and failover; a client-side
@@ -65,13 +64,13 @@ public final class NRouter {
     }
 
     /**
-     * The timeout profile both Java surfaces use.
+     * The timeout profile for the vendor OpenAI-compatible surface.
      *
      * <p>{@code request} is a whole-exchange ceiling and {@code read} is the gap
      * between bytes; the OkHttp-backed client can express both, so it does. The
      * native {@link NRouterHttpClient} can only express the connect and
-     * whole-exchange halves and drops the streaming/binary paths out of the
-     * ceiling instead.
+     * whole-exchange halves and therefore handles long-lived response bodies
+     * separately.
      */
     private static final Timeout OPENAI_TIMEOUT = Timeout.builder()
             .connect(NRouterHttpClient.DEFAULT_CONNECT_TIMEOUT)
@@ -79,6 +78,10 @@ public final class NRouter {
             .write(NRouterHttpClient.DEFAULT_WRITE_TIMEOUT)
             .request(NRouterHttpClient.DEFAULT_REQUEST_TIMEOUT)
             .build();
+
+    static Timeout timeoutProfile() {
+        return OPENAI_TIMEOUT;
+    }
 
     /** Native Java 11 surface with raw nRouter metadata and typed errors. */
     public static NRouterHttpClient httpClient(String apiKey) {

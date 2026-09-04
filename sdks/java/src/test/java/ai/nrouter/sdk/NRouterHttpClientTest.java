@@ -403,12 +403,13 @@ class NRouterHttpClientTest {
         assertEquals(
                 Optional.of(Duration.ofSeconds(15)),
                 client.httpClient().connectTimeout());
-        assertEquals(Duration.ofMinutes(10), client.requestTimeout());
-        // The buffered ceiling must sit above the gateway's worst honest case:
-        // three provider attempts, up to 20s cumulative backoff, a 120s
-        // between-bytes budget each. Cutting below that aborts a call the
-        // gateway settles and BILLS.
-        assertTrue(client.requestTimeout().compareTo(Duration.ofMinutes(7)) > 0);
+        assertEquals(Duration.ofMinutes(23), client.requestTimeout());
+        // The common Java ceiling must cover the gateway's worst honest wait
+        // for a first byte plus its 900s healthy streaming SLA. Cutting below
+        // their sum aborts a call the gateway may still complete and bill.
+        assertTrue(client.requestTimeout().compareTo(
+                NRouterHttpClient.GATEWAY_MAX_TIME_TO_FIRST_BYTE.plus(
+                        NRouterHttpClient.GATEWAY_STREAMING_DEADLINE)) > 0);
     }
 
     @Test

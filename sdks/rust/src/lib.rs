@@ -64,7 +64,7 @@ pub mod sampling;
 pub use errors::{ErrorBody, NRouterError};
 pub use meta::{ResponseMeta, HEADER_NAMES};
 
-use async_openai::{config::OpenAIConfig, Client as OpenAIClient};
+use async_openai::{config::OpenAIConfig, middleware::ReqwestService, Client as OpenAIClient};
 
 /// The gateway's customer surface. A dynamic value: override it for stage.
 pub const DEFAULT_BASE_URL: &str = "https://api.nrouter.ai/v1";
@@ -102,9 +102,42 @@ pub fn client() -> Result<OpenAIClient<OpenAIConfig>, NRouterError> {
 
 /// An `async-openai` client pointed at nRouter with an explicit key.
 pub fn client_with_key(api_key: &str) -> Result<OpenAIClient<OpenAIConfig>, NRouterError> {
+    client_with_key_and_base_url(api_key, DEFAULT_BASE_URL)
+}
+
+/// An `async-openai` client pointed at an explicit nRouter gateway.
+///
+/// The public facade uses the same finite connect and between-bytes deadlines
+/// as [`http::Client`]. Its executor is a bare [`ReqwestService`], deliberately
+/// excluding `async-openai`'s default retry layer: the gateway already owns a
+/// single three-attempt provider budget, while replaying a billed customer
+/// `POST` here creates a new reservation and can charge the customer twice.
+pub fn client_with_key_and_base_url(
+    api_key: &str,
+    base_url: &str,
+) -> Result<OpenAIClient<OpenAIConfig>, NRouterError> {
+    client_with_key_base_url_and_http_client(
+        api_key,
+        base_url,
+        http::Client::default_http_client()?,
+    )
+}
+
+/// The public `async-openai` facade over a caller-supplied HTTP transport.
+///
+/// Supplying the transport customizes proxy, pool and deadlines. It does not
+/// restore automatic retries: every billed request still gets one SDK attempt.
+pub fn client_with_key_base_url_and_http_client(
+    api_key: &str,
+    base_url: &str,
+    transport: reqwest::Client,
+) -> Result<OpenAIClient<OpenAIConfig>, NRouterError> {
     let key = resolve_api_key(Some(api_key))?;
     let config = OpenAIConfig::new()
         .with_api_key(key)
-        .with_api_base(DEFAULT_BASE_URL);
-    Ok(OpenAIClient::with_config(config))
+        .with_api_base(base_url.trim_end_matches('/'));
+    // `build` installs the bounded client in the request factory; the service
+    // installs the same client in the executor while omitting its retry layer.
+    Ok(OpenAIClient::build(transport.clone(), config)
+        .with_http_service(ReqwestService::new(transport)))
 }

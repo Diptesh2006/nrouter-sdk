@@ -31,8 +31,9 @@ void main() {
         'x-nr-response-cache',
         'x-nr-response-cache-age',
         'x-nr-budget-warning',
+        'x-nr-guardrails',
       ];
-      expect(NRouterResponseMeta.headerNames.length, 14);
+      expect(NRouterResponseMeta.headerNames.length, 15);
       for (final name in expected) {
         expect(NRouterResponseMeta.headerNames, contains(name),
             reason: '$name is not read by this SDK');
@@ -176,6 +177,7 @@ void main() {
         'x-nr-response-cache': 'hit',
         'x-nr-response-cache-age': '7',
         'x-nr-budget-warning': 'org soft_budget 80.00/100.00',
+        'x-nr-guardrails': 'pass',
       });
       expect(meta.cost, 0.00042);
       expect(meta.isPriced, isTrue);
@@ -183,6 +185,7 @@ void main() {
       expect(meta.responseCache, 'hit');
       expect(meta.responseCacheAge, 7);
       expect(meta.budgetWarning, 'org soft_budget 80.00/100.00');
+      expect(meta.guardrails, 'pass');
     });
   });
 

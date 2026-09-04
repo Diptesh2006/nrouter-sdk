@@ -55,6 +55,7 @@ export const EMPTY_META: ResponseMeta = Object.freeze({
   cacheWriteTokens: null,
   limitSource: null,
   budgetWarning: null,
+  guardrails: null,
   authReason: null,
   responseCache: null,
   responseCacheAge: null,
@@ -165,6 +166,10 @@ export function metaFromLookup(get: (name: string) => string | null | undefined)
     cacheWriteTokens: count(get('x-nr-cache-write-tokens')),
     limitSource: text(get('x-nr-limit-source')),
     budgetWarning: text(get('x-nr-budget-warning')),
+    // Posture only. The token IS the payload — nothing here reconstructs a
+    // policy name, id, detector family or rule count from it, because the
+    // gateway deliberately never sends them (§4f gate 9).
+    guardrails: text(get('x-nr-guardrails')),
     authReason: text(get('x-nr-auth-reason')),
     responseCache: text(get('x-nr-response-cache')),
     responseCacheAge: count(get('x-nr-response-cache-age')),
@@ -186,7 +191,7 @@ function isHeadersLike(source: HeaderSource): source is HeadersLike {
  * object would return `undefined` for correctly-spelled headers and report a
  * fully-metered response as having no metadata at all.
  *
- * Only the fourteen names in `HEADER_NAMES` are read, so the index is built
+ * Only the fifteen names in `HEADER_NAMES` are read, so the index is built
  * from the caller's keys once rather than scanned per lookup.
  */
 export function metaFromHeaders(headers: HeaderSource): ResponseMeta {

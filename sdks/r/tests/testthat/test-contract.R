@@ -13,9 +13,9 @@ test_that("every spec header is read", {
     "x-nr-input-tokens", "x-nr-output-tokens", "x-nr-total-tokens",
     "x-nr-cache-read-tokens", "x-nr-cache-write-tokens", "x-nr-limit-source",
     "x-nr-auth-reason", "x-nr-response-cache", "x-nr-response-cache-age",
-    "x-nr-budget-warning"
+    "x-nr-budget-warning", "x-nr-guardrails"
   )
-  expect_length(nrouter_header_names(), 14)
+  expect_length(nrouter_header_names(), 15)
   for (name in expected) {
     expect_true(name %in% nrouter_header_names(), info = name)
   }
@@ -80,7 +80,8 @@ test_that("a priced response parses its numbers", {
     "x-nr-input-tokens"      = "11",
     "x-nr-response-cache"    = "hit",
     "x-nr-response-cache-age" = "7",
-    "x-nr-budget-warning"     = "org soft_budget 80.00/100.00"
+    "x-nr-budget-warning"     = "org soft_budget 80.00/100.00",
+    "x-nr-guardrails"         = "pass"
   ))
   expect_equal(meta$cost, 0.00042)
   expect_true(nrouter_is_priced(meta))
@@ -88,6 +89,7 @@ test_that("a priced response parses its numbers", {
   expect_equal(meta$response_cache, "hit")
   expect_equal(meta$response_cache_age, 7)
   expect_equal(meta$budget_warning, "org soft_budget 80.00/100.00")
+  expect_equal(meta$guardrails, "pass")
 })
 
 test_that("header lookup is case-insensitive", {

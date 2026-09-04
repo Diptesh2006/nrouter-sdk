@@ -3,7 +3,7 @@ package ai.nrouter.sdk;
 import java.net.http.HttpHeaders;
 import java.util.List;
 
-/** The fourteen customer-visible x-nr-* response headers. */
+/** The fifteen customer-visible x-nr-* response headers. */
 public final class NRouterResponseMeta {
     /** Every customer-visible response header this SDK parses. */
     public static final List<String> HEADER_NAMES = List.of(
@@ -18,6 +18,7 @@ public final class NRouterResponseMeta {
             "x-nr-cache-write-tokens",
             "x-nr-limit-source",
             "x-nr-budget-warning",
+            "x-nr-guardrails",
             "x-nr-auth-reason",
             "x-nr-response-cache",
             "x-nr-response-cache-age");
@@ -33,6 +34,7 @@ public final class NRouterResponseMeta {
     private final Long cacheWriteTokens;
     private final String limitSource;
     private final String budgetWarning;
+    private final String guardrails;
     private final String authReason;
     private final String responseCache;
     private final Long responseCacheAge;
@@ -49,6 +51,7 @@ public final class NRouterResponseMeta {
         cacheWriteTokens = integer(headers, "x-nr-cache-write-tokens");
         limitSource = value(headers, "x-nr-limit-source");
         budgetWarning = value(headers, "x-nr-budget-warning");
+        guardrails = value(headers, "x-nr-guardrails");
         authReason = value(headers, "x-nr-auth-reason");
         responseCache = value(headers, "x-nr-response-cache");
         responseCacheAge = integer(headers, "x-nr-response-cache-age");
@@ -82,6 +85,18 @@ public final class NRouterResponseMeta {
     public String limitSource() { return limitSource; }
     /** Set when this request crossed a soft budget you configured (it still served): {@code <scope> soft_budget <spend>/<ceiling>}. */
     public String budgetWarning() { return budgetWarning; }
+    /**
+     * Posture of the PRE-CALL guardrail chain: {@code none}, {@code monitor},
+     * {@code pass}, {@code partial} or {@code blocked}, matched exactly and
+     * case-sensitively.
+     *
+     * <p>{@code null} means the gateway made NO guardrail claim about this
+     * response, never "no guardrail applied" — that is the explicit
+     * {@code none}. Posture only by design: policy name, policy id, detector
+     * family, rule count and (for {@code partial}) which channel went
+     * uninspected are all deliberately withheld.
+     */
+    public String guardrails() { return guardrails; }
     public String authReason() { return authReason; }
     public String responseCache() { return responseCache; }
     public Long responseCacheAge() { return responseCacheAge; }

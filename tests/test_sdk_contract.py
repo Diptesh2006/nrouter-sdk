@@ -255,6 +255,10 @@ class ClientContractTests(unittest.TestCase):
                 "x-nr-response-cache": "hit",
                 "x-nr-response-cache-age": "3",
                 "x-nr-budget-warning": "org soft_budget 80.00/100.00",
+                # Posture only, and one of the five exact tokens. The
+                # header carries no policy name, id, detector family or
+                # rule count by design (gateway §4f gate 9).
+                "x-nr-guardrails": "pass",
             }
         )
         self.assertEqual(metadata.request_id, "req_contract")
@@ -270,6 +274,7 @@ class ClientContractTests(unittest.TestCase):
         self.assertEqual(metadata.response_cache, "hit")
         self.assertEqual(metadata.response_cache_age, 3)
         self.assertEqual(metadata.budget_warning, "org soft_budget 80.00/100.00")
+        self.assertEqual(metadata.guardrails, "pass")
 
     def test_unpriced_response_omits_amount_without_claiming_zero(self) -> None:
         metadata = nRouterResponseMeta.from_headers(

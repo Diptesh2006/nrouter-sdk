@@ -32,6 +32,16 @@ public data class NRouterResponseMeta(
      * `org soft_budget 80.00/100.00`.
      */
     val budgetWarning: String? = null,
+    /**
+     * Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `pass`,
+     * `partial` or `blocked`, matched exactly and case-sensitively.
+     *
+     * `null` means the gateway made NO guardrail claim about this response —
+     * never "no guardrail applied", which is the explicit `none`. Posture only
+     * by design: policy name, policy id, detector family, rule count and (for
+     * `partial`) which channel went uninspected are deliberately withheld.
+     */
+    val guardrails: String? = null,
     /** On a 401, the gateway's stable reason. */
     val authReason: String? = null,
     /** `hit` or `miss`; absent when the response cache did not participate. */
@@ -57,6 +67,7 @@ public data class NRouterResponseMeta(
             "x-nr-cache-write-tokens",
             "x-nr-limit-source",
             "x-nr-budget-warning",
+            "x-nr-guardrails",
             "x-nr-auth-reason",
             "x-nr-response-cache",
             "x-nr-response-cache-age",
@@ -83,6 +94,7 @@ public data class NRouterResponseMeta(
                 cacheWriteTokens = num("x-nr-cache-write-tokens"),
                 limitSource = lookup("x-nr-limit-source"),
                 budgetWarning = lookup("x-nr-budget-warning"),
+                guardrails = lookup("x-nr-guardrails"),
                 authReason = lookup("x-nr-auth-reason"),
                 responseCache = lookup("x-nr-response-cache"),
                 responseCacheAge = num("x-nr-response-cache-age"),

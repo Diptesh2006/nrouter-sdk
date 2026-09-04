@@ -72,6 +72,27 @@
       "format": "<scope> soft_budget <spend>/<ceiling>",
       "example": "org soft_budget 80.00/100.00"
     },
+    "x-nr-guardrails": {
+      "type": "string",
+      "description": "Posture of the PRE-CALL guardrail chain for this request. ABSENT means this response makes no guardrail claim — /v1/models, the control plane, an auth refusal that never reached preflight — exactly as absence works for x-nr-limit-source. Absence is never \"no guardrail applied\"; that is the explicit token `none`. Not published on the images, audio or video routes.",
+      "always": false,
+      "values": [
+        "none",
+        "monitor",
+        "pass",
+        "partial",
+        "blocked"
+      ],
+      "case_sensitive": true,
+      "value_semantics": {
+        "none": "No guardrail applied to this request. A legitimate state for a tenant who configured nothing, and the alarm for one who did.",
+        "monitor": "A chain applied and nothing in it could have refused (warn/log trial modes only). It observed; it did not protect. Reporting this as `pass` would claim an enforcement that never existed.",
+        "pass": "An enforcing chain inspected the whole request and allowed it.",
+        "partial": "An enforcing chain ran but did not inspect the whole request. WHICH part went uninspected is deliberately withheld — see design_note.",
+        "blocked": "An enforcing chain refused the request. The one response that proves a control ran, so it is never silent about it."
+      },
+      "design_note": "POSTURE ONLY, BY DESIGN (Rule #29; gateway rules 00-gateway-rules.md §4f gate 9). The token is the whole payload. Policy NAME, policy ID, detector family, RULE COUNT, and — for `partial` — WHICH channel went uninspected are all deliberately withheld, and widening this header to carry any of them is a security regression, not an improvement. A rule count moves when a policy moves, so a caller watching it maps a tenant's controls without ever tripping one; naming the uninspected channel hands an evader the smuggling route. That is why `partial` is a bare token and stays one. Match the value EXACTLY and case-sensitively (GuardrailStatus::from_wire is case-sensitive on purpose): an unrecognised token is unknown, never a guess at the nearest one."
+    },
     "x-nr-auth-reason": {
       "type": "string",
       "description": "Machine-readable reason a virtual key was refused",

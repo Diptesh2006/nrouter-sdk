@@ -26,6 +26,14 @@ public struct NRouterResponseMeta: Equatable, Sendable {
     /// served. `<scope> soft_budget <spend>/<ceiling>`, e.g.
     /// `org soft_budget 80.00/100.00`.
     public var budgetWarning: String?
+    /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `pass`,
+    /// `partial` or `blocked`, matched exactly and case-sensitively.
+    ///
+    /// `nil` means the gateway made NO guardrail claim about this response —
+    /// never "no guardrail applied", which is the explicit `none`. Posture only
+    /// by design: policy name, policy id, detector family, rule count and (for
+    /// `partial`) which channel went uninspected are deliberately withheld.
+    public var guardrails: String?
     /// On a 401, the gateway's stable reason.
     public var authReason: String?
     /// `hit` or `miss`; absent when the response cache did not participate.
@@ -46,6 +54,7 @@ public struct NRouterResponseMeta: Equatable, Sendable {
         "x-nr-cache-write-tokens",
         "x-nr-limit-source",
         "x-nr-budget-warning",
+        "x-nr-guardrails",
         "x-nr-auth-reason",
         "x-nr-response-cache",
         "x-nr-response-cache-age",
@@ -70,6 +79,7 @@ public struct NRouterResponseMeta: Equatable, Sendable {
         cacheWriteTokens = int("x-nr-cache-write-tokens")
         limitSource = lookup("x-nr-limit-source")
         budgetWarning = lookup("x-nr-budget-warning")
+        guardrails = lookup("x-nr-guardrails")
         authReason = lookup("x-nr-auth-reason")
         responseCache = lookup("x-nr-response-cache")
         responseCacheAge = int("x-nr-response-cache-age")

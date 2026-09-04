@@ -31,6 +31,22 @@ export interface ResponseMeta {
   limitSource: string | null;
   /** Set when this request crossed a soft budget you configured (it still served): `<scope> soft_budget <spend>/<ceiling>`, e.g. `org soft_budget 80.00/100.00`. */
   budgetWarning: string | null;
+  /**
+   * Posture of the PRE-CALL guardrail chain: `none` | `monitor` | `pass` |
+   * `partial` | `blocked`. Match it exactly and case-sensitively.
+   *
+   * Null means the gateway made NO guardrail claim about this response (a
+   * `/v1/models` call, an auth refusal that never reached preflight) — never
+   * "no guardrail applied", which is the explicit `none`. Not published on the
+   * image, audio or video routes.
+   *
+   * Posture only, by design: the policy name, its id, the detector family, the
+   * rule count and — for `partial` — which channel went uninspected are all
+   * deliberately withheld. A rule count moves when a policy moves, so watching
+   * it maps a tenant's controls without ever tripping one; naming the
+   * uninspected channel hands an evader the smuggling route.
+   */
+  guardrails: string | null;
   /** The gateway's stable reason for refusing a virtual key on a 401. */
   authReason: string | null;
   /** `hit` or `miss`; null when the response cache did not participate. */
@@ -56,6 +72,7 @@ export const HEADER_NAMES = [
   'x-nr-cache-write-tokens',
   'x-nr-limit-source',
   'x-nr-budget-warning',
+  'x-nr-guardrails',
   'x-nr-auth-reason',
   'x-nr-response-cache',
   'x-nr-response-cache-age',

@@ -26,6 +26,13 @@ class nRouterResponseMeta:
         budget_warning: Present when this request crossed a soft budget you
             configured; the request still served. ``<scope> soft_budget
             <spend>/<ceiling>``, e.g. ``org soft_budget 80.00/100.00``.
+        guardrails: Posture of the PRE-CALL guardrail chain — ``none`` |
+            ``monitor`` | ``pass`` | ``partial`` | ``blocked``, matched exactly
+            and case-sensitively. ``None`` means the gateway made NO guardrail
+            claim about this response, never "no guardrail applied" — that is
+            the explicit ``none``. Posture only by design: policy name, policy
+            id, detector family, rule count and (for ``partial``) which channel
+            went uninspected are all deliberately withheld.
         auth_reason: The gateway's stable refusal reason on a 401, e.g.
             ``key_route_not_allowed``. Advertised in :attr:`HEADER_NAMES`, so it
             has to be parsed here too — a name in that list the parser ignores
@@ -46,6 +53,7 @@ class nRouterResponseMeta:
     cache_write_tokens: int | None = None
     limit_source: str | None = None
     budget_warning: str | None = None
+    guardrails: str | None = None
     auth_reason: str | None = None
     response_cache: str | None = None
     response_cache_age: int | None = None
@@ -70,6 +78,7 @@ class nRouterResponseMeta:
         "x-nr-cache-write-tokens",
         "x-nr-limit-source",
         "x-nr-budget-warning",
+        "x-nr-guardrails",
         "x-nr-auth-reason",
         "x-nr-response-cache",
         "x-nr-response-cache-age",
@@ -97,6 +106,7 @@ class nRouterResponseMeta:
             cache_write_tokens=optional_int("x-nr-cache-write-tokens"),
             limit_source=headers.get("x-nr-limit-source"),
             budget_warning=headers.get("x-nr-budget-warning"),
+            guardrails=headers.get("x-nr-guardrails"),
             auth_reason=headers.get("x-nr-auth-reason"),
             response_cache=headers.get("x-nr-response-cache"),
             response_cache_age=optional_int("x-nr-response-cache-age"),

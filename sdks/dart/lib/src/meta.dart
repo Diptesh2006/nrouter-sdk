@@ -17,6 +17,7 @@ class NRouterResponseMeta {
     this.cacheWriteTokens,
     this.limitSource,
     this.budgetWarning,
+    this.guardrails,
     this.authReason,
     this.responseCache,
     this.responseCacheAge,
@@ -47,6 +48,15 @@ class NRouterResponseMeta {
   /// `org soft_budget 80.00/100.00`.
   final String? budgetWarning;
 
+  /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `pass`,
+  /// `partial` or `blocked`, matched exactly and case-sensitively.
+  ///
+  /// `null` means the gateway made NO guardrail claim about this response —
+  /// never "no guardrail applied", which is the explicit `none`. Posture only
+  /// by design: policy name, policy id, detector family, rule count and (for
+  /// `partial`) which channel went uninspected are deliberately withheld.
+  final String? guardrails;
+
   /// On a 401, the gateway's stable reason.
   final String? authReason;
 
@@ -69,6 +79,7 @@ class NRouterResponseMeta {
     'x-nr-cache-write-tokens',
     'x-nr-limit-source',
     'x-nr-budget-warning',
+    'x-nr-guardrails',
     'x-nr-auth-reason',
     'x-nr-response-cache',
     'x-nr-response-cache-age',
@@ -95,6 +106,7 @@ class NRouterResponseMeta {
       cacheWriteTokens: asInt('x-nr-cache-write-tokens'),
       limitSource: get('x-nr-limit-source'),
       budgetWarning: get('x-nr-budget-warning'),
+      guardrails: get('x-nr-guardrails'),
       authReason: get('x-nr-auth-reason'),
       responseCache: get('x-nr-response-cache'),
       responseCacheAge: asInt('x-nr-response-cache-age'),

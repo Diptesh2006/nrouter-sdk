@@ -17,9 +17,9 @@ final class ContractTests: XCTestCase {
             "x-nr-input-tokens", "x-nr-output-tokens", "x-nr-total-tokens",
             "x-nr-cache-read-tokens", "x-nr-cache-write-tokens", "x-nr-limit-source",
             "x-nr-auth-reason", "x-nr-response-cache", "x-nr-response-cache-age",
-            "x-nr-budget-warning",
+            "x-nr-budget-warning", "x-nr-guardrails",
         ]
-        XCTAssertEqual(NRouterResponseMeta.headerNames.count, 14)
+        XCTAssertEqual(NRouterResponseMeta.headerNames.count, 15)
         for name in expected {
             XCTAssertTrue(
                 NRouterResponseMeta.headerNames.contains(name),
@@ -534,6 +534,7 @@ final class ContractTests: XCTestCase {
             "x-nr-response-cache": "hit",
             "x-nr-response-cache-age": "60",
             "x-nr-budget-warning": "org soft_budget 80.00/100.00",
+            "x-nr-guardrails": "pass",
         ]
         let http = HTTPURLResponse(
             url: URL(string: "https://api.nrouter.ai/v1/chat/completions")!,
@@ -556,6 +557,7 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(meta.responseCache, "hit")
         XCTAssertEqual(meta.responseCacheAge, 60)
         XCTAssertEqual(meta.budgetWarning, "org soft_budget 80.00/100.00")
+        XCTAssertEqual(meta.guardrails, "pass")
         XCTAssertTrue(meta.isPriced)
     }
 

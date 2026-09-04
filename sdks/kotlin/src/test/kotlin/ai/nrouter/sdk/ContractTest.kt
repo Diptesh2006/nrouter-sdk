@@ -44,9 +44,9 @@ class ContractTest {
             "x-nr-input-tokens", "x-nr-output-tokens", "x-nr-total-tokens",
             "x-nr-cache-read-tokens", "x-nr-cache-write-tokens", "x-nr-limit-source",
             "x-nr-auth-reason", "x-nr-response-cache", "x-nr-response-cache-age",
-            "x-nr-budget-warning",
+            "x-nr-budget-warning", "x-nr-guardrails",
         )
-        assertEquals(14, NRouterResponseMeta.HEADER_NAMES.size)
+        assertEquals(15, NRouterResponseMeta.HEADER_NAMES.size)
         expected.forEach {
             assertTrue(it in NRouterResponseMeta.HEADER_NAMES, "$it is not read by this SDK")
         }
@@ -518,6 +518,7 @@ class ContractTest {
             .add("x-nr-response-cache", "hit")
             .add("x-nr-response-cache-age", "120")
             .add("x-nr-budget-warning", "org soft_budget 80.00/100.00")
+            .add("x-nr-guardrails", "pass")
             .build()
 
         val meta = NRouterResponseMeta.fromLookup { headers[it] }
@@ -535,6 +536,7 @@ class ContractTest {
         assertEquals("hit", meta.responseCache)
         assertEquals(120L, meta.responseCacheAge)
         assertEquals("org soft_budget 80.00/100.00", meta.budgetWarning)
+        assertEquals("pass", meta.guardrails)
         assertTrue(meta.isPriced)
     }
 }

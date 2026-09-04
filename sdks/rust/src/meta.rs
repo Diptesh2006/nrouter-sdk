@@ -27,6 +27,14 @@ pub struct ResponseMeta {
     /// served. `<scope> soft_budget <spend>/<ceiling>`, e.g.
     /// `org soft_budget 80.00/100.00`.
     pub budget_warning: Option<String>,
+    /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `pass`,
+    /// `partial` or `blocked`, matched exactly and case-sensitively.
+    ///
+    /// `None` means the gateway made NO guardrail claim about this response —
+    /// never "no guardrail applied", which is the explicit `none`. Posture only
+    /// by design: policy name, policy id, detector family, rule count and (for
+    /// `partial`) which channel went uninspected are deliberately withheld.
+    pub guardrails: Option<String>,
     /// On a 401, the gateway's stable reason.
     pub auth_reason: Option<String>,
     /// `hit` or `miss`; absent when the response cache did not participate.
@@ -36,7 +44,7 @@ pub struct ResponseMeta {
 }
 
 /// Every header this SDK reads, exactly as the spec names them.
-pub const HEADER_NAMES: [&str; 14] = [
+pub const HEADER_NAMES: [&str; 15] = [
     "x-nr-request-id",
     "x-nr-request-cost",
     "x-nr-cost-status",
@@ -48,6 +56,7 @@ pub const HEADER_NAMES: [&str; 14] = [
     "x-nr-cache-write-tokens",
     "x-nr-limit-source",
     "x-nr-budget-warning",
+    "x-nr-guardrails",
     "x-nr-auth-reason",
     "x-nr-response-cache",
     "x-nr-response-cache-age",
@@ -75,6 +84,7 @@ impl ResponseMeta {
             cache_write_tokens: num("x-nr-cache-write-tokens"),
             limit_source: get("x-nr-limit-source"),
             budget_warning: get("x-nr-budget-warning"),
+            guardrails: get("x-nr-guardrails"),
             auth_reason: get("x-nr-auth-reason"),
             response_cache: get("x-nr-response-cache"),
             response_cache_age: num("x-nr-response-cache-age"),

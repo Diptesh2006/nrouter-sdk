@@ -24,7 +24,7 @@ fn constants_match_the_spec() {
 
 #[test]
 fn every_spec_header_is_read() {
-    assert_eq!(HEADER_NAMES.len(), 14);
+    assert_eq!(HEADER_NAMES.len(), 15);
     for name in [
         "x-nr-request-id",
         "x-nr-request-cost",
@@ -40,6 +40,7 @@ fn every_spec_header_is_read() {
         "x-nr-response-cache",
         "x-nr-response-cache-age",
         "x-nr-budget-warning",
+        "x-nr-guardrails",
     ] {
         assert!(
             HEADER_NAMES.contains(&name),
@@ -133,6 +134,7 @@ fn a_priced_response_parses_its_numbers() {
         "x-nr-response-cache" => Some("hit".into()),
         "x-nr-response-cache-age" => Some("7".into()),
         "x-nr-budget-warning" => Some("org soft_budget 80.00/100.00".into()),
+        "x-nr-guardrails" => Some("pass".into()),
         _ => None,
     });
     assert_eq!(meta.cost, Some(0.00042));
@@ -145,6 +147,7 @@ fn a_priced_response_parses_its_numbers() {
         meta.budget_warning.as_deref(),
         Some("org soft_budget 80.00/100.00")
     );
+    assert_eq!(meta.guardrails.as_deref(), Some("pass"));
 }
 
 #[test]

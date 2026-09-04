@@ -220,7 +220,7 @@ func TestRequestCarriesBearerAuthAndPath(t *testing.T) {
 
 // --- metadata ---------------------------------------------------------------
 
-func TestAllFourteenHeadersAreRead(t *testing.T) {
+func TestAllFifteenHeadersAreRead(t *testing.T) {
 	headers := map[string]string{
 		"x-nr-request-id":         "nrouter-abc123",
 		"x-nr-request-cost":       "0.00347",
@@ -236,6 +236,7 @@ func TestAllFourteenHeadersAreRead(t *testing.T) {
 		"x-nr-response-cache":     "hit",
 		"x-nr-response-cache-age": "12",
 		"x-nr-budget-warning":     "org soft_budget 80.00/100.00",
+		"x-nr-guardrails":         "pass",
 	}
 	if len(headers) != len(HeaderNames) {
 		t.Fatalf("this test covers %d headers, HeaderNames declares %d", len(headers), len(HeaderNames))
@@ -267,7 +268,7 @@ func TestAllFourteenHeadersAreRead(t *testing.T) {
 			t.Fatalf("%s header not parsed", name)
 		}
 	}
-	if m.LimitSource != "key" || m.AuthReason != "unauthorized" || m.ResponseCache != "hit" || m.BudgetWarning != "org soft_budget 80.00/100.00" {
+	if m.LimitSource != "key" || m.AuthReason != "unauthorized" || m.ResponseCache != "hit" || m.BudgetWarning != "org soft_budget 80.00/100.00" || m.Guardrails != "pass" {
 		t.Fatalf("classification headers not parsed: %+v", m)
 	}
 	if !m.IsPriced() {

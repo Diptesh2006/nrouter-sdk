@@ -32,9 +32,10 @@ class NRouterHttpClientTest {
 
     @Test
     void publishesTheCompleteResponseHeaderContract() {
-        assertEquals(14, NRouterResponseMeta.HEADER_NAMES.size());
-        assertEquals(14, NRouterResponseMeta.HEADER_NAMES.stream().distinct().count());
+        assertEquals(15, NRouterResponseMeta.HEADER_NAMES.size());
+        assertEquals(15, NRouterResponseMeta.HEADER_NAMES.stream().distinct().count());
         assertTrue(NRouterResponseMeta.HEADER_NAMES.contains("x-nr-budget-warning"));
+        assertTrue(NRouterResponseMeta.HEADER_NAMES.contains("x-nr-guardrails"));
         assertTrue(NRouterResponseMeta.HEADER_NAMES.contains("x-nr-request-id"));
         assertTrue(NRouterResponseMeta.HEADER_NAMES.contains("x-nr-response-cache-age"));
     }

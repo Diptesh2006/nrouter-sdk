@@ -318,6 +318,11 @@ DECLARED_TIMEOUTS: dict[str, Declared] = {
                 re.compile(r"\bdefaultStreamTimeout\s*=\s*Duration\(seconds:\s*(\d+)\)"),
                 "180",
             ),
+            (
+                "body-idle",
+                re.compile(r"\bdefaultBodyIdleTimeout\s*=\s*Duration\(seconds:\s*(\d+)\)"),
+                "130",
+            ),
         ),
         applies=(
             # package:http's Client interface carries no timeout at all, so the
@@ -326,6 +331,10 @@ DECLARED_TIMEOUTS: dict[str, Declared] = {
             # streaming silently keeps the unbounded default.
             ("buffered bound applied", re.compile(r"\.timeout\(\s*timeout\s*,")),
             ("stream bound applied", re.compile(r"\.timeout\(\s*\n?\s*streamTimeout\s*,")),
+            (
+                "body-idle bound applied",
+                re.compile(r"response\.stream\.timeout\(\s*bodyIdleTimeout\s*,"),
+            ),
         ),
     ),
     "r": Declared(
@@ -365,12 +374,36 @@ DECLARED_TIMEOUTS: dict[str, Declared] = {
 # Application sites that live outside an SDK's declaration file. Keeping them
 # explicit prevents a shared helper from being perfectly bounded while one
 # public path quietly bypasses it.
-AUXILIARY_TIMEOUT_APPLICATIONS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
+AUXILIARY_TIMEOUT_APPLICATIONS: tuple[
+    tuple[str, str, str, re.Pattern[str], int], ...
+] = (
     (
         "go",
         "sdks/go/stream.go",
         "route streaming responses through the body-idle helper",
         re.compile(r"res,\s*err\s*:=\s*c\.doHTTP\(req\)"),
+        1,
+    ),
+    (
+        "dart",
+        "sdks/dart/lib/src/client.dart",
+        "wrap its SSE response with the body-idle helper",
+        re.compile(r"response\s*=\s*_withBodyIdleTimeout\("),
+        1,
+    ),
+    (
+        "dart",
+        "sdks/dart/lib/src/client.dart",
+        "wrap multipart response bodies with the body-idle helper",
+        re.compile(r"final boundedMultipartResponse\s*=\s*_withBodyIdleTimeout\("),
+        1,
+    ),
+    (
+        "dart",
+        "sdks/dart/lib/src/client.dart",
+        "wrap binary response bodies with the body-idle helper",
+        re.compile(r"final boundedBinaryResponse\s*=\s*_withBodyIdleTimeout\("),
+        1,
     ),
 )
 
@@ -580,15 +613,16 @@ def check_client_timeouts(root: Path = ROOT) -> list[str]:
                     f"decoration and the transport default is back in force."
                 )
 
-    for sdk, source, label, pattern in AUXILIARY_TIMEOUT_APPLICATIONS:
+    for sdk, source, label, pattern, minimum in AUXILIARY_TIMEOUT_APPLICATIONS:
         path = root / source
         if not path.is_file():
             failures.append(f"{source}: {sdk} timeout application file is missing")
             continue
-        if pattern.search(path.read_text(errors="replace")) is None:
+        matches = pattern.findall(path.read_text(errors="replace"))
+        if len(matches) < minimum:
             failures.append(
                 f"{source}: {sdk} does not {label}. The shared timeout helper "
-                f"exists, but this public path bypasses it."
+                f"exists, but this public path bypasses it ({len(matches)}/{minimum} sites)."
             )
 
     # --- inherited deadlines: they must still declare NONE ------------------
@@ -738,8 +772,13 @@ _CLEAN: dict[str, str] = {
     "sdks/dart/lib/src/client.dart": (
         "static const Duration defaultTimeout = Duration(seconds: 600);\n"
         "static const Duration defaultStreamTimeout = Duration(seconds: 180);\n"
+        "static const Duration defaultBodyIdleTimeout = Duration(seconds: 130);\n"
+        "final b = response.stream.timeout(bodyIdleTimeout, onTimeout: fail);\n"
         "final r = await f.timeout(timeout, onTimeout: fail);\n"
         "final s = await g.timeout(streamTimeout, onTimeout: fail);\n"
+        "response = _withBodyIdleTimeout(s);\n"
+        "final boundedMultipartResponse = _withBodyIdleTimeout(s);\n"
+        "final boundedBinaryResponse = _withBodyIdleTimeout(s);\n"
     ),
     "sdks/r/R/client.R": (
         "nrouter_default_timeout_seconds <- function() 600\n"
@@ -905,6 +944,35 @@ def self_test() -> int:
         if not any("public path bypasses it" in f for f in found):
             problems.append(f"an unbounded Go streaming body NOT reported: {found}")
 
+        # 4e. Multipart and binary reads are separate paths; both must retain
+        #     the body-idle wrapper even though they share the same helper.
+        found = check_client_timeouts(
+            _with(
+                tmp / "d5",
+                DART,
+                _CLEAN[DART].replace(
+                    "final boundedBinaryResponse = _withBodyIdleTimeout(s);\n",
+                    "",
+                ),
+            )
+        )
+        if not any("wrap binary response bodies" in f for f in found):
+            problems.append(f"an unbounded Dart response body NOT reported: {found}")
+
+        # 4f. SSE has a distinct assignment shape from buffered response bodies.
+        found = check_client_timeouts(
+            _with(
+                tmp / "d6",
+                DART,
+                _CLEAN[DART].replace(
+                    "response = _withBodyIdleTimeout(s);\n",
+                    "",
+                ),
+            )
+        )
+        if not any("wrap its SSE response" in f for f in found):
+            problems.append(f"an unbounded Dart SSE body NOT reported: {found}")
+
         # 5. a timeout APPEARING in an SDK registered as inheriting one must be
         #    reported — the hole a registry-only gate always has, and the reason
         #    half two exists.
@@ -1034,7 +1102,7 @@ def self_test() -> int:
         for problem in problems:
             print(f"SELF-TEST FAIL {problem}")
         return 1
-    print("OK  client_timeouts self-test: 18 planted cases, all reported")
+    print("OK  client_timeouts self-test: 20 planted cases, all reported")
     return 0
 
 

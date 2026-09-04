@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -218,11 +219,59 @@ void main() {
     test('the declared defaults are the ones a client gets', () {
       expect(NRouter.defaultTimeout, const Duration(seconds: 600));
       expect(NRouter.defaultStreamTimeout, const Duration(seconds: 180));
+      expect(NRouter.defaultBodyIdleTimeout, const Duration(seconds: 130));
 
       final client = NRouter(apiKey: 'sk-nrouter-test');
       expect(client.timeout, NRouter.defaultTimeout);
       expect(client.streamTimeout, NRouter.defaultStreamTimeout);
+      expect(client.bodyIdleTimeout, NRouter.defaultBodyIdleTimeout);
       client.close();
+    });
+
+    test('post-header body stalls fail for binary and streaming responses',
+        () async {
+      for (final streaming in [false, true]) {
+        final body = StreamController<List<int>>();
+        final mock = MockClient.streaming((request, requestBody) async {
+          await requestBody.drain<void>();
+          return http.StreamedResponse(
+            body.stream,
+            200,
+            headers: {
+              'content-type':
+                  streaming ? 'text/event-stream' : 'application/octet-stream',
+            },
+          );
+        });
+        final client = NRouter(
+          apiKey: 'sk-nrouter-test',
+          httpClient: mock,
+          bodyIdleTimeout: const Duration(milliseconds: 75),
+        );
+
+        final stopwatch = Stopwatch()..start();
+        final Future<void> call;
+        if (streaming) {
+          call = client.responsesStream({}).drain<void>();
+          body.add(utf8.encode('data: {"delta":"first"}\n\n'));
+        } else {
+          call = client.bytes('/videos/v/content').then((_) {});
+          body.add(utf8.encode('first'));
+        }
+
+        await expectLater(
+          call.timeout(
+            const Duration(seconds: 1),
+            onTimeout: () => throw StateError(
+              'post-header body stall was left unbounded',
+            ),
+          ),
+          throwsA(isA<NRouterTransportError>()),
+        );
+        stopwatch.stop();
+        expect(stopwatch.elapsed, lessThan(const Duration(seconds: 2)));
+        await body.close();
+      }
     });
 
     test('a buffered call that never answers fails instead of hanging',
@@ -245,7 +294,8 @@ void main() {
           isA<NRouterTransportError>().having(
             (e) => e.message,
             'message',
-            allOf(contains('within 1s'), contains('may already have been billed')),
+            allOf(contains('within 1s'),
+                contains('may already have been billed')),
           ),
         ),
       );

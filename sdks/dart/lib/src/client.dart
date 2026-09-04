@@ -83,7 +83,7 @@ class NRouter {
   // a gateway which then goes silent leaves the future pending forever, and on
   // Flutter that is a spinner nobody can cancel. There is no socket-level knob
   // to set either — the package exposes none — so the bound has to be applied
-  // to the FUTURE, which is what the two constants below do.
+  // to the FUTURE or response stream, which is what the constants below do.
   //
   // Both are explicit decisions — name it, or you have chosen infinity — sized
   // against the gateway's own budget rather than picked for feel. The gateway's
@@ -109,18 +109,22 @@ class NRouter {
 
   /// Time-to-RESPONSE-HEADERS bound for streaming and binary calls — 180 s.
   ///
-  /// [stream] and [bytes] bound only the wait for the first response headers;
-  /// the body that follows is deliberately UNBOUNDED. A whole-request ceiling
-  /// there would sever an SSE stream mid-generation and truncate a long
-  /// `GET /videos/{id}/content` — both of them already billed. 180 s sits above
-  /// the gateway's own 120 s between-bytes read timeout, so the gateway's
-  /// honest error reaches the caller instead of a client-side abort racing it.
+  /// [stream] and [bytes] use this only for the first response headers. Their
+  /// bodies use [defaultBodyIdleTimeout], so a working long response remains
+  /// open while a live-but-silent connection is cut.
   static const Duration defaultStreamTimeout = Duration(seconds: 180);
+
+  /// Maximum silence between response body chunks for every manually streamed
+  /// response, including SSE, binary downloads, multipart, and error bodies.
+  /// Ten seconds of margin over the gateway's 120 s upstream read timeout lets
+  /// its structured error arrive before the SDK's transport error races it.
+  static const Duration defaultBodyIdleTimeout = Duration(seconds: 130);
 
   /// Build a client. The key is validated up front so a malformed one fails
   /// here rather than as a 401 that reads like a revoked credential.
   ///
-  /// [timeout] and [streamTimeout] are separate from [httpClient] on purpose:
+  /// [timeout], [streamTimeout], and [bodyIdleTimeout] are separate from
+  /// [httpClient] on purpose:
   /// `package:http`'s `Client` interface carries no timeout, so injecting one
   /// cannot supply the bound and would silently restore the unbounded default.
   NRouter({
@@ -129,6 +133,7 @@ class NRouter {
     http.Client? httpClient,
     this.timeout = defaultTimeout,
     this.streamTimeout = defaultStreamTimeout,
+    this.bodyIdleTimeout = defaultBodyIdleTimeout,
   })  : _apiKey = validateApiKey(apiKey),
         baseUrl = baseUrl.endsWith('/')
             ? baseUrl.substring(0, baseUrl.length - 1)
@@ -146,6 +151,9 @@ class NRouter {
   /// Time-to-response-headers ceiling applied to streaming and binary calls.
   final Duration streamTimeout;
 
+  /// Gap-between-body-chunks ceiling for streamed response bodies.
+  final Duration bodyIdleTimeout;
+
   /// The one place a deadline turns into an error, so every path says the same
   /// thing — including that the request may already have been BILLED. The
   /// gateway reserves credit before it calls a provider, so a blind re-send
@@ -154,9 +162,31 @@ class NRouter {
       NRouterTransportError(
         'nRouter did not $what within ${bound.inSeconds}s. package:http applies '
         'no timeout of its own, so this bound is the SDK default; pass '
-        '`timeout:` or `streamTimeout:` to change it. The request may already '
+        '`timeout:`, `streamTimeout:`, or `bodyIdleTimeout:` to change it. The request may already '
         'have been billed — do not re-send it blindly.',
       );
+
+  http.StreamedResponse _withBodyIdleTimeout(
+    http.StreamedResponse response,
+  ) {
+    final bounded = response.stream.timeout(
+      bodyIdleTimeout,
+      onTimeout: (sink) {
+        sink.addError(_timedOut(bodyIdleTimeout, 'receive response bytes for'));
+        sink.close();
+      },
+    );
+    return http.StreamedResponse(
+      bounded,
+      response.statusCode,
+      contentLength: response.contentLength,
+      request: response.request,
+      headers: response.headers,
+      isRedirect: response.isRedirect,
+      persistentConnection: response.persistentConnection,
+      reasonPhrase: response.reasonPhrase,
+    );
+  }
 
   /// The gateway this client talks to, with any trailing slash removed.
   final String baseUrl;
@@ -236,13 +266,16 @@ class NRouter {
 
     final http.StreamedResponse response;
     try {
-      // Only the wait for RESPONSE HEADERS is bounded. The SSE body that
-      // follows has no ceiling: a long generation is a working stream, and
-      // cutting it off discards tokens the caller has already paid for.
-      response = await _http.send(request).timeout(
-            streamTimeout,
-            onTimeout: () => throw _timedOut(streamTimeout, 'start streaming'),
-          );
+      // The wait for RESPONSE HEADERS and every later gap between body chunks
+      // are bounded separately. A long generation keeps running while bytes
+      // arrive; only a live-but-silent stream is cut.
+      response = _withBodyIdleTimeout(
+        await _http.send(request).timeout(
+              streamTimeout,
+              onTimeout: () =>
+                  throw _timedOut(streamTimeout, 'start streaming'),
+            ),
+      );
     } on NRouterError {
       rethrow;
     } on Exception catch (e) {
@@ -359,12 +392,15 @@ class NRouter {
     try {
       // A multipart POST is buffered: `send` completes only once the file has
       // been uploaded AND the response headers are back, so the whole-request
-      // ceiling is the right bound here. The JSON body that follows is small.
-      final streamed = await _http.send(request).timeout(
-            timeout,
-            onTimeout: () => throw _timedOut(timeout, 'answer'),
-          );
-      response = await http.Response.fromStream(streamed);
+      // ceiling is the right header bound here. The JSON body then receives
+      // the independent between-chunks idle bound used by every response body.
+      final boundedMultipartResponse = _withBodyIdleTimeout(
+        await _http.send(request).timeout(
+              timeout,
+              onTimeout: () => throw _timedOut(timeout, 'answer'),
+            ),
+      );
+      response = await http.Response.fromStream(boundedMultipartResponse);
     } on NRouterError {
       rethrow;
     } on Exception catch (e) {
@@ -464,11 +500,14 @@ class NRouter {
 
     http.Response response;
     try {
-      final streamed = await _http.send(request).timeout(
-            streamTimeout,
-            onTimeout: () => throw _timedOut(streamTimeout, 'send headers for'),
-          );
-      response = await http.Response.fromStream(streamed);
+      final boundedBinaryResponse = _withBodyIdleTimeout(
+        await _http.send(request).timeout(
+              streamTimeout,
+              onTimeout: () =>
+                  throw _timedOut(streamTimeout, 'send headers for'),
+            ),
+      );
+      response = await http.Response.fromStream(boundedBinaryResponse);
     } on NRouterError {
       rethrow;
     } on Exception catch (e) {
@@ -518,7 +557,8 @@ class NRouter {
       response = await (method == 'GET'
               ? _http.get(uri, headers: headers)
               : _http.post(uri, headers: headers, body: jsonEncode(body)))
-          .timeout(timeout, onTimeout: () => throw _timedOut(timeout, 'answer'));
+          .timeout(timeout,
+              onTimeout: () => throw _timedOut(timeout, 'answer'));
     } on NRouterError {
       rethrow;
     } on Exception catch (e) {

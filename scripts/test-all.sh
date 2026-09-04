@@ -486,11 +486,19 @@ run_lane "dependency security audit" "osv-scanner pip-audit npm" \
   "'$ROOT/scripts/security-audit.sh'"
 
 # SDKCI-004 — FIRST-PARTY static analysis, which the lane above does not do: it
-# audits third-party advisories, this scans the code we wrote. It mirrors the
-# CodeQL default setup while that hosted analysis is dormant. Its own
+# audits third-party advisories, this scans the code we wrote. It stands in for
+# the CodeQL default setup while that hosted analysis is dormant. Its own
 # --self-test plants a tracked injection and refuses to pass unless the gate
 # reports it.
-run_lane "first-party SAST (CodeQL mirror)" "semgrep git" \
+#
+# THE LANE NAME SAYS "PARTIAL" AND MUST KEEP SAYING IT. It read "(CodeQL mirror)"
+# and the Rule #31 review of 04d6664 called that a HIGH, correctly: sast.sh's
+# header carries an honest per-language coverage table stating THIS IS NOT PARITY
+# — Swift and Kotlin are thin, Dart and R are scanned by nothing — but the line a
+# contributor actually reads is this one, printed green beside a checkmark. The
+# honest text existed in a place nobody reaches. A green lane must not read as
+# restored CodeQL coverage.
+run_lane "first-party SAST (partial CodeQL stand-in; see scripts/sast.sh header)" "semgrep git" \
   "'$ROOT/scripts/sast.sh'"
 
 run_lane "JavaScript / TypeScript" "npm" \

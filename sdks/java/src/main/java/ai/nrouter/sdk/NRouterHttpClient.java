@@ -28,10 +28,12 @@ import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.UUID;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
@@ -246,10 +248,9 @@ public final class NRouterHttpClient {
         try {
             // No whole-exchange ceiling: an SSE stream is long BY DESIGN, and
             // the ceiling would fire mid-completion. See buffered(String).
-            HttpResponse<InputStream> response = http.send(
+            HttpResponse<InputStream> response = sendUntilHeaders(
                     request(path).header("Accept", "text/event-stream")
-                            .header("Content-Type", "application/json").POST(jsonBody(streamed)).build(),
-                    HttpResponse.BodyHandlers.ofInputStream());
+                            .header("Content-Type", "application/json").POST(jsonBody(streamed)).build());
             BufferedReader reader = new BufferedReader(new InputStreamReader(
                     new IdleTimeoutInputStream(response.body(), bodyIdleTimeout), StandardCharsets.UTF_8));
             Stream<String> lines = reader.lines().onClose(() -> closeQuietly(reader));
@@ -262,8 +263,12 @@ public final class NRouterHttpClient {
             try (lines) {
                 errorBody = lines.collect(Collectors.joining("\n"));
             } catch (UncheckedIOException error) {
+                boolean idle = error.getCause() instanceof SocketTimeoutException;
                 throw NRouterException.transport(
-                        "the streaming error response became idle; the request may have been billed ("
+                        (idle
+                                ? "the streaming error response became idle"
+                                : "the streaming error response could not be read")
+                                + "; the request may have been billed ("
                                 + redact(error.getMessage()) + ")",
                         response.statusCode(),
                         meta);
@@ -280,7 +285,7 @@ public final class NRouterHttpClient {
     }
 
     private NRouterHttpResponse sendJson(HttpRequest request) {
-        PendingResponse pending = send(request);
+        PendingResponse pending = send(request, true);
         HttpResponse<InputStream> response = pending.response;
         NRouterResponseMeta meta = NRouterResponseMeta.fromHeaders(response.headers());
         byte[] body = readBody(pending, meta);
@@ -301,7 +306,7 @@ public final class NRouterHttpClient {
     }
 
     private NRouterBinaryResponse sendBinary(HttpRequest request) {
-        PendingResponse pending = send(request);
+        PendingResponse pending = send(request, false);
         HttpResponse<InputStream> response = pending.response;
         NRouterResponseMeta meta = NRouterResponseMeta.fromHeaders(response.headers());
         byte[] body = readBody(pending, meta);
@@ -312,11 +317,15 @@ public final class NRouterHttpClient {
         return new NRouterBinaryResponse(body, meta, response.statusCode(), contentType);
     }
 
-    private PendingResponse send(HttpRequest request) {
+    private PendingResponse send(HttpRequest request, boolean enforceWholeRequestDeadline) {
         long startedNanos = System.nanoTime();
         try {
             return new PendingResponse(
-                    http.send(request, HttpResponse.BodyHandlers.ofInputStream()), startedNanos);
+                    enforceWholeRequestDeadline
+                            ? http.send(request, HttpResponse.BodyHandlers.ofInputStream())
+                            : sendUntilHeaders(request),
+                    startedNanos,
+                    enforceWholeRequestDeadline);
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
             throw NRouterException.transport("nRouter request interrupted");
@@ -325,10 +334,33 @@ public final class NRouterHttpClient {
         }
     }
 
+    private HttpResponse<InputStream> sendUntilHeaders(HttpRequest request)
+            throws IOException, InterruptedException {
+        java.util.concurrent.CompletableFuture<HttpResponse<InputStream>> pending =
+                http.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream());
+        try {
+            return pending.get(requestTimeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException error) {
+            pending.cancel(true);
+            throw new IOException(
+                    "nRouter did not return response headers within "
+                            + requestTimeout.toMillis() + "ms",
+                    error);
+        } catch (ExecutionException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof IOException) {
+                throw (IOException) cause;
+            }
+            throw new IOException(cause == null ? error : cause);
+        }
+    }
+
     private byte[] readBody(PendingResponse pending, NRouterResponseMeta meta) {
         HttpResponse<InputStream> response = pending.response;
         AtomicBoolean wholeTimedOut = new AtomicBoolean();
-        ScheduledFuture<?> wholeDeadline = response.request().timeout().map(total -> {
+        ScheduledFuture<?> wholeDeadline = (pending.enforceWholeRequestDeadline
+                ? response.request().timeout()
+                : java.util.Optional.<Duration>empty()).map(total -> {
             long elapsed = System.nanoTime() - pending.startedNanos;
             long remaining = Math.max(0L, total.toNanos() - elapsed);
             return BODY_IDLE_TIMER.schedule(() -> {
@@ -337,7 +369,11 @@ public final class NRouterHttpClient {
             }, remaining, TimeUnit.NANOSECONDS);
         }).orElse(null);
         try (InputStream body = new IdleTimeoutInputStream(response.body(), bodyIdleTimeout)) {
-            return body.readAllBytes();
+            byte[] bytes = body.readAllBytes();
+            if (wholeTimedOut.get()) {
+                throw new SocketTimeoutException("buffered response exceeded its whole-request deadline");
+            }
+            return bytes;
         } catch (IOException error) {
             String reason;
             if (wholeTimedOut.get()) {
@@ -362,10 +398,15 @@ public final class NRouterHttpClient {
     private static final class PendingResponse {
         final HttpResponse<InputStream> response;
         final long startedNanos;
+        final boolean enforceWholeRequestDeadline;
 
-        PendingResponse(HttpResponse<InputStream> response, long startedNanos) {
+        PendingResponse(
+                HttpResponse<InputStream> response,
+                long startedNanos,
+                boolean enforceWholeRequestDeadline) {
             this.response = response;
             this.startedNanos = startedNanos;
+            this.enforceWholeRequestDeadline = enforceWholeRequestDeadline;
         }
     }
 
@@ -377,12 +418,17 @@ public final class NRouterHttpClient {
         }
     }
 
-    private static final ScheduledExecutorService BODY_IDLE_TIMER =
-            Executors.newSingleThreadScheduledExecutor(task -> {
+    private static final ScheduledExecutorService BODY_IDLE_TIMER = bodyIdleTimer();
+
+    private static ScheduledThreadPoolExecutor bodyIdleTimer() {
+        ScheduledThreadPoolExecutor timer = new ScheduledThreadPoolExecutor(2, task -> {
                 Thread thread = new Thread(task, "nrouter-java-body-idle");
                 thread.setDaemon(true);
                 return thread;
             });
+        timer.setRemoveOnCancelPolicy(true);
+        return timer;
+    }
 
     private static final class IdleTimeoutInputStream extends FilterInputStream {
         private final Duration timeout;
@@ -533,8 +579,9 @@ public final class NRouterHttpClient {
     /**
      * A request builder for a BUFFERED exchange, bounded by {@link #requestTimeout()}.
      *
-     * <p>The streaming and binary-download paths deliberately do NOT get this,
-     * and the difference is not an oversight.
+     * <p>Streaming and binary-download paths use the same value only in an
+     * asynchronous header wait; their body lifetime is governed by the idle
+     * deadline rather than this total ceiling.
      *
      * <p>{@code HttpRequest.timeout} is specified as a bound on receiving THE
      * RESPONSE, and the JDK offers no between-bytes (idle) timeout to use
@@ -547,12 +594,9 @@ public final class NRouterHttpClient {
      * already completed, settled and BILLED — the customer pays for bytes they
      * never receive.
      *
-     * <p>Today's JDK implementation happens to stop the clock once response
-     * HEADERS arrive, which would make the ceiling harmless on those paths. That
-     * is an implementation detail the javadoc does not promise, and betting a
-     * billed stream on it is how a JDK upgrade starts cutting customer
-     * completions. Streaming and binary are bounded by connect time and by the
-     * caller closing the response, not by a total.
+     * <p>The {@code ofInputStream} body handler lets their asynchronous future
+     * complete when headers and the body stream are available. The SDK bounds
+     * that future, then guards the body stream independently between reads.
      */
     private HttpRequest.Builder buffered(String path) {
         return request(path).timeout(requestTimeout);

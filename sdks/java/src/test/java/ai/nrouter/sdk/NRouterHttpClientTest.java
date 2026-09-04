@@ -643,6 +643,36 @@ class NRouterHttpClientTest {
     }
 
     @Test
+    void streamingHeaderWaitIsBoundedBeforeTheBodyWrapperExists() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/responses", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            try {
+                Thread.sleep(2_000);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+            NRouterHttpClient client = new NRouterHttpClient(
+                    "sk-nrouter-test",
+                    base,
+                    NRouterHttpClient.defaultHttpClient(),
+                    Duration.ofMillis(75),
+                    Duration.ofSeconds(1));
+            NRouterException error = assertThrows(
+                    NRouterException.class, () -> client.responsesStream(Map.of()));
+            assertEquals(NRouterException.Kind.TRANSPORT, error.kind());
+            assertTrue(error.getMessage().contains("headers"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void onlyBufferedRequestsCarryAWholeRequestTimeout() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1", exchange -> {
@@ -685,9 +715,9 @@ class NRouterHttpClientTest {
                             Optional.of(ceiling),   // POST /v1/chat/completions
                             Optional.of(ceiling),   // GET  /v1/models
                             Optional.of(ceiling),   // POST /v1/audio/transcriptions
-                            Optional.empty(),       // POST /v1/audio/speech      — generated audio
-                            Optional.empty(),       // GET  /v1/videos/vid/content — generated video
-                            Optional.empty()),      // POST /v1/messages (SSE)     — long by design
+                            Optional.empty(),       // POST /v1/audio/speech
+                            Optional.empty(),       // GET  /v1/videos/vid/content
+                            Optional.empty()),      // POST /v1/messages (SSE)
                     timeouts);
         } finally {
             server.stop(0);

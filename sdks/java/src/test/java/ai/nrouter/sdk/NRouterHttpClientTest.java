@@ -611,7 +611,7 @@ class NRouterHttpClientTest {
             exchange.getRequestBody().readAllBytes();
             exchange.getResponseHeaders().set("content-type", "text/event-stream");
             exchange.sendResponseHeaders(200, 0);
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < 20; i++) {
                 exchange.getResponseBody().write(("data: {\"delta\":\"" + i + "\"}\n\n")
                         .getBytes(StandardCharsets.UTF_8));
                 exchange.getResponseBody().flush();
@@ -633,7 +633,7 @@ class NRouterHttpClientTest {
                     base,
                     NRouterHttpClient.defaultHttpClient(),
                     Duration.ofMinutes(23),
-                    Duration.ofMillis(75));
+                    Duration.ofMillis(250));
             try (NRouterStreamResponse response = client.responsesStream(Map.of())) {
                 assertTrue(response.lines().toList().contains("data: [DONE]"));
             }

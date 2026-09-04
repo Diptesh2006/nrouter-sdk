@@ -451,18 +451,21 @@ public final class NRouterHttpClient {
             if (timedOut.get()) {
                 throw idleError();
             }
+            AtomicBoolean readResolved = new AtomicBoolean();
             ScheduledFuture<?> deadline = BODY_IDLE_TIMER.schedule(() -> {
-                timedOut.set(true);
-                closeQuietly(in);
+                if (readResolved.compareAndSet(false, true)) {
+                    timedOut.set(true);
+                    closeQuietly(in);
+                }
             }, timeout.toNanos(), TimeUnit.NANOSECONDS);
             try {
                 int count = in.read(target, offset, length);
-                if (timedOut.get()) {
+                if (!readResolved.compareAndSet(false, true)) {
                     throw idleError();
                 }
                 return count;
             } catch (IOException error) {
-                if (timedOut.get()) {
+                if (!readResolved.compareAndSet(false, true) || timedOut.get()) {
                     SocketTimeoutException timeoutError = idleError();
                     timeoutError.initCause(error);
                     throw timeoutError;

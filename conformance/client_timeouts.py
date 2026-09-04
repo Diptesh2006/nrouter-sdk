@@ -186,11 +186,20 @@ DECLARED_TIMEOUTS: dict[str, Declared] = {
                 re.compile(r"\bDefaultConnectTimeout\s*=\s*\d+\s*\*\s*time\.Second"),
                 None,
             ),
+            (
+                "body-idle",
+                re.compile(r"\bDefaultBodyIdleTimeout\s*=\s*\d+\s*\*\s*time\.Second"),
+                None,
+            ),
         ),
         applies=(
             (
                 "set on the transport",
                 re.compile(r"ResponseHeaderTimeout:\s*responseHeaderTimeout"),
+            ),
+            (
+                "wrap response bodies with the idle deadline",
+                re.compile(r"res\.Body\s*=\s*newIdleReadCloser\(res\.Body,\s*c\.bodyIdleTimeout,\s*cancel\)"),
             ),
         ),
     ),
@@ -352,6 +361,18 @@ DECLARED_TIMEOUTS: dict[str, Declared] = {
         ),
     ),
 }
+
+# Application sites that live outside an SDK's declaration file. Keeping them
+# explicit prevents a shared helper from being perfectly bounded while one
+# public path quietly bypasses it.
+AUXILIARY_TIMEOUT_APPLICATIONS: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
+    (
+        "go",
+        "sdks/go/stream.go",
+        "route streaming responses through the body-idle helper",
+        re.compile(r"res,\s*err\s*:=\s*c\.doHTTP\(req\)"),
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -559,6 +580,17 @@ def check_client_timeouts(root: Path = ROOT) -> list[str]:
                     f"decoration and the transport default is back in force."
                 )
 
+    for sdk, source, label, pattern in AUXILIARY_TIMEOUT_APPLICATIONS:
+        path = root / source
+        if not path.is_file():
+            failures.append(f"{source}: {sdk} timeout application file is missing")
+            continue
+        if pattern.search(path.read_text(errors="replace")) is None:
+            failures.append(
+                f"{source}: {sdk} does not {label}. The shared timeout helper "
+                f"exists, but this public path bypasses it."
+            )
+
     # --- inherited deadlines: they must still declare NONE ------------------
     for sdk, rule in sorted(INHERITED_TIMEOUTS.items()):
         seen_any = False
@@ -668,8 +700,14 @@ _CLEAN: dict[str, str] = {
         "const (\n"
         "\tDefaultConnectTimeout = 10 * time.Second\n"
         "\tDefaultResponseHeaderTimeout = 600 * time.Second\n"
+        "\tDefaultBodyIdleTimeout = 120 * time.Second\n"
         ")\n"
         "var t = &http.Transport{ResponseHeaderTimeout: responseHeaderTimeout}\n"
+        "func apply() { res.Body = newIdleReadCloser(res.Body, c.bodyIdleTimeout, cancel) }\n"
+    ),
+    "sdks/go/stream.go": (
+        "package nrouter\n"
+        "func stream() { res, err := c.doHTTP(req) }\n"
     ),
     "sdks/java/src/main/java/ai/nrouter/sdk/NRouterHttpClient.java": (
         "public static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(15);\n"
@@ -836,6 +874,37 @@ def self_test() -> int:
         if not any("the site that applies them" in f for f in found):
             problems.append(f"an unwired R timeout constant NOT reported: {found}")
 
+        # 4c. Go needs an SDK-owned wrapper because net/http has no response
+        #     body idle setting. A declared constant without that wrapper is
+        #     the exact post-header hang this gate is meant to catch.
+        go = "sdks/go/client.go"
+        found = check_client_timeouts(
+            _with(
+                tmp / "d3",
+                go,
+                _CLEAN[go].replace(
+                    "func apply() { res.Body = newIdleReadCloser(res.Body, c.bodyIdleTimeout, cancel) }\n",
+                    "",
+                ),
+            )
+        )
+        if not any("the site that applies them" in f for f in found):
+            problems.append(f"an unwired Go body-idle deadline NOT reported: {found}")
+
+        # 4d. The streaming path must go through the same helper. Checking only
+        #     the helper would let SSE regress while buffered responses stayed
+        #     bounded.
+        go_stream = "sdks/go/stream.go"
+        found = check_client_timeouts(
+            _with(
+                tmp / "d4",
+                go_stream,
+                _CLEAN[go_stream].replace("res, err := c.doHTTP(req)", "res, err := c.http.Do(req)"),
+            )
+        )
+        if not any("public path bypasses it" in f for f in found):
+            problems.append(f"an unbounded Go streaming body NOT reported: {found}")
+
         # 5. a timeout APPEARING in an SDK registered as inheriting one must be
         #    reported — the hole a registry-only gate always has, and the reason
         #    half two exists.
@@ -965,7 +1034,7 @@ def self_test() -> int:
         for problem in problems:
             print(f"SELF-TEST FAIL {problem}")
         return 1
-    print("OK  client_timeouts self-test: 16 planted cases, all reported")
+    print("OK  client_timeouts self-test: 18 planted cases, all reported")
     return 0
 
 

@@ -37,6 +37,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -102,23 +104,12 @@ const (
 	// margin, and the same order as the OpenAI and Anthropic clients' own 600 s
 	// defaults, so a caller migrating from either is not surprised.
 	//
-	// ⚠️ KNOWN GAP, and it is a real asymmetry with the Rust SDK — stated here
-	// rather than left for someone to discover from a hang.
-	//
-	// This bounds time-to-HEADERS only. A gateway that sends headers and then
-	// stalls mid-body — a live TCP connection carrying zero bytes — is NOT cut
-	// by anything here. TCP keepalive detects a DEAD peer, never a live-but-
-	// silent one. The Rust SDK closes this with reqwest's `read_timeout` (a
-	// between-bytes bound); net/http has no equivalent knob on Client or
-	// Transport, so closing it in Go means wrapping the response body in a
-	// reader that arms a per-read deadline on the underlying net.Conn.
-	//
-	// Not done here on purpose: it changes the shape of every response this
-	// package returns, which is a larger change than the defect it fixes, and
-	// the defect it fixes is strictly narrower than the one being fixed now
-	// (waiting forever on a gateway that says NOTHING). A caller who needs the
-	// body-phase bound today can supply their own transport via WithHTTPClient.
+	// Post-header stalls are bounded separately by DefaultBodyIdleTimeout.
 	DefaultResponseHeaderTimeout = 600 * time.Second
+
+	// DefaultBodyIdleTimeout bounds every gap between response-body bytes,
+	// including SSE and binary downloads, without limiting their total length.
+	DefaultBodyIdleTimeout = 120 * time.Second
 
 	// DefaultIdleConnTimeout is how long an idle pooled connection is kept.
 	// Named rather than inherited, so the pool's shape is a decision here.
@@ -220,9 +211,10 @@ type Response[T any] struct {
 // a single %+v in a caller's log would print the API key verbatim and leak a
 // credential that spends real credits (Rule #5).
 type Client struct {
-	apiKey  string
-	baseURL string
-	http    *http.Client
+	apiKey          string
+	baseURL         string
+	http            *http.Client
+	bodyIdleTimeout time.Duration
 }
 
 // Option configures a Client at construction.
@@ -235,9 +227,9 @@ func WithBaseURL(baseURL string) Option {
 
 // WithHTTPClient overrides the transport — proxy, timeout, connection pool.
 //
-// It replaces DefaultHTTPClient entirely, including every deadline documented
-// there, so a client passed here is responsible for its own bounds. Two
-// warnings worth carrying:
+// It replaces DefaultHTTPClient and its transport-level deadlines. The SDK's
+// response-body idle deadline remains in force; change it with
+// WithBodyIdleTimeout. Two warnings worth carrying:
 //
 //   - Setting http.Client.Timeout applies it to the response BODY, which cuts
 //     SSE streaming and long downloads mid-transfer, already billed. Prefer a
@@ -255,15 +247,28 @@ func WithHTTPClient(h *http.Client) Option {
 	}
 }
 
+// WithBodyIdleTimeout changes the gap-between-bytes deadline. It remains in
+// force with an injected HTTP client because net/http exposes no equivalent
+// transport setting.
+func WithBodyIdleTimeout(timeout time.Duration) Option {
+	return func(c *Client) { c.bodyIdleTimeout = timeout }
+}
+
 // New builds a client with an explicit key, validated up front.
 func New(apiKey string, opts ...Option) (*Client, error) {
 	key, err := ResolveAPIKey(apiKey)
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{apiKey: key, baseURL: DefaultBaseURL, http: DefaultHTTPClient()}
+	c := &Client{
+		apiKey: key, baseURL: DefaultBaseURL, http: DefaultHTTPClient(),
+		bodyIdleTimeout: DefaultBodyIdleTimeout,
+	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	if c.bodyIdleTimeout <= 0 {
+		return nil, configErr("body idle timeout must be positive")
 	}
 	return c, nil
 }
@@ -483,7 +488,7 @@ func (c *Client) request(ctx context.Context, method, path string, body io.Reade
 // do performs the request and reads metadata BEFORE the body, so a body-read
 // failure still carries the request id that identifies it.
 func (c *Client) do(req *http.Request) (*http.Response, ResponseMeta, []byte, error) {
-	res, err := c.http.Do(req)
+	res, err := c.doHTTP(req)
 	if err != nil {
 		// A cancelled or expired context is the CALLER's decision, not a
 		// network fault. Keeping the cause makes
@@ -521,6 +526,64 @@ func (c *Client) do(req *http.Request) (*http.Response, ResponseMeta, []byte, er
 		return nil, meta, nil, failure
 	}
 	return res, meta, raw, nil
+}
+
+type idleReadCloser struct {
+	source    io.ReadCloser
+	timeout   time.Duration
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+	timedOut  atomic.Bool
+}
+
+// doHTTP gives the response body an SDK-owned between-bytes deadline. The
+// request context is intentionally kept alive until Body.Close: cancelling it
+// is the only transport-supported way to interrupt a response-body Read
+// without racing Read against Close on an arbitrary io.ReadCloser.
+func (c *Client) doHTTP(req *http.Request) (*http.Response, error) {
+	requestContext, cancel := context.WithCancel(req.Context())
+	res, err := c.http.Do(req.Clone(requestContext))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	res.Body = newIdleReadCloser(res.Body, c.bodyIdleTimeout, cancel)
+	return res, nil
+}
+
+func newIdleReadCloser(source io.ReadCloser, timeout time.Duration, cancel context.CancelFunc) io.ReadCloser {
+	return &idleReadCloser{source: source, timeout: timeout, cancel: cancel}
+}
+
+func (r *idleReadCloser) Read(target []byte) (int, error) {
+	if r.timedOut.Load() {
+		return 0, fmt.Errorf("%w: response body remained idle for %s", context.DeadlineExceeded, r.timeout)
+	}
+	if len(target) == 0 {
+		return 0, nil
+	}
+	fired := make(chan struct{})
+	timer := time.AfterFunc(r.timeout, func() {
+		r.timedOut.Store(true)
+		r.cancel()
+		close(fired)
+	})
+	n, err := r.source.Read(target)
+	if !timer.Stop() {
+		<-fired
+	}
+	if r.timedOut.Load() {
+		return n, fmt.Errorf("%w: response body remained idle for %s", context.DeadlineExceeded, r.timeout)
+	}
+	return n, err
+}
+
+func (r *idleReadCloser) Close() (err error) {
+	r.closeOnce.Do(func() {
+		r.cancel()
+		err = r.source.Close()
+	})
+	return err
 }
 
 func (c *Client) sendJSON(req *http.Request) (*Response[map[string]any], error) {

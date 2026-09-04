@@ -1116,6 +1116,70 @@ func TestSlowResponseBodyIsNotCutByTheHeaderTimeout(t *testing.T) {
 	}
 }
 
+func TestPostHeaderBodyStallsAreCutForBinaryAndStreamingResponses(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(map[bool]string{false: "binary", true: "stream"}[streaming], func(t *testing.T) {
+			release := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if streaming {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n")
+				} else {
+					w.Header().Set("Content-Type", "application/octet-stream")
+					_, _ = w.Write([]byte("first"))
+				}
+				w.(http.Flusher).Flush()
+				<-release
+			}))
+			defer func() { close(release); srv.Close() }()
+
+			client, err := New(
+				testKey,
+				WithBaseURL(srv.URL),
+				WithHTTPClient(srv.Client()),
+				WithBodyIdleTimeout(75*time.Millisecond),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			done := make(chan error, 1)
+			if streaming {
+				stream, openErr := client.ChatCompletionsStream(context.Background(), map[string]any{})
+				if openErr != nil {
+					t.Fatal(openErr)
+				}
+				defer stream.Close()
+				if !stream.Next() || stream.Chunk().Delta != "first" {
+					t.Fatalf("first chunk = %#v, err = %v", stream.Chunk(), stream.Err())
+				}
+				go func() {
+					if stream.Next() {
+						done <- fmt.Errorf("stalled stream yielded a second chunk")
+						return
+					}
+					done <- stream.Err()
+				}()
+			} else {
+				go func() {
+					_, callErr := client.Bytes(context.Background(), http.MethodGet, "/videos/v/content", nil)
+					done <- callErr
+				}()
+			}
+
+			select {
+			case got := <-done:
+				var typed *Error
+				if !errors.As(got, &typed) || typed.Kind != KindTransport {
+					t.Fatalf("got %v; want a typed transport idle-timeout", got)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("post-header body stall was left unbounded")
+			}
+		})
+	}
+}
+
 func TestWithHTTPClientFullyOverridesTheDefaultTransport(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

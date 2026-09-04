@@ -74,7 +74,7 @@ func (c *Client) Stream(ctx context.Context, path string, body any) (*Stream, er
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
-	res, err := c.http.Do(req)
+	res, err := c.doHTTP(req)
 	if err != nil {
 		failure := transportErr("%v", err)
 		failure.Cause = err

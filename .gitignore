@@ -38,6 +38,8 @@ sdks/swift/.build/
 
 # --- rust ---
 sdks/rust/target/
+# Machine-local cargo target-dir redirect; the path is absolute, never committed.
+.cargo/
 
 # --- dart ---
 sdks/dart/.dart_tool/

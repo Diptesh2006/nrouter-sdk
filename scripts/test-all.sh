@@ -94,6 +94,7 @@ step() { printf '\n== %s ==\n' "$1"; }
 #
 #   python       PYTHON_BIN resolved to a usable interpreter
 #   py:<module>  the module imports under $PYTHON_BIN
+#   pyfloor:<d>  <d> is installed AND satisfies its floor in sdks/python/pyproject.toml
 #   pysdk        `nroutersdk` imports AND resolves to THIS checkout
 #   jre          a Java runtime that actually starts
 #   android      the Android SDK was located during preflight
@@ -106,6 +107,67 @@ have() {
     py:*)
       [ -n "${PYTHON_BIN:-}" ] || return 1
       "$PYTHON_BIN" -c "import ${1#py:}" >/dev/null 2>&1
+      ;;
+    pyfloor:*)
+      # SDKGATE-001. `py:openai` asks only "does it import". It does — an
+      # openai from two years ago imports perfectly. What it CANNOT do is
+      # satisfy this SDK's declared floor, and the failure that produces is
+      # nine `TypeError: Invalid \`http_client\` argument; Expected an instance
+      # of \`httpx.Client\` but got <class 'httpx2.Client'>` deep inside the
+      # contract suite. That error names neither the package nor the floor, so
+      # it reads as sabotage or as a typo in the dependency — an earlier
+      # session mistook `httpx2` for exactly that and reverted a peer's correct
+      # import. OpenAI 3.6 moved its transport boundary to the separately
+      # named `httpx2` distribution, so the two are a matched pair and an
+      # under-floor openai mismatches the transport this SDK passes it.
+      #
+      # Compare against the floor in `sdks/python/pyproject.toml` rather than a
+      # literal here: a second copy of the version is the drift this file
+      # exists to catch elsewhere.
+      [ -n "${PYTHON_BIN:-}" ] || return 1
+      "$PYTHON_BIN" - "${1#pyfloor:}" "$ROOT/sdks/python/pyproject.toml" <<'PYFLOOR'
+import re, sys
+
+dist, pyproject = sys.argv[1], sys.argv[2]
+
+# PEP 440 ordering, not a hand-rolled tuple compare. BOTH reviewer families
+# independently killed the hand-rolled version: `[int(x) for x in
+# re.findall(r"\d+", v)[:3]]` gets two things wrong that matter here.
+#   * `3.6.0rc1` and `3.6.0` both reduce to [3, 6, 0], so a PRERELEASE — which
+#     is semantically BELOW the floor — satisfied it, and the incompatible lane
+#     ran anyway. That is the whole failure this prerequisite exists to stop.
+#   * a shorter tuple sorts below a longer one, so installed "1.26" read as
+#     less than floor "1.26.0" and skipped a lane that was fine.
+# `packaging` is not stdlib, so its absence makes this prerequisite
+# UNSATISFIED rather than silently true: an unverifiable floor must skip the
+# lane by name, never wave it through.
+try:
+    from packaging.version import InvalidVersion, Version
+except ImportError:
+    sys.exit(1)
+
+try:
+    from importlib.metadata import PackageNotFoundError, version
+    installed = version(dist)
+except Exception:
+    sys.exit(1)
+
+try:
+    text = open(pyproject, encoding="utf-8").read()
+except OSError:
+    sys.exit(1)
+
+m = re.search(rf'"{re.escape(dist)}>=([^,"]+)', text)
+if not m:
+    # No declared floor is not "any version is fine" — it means this check
+    # cannot answer, so it declines instead of passing.
+    sys.exit(1)
+
+try:
+    sys.exit(0 if Version(installed) >= Version(m.group(1).strip()) else 1)
+except InvalidVersion:
+    sys.exit(1)
+PYFLOOR
       ;;
     pysdk)
       # IDENTITY, not merely presence. A previously released `nrouter-sdk` from
@@ -248,6 +310,12 @@ self_test() {
     fi
   }
 
+  local scratch_floor_root scratch_floor
+  scratch_floor_root="$(mktemp -d "${TMPDIR:-/tmp}/nrouter-testall-floor.XXXXXX")"
+  scratch_floor="$scratch_floor_root/sdks/python"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$scratch_floor_root'" RETURN
+
   printf '== engine self-test ==\n'
 
   run_lane "synthetic-pass" "-" "true && true" >/dev/null 2>&1
@@ -257,9 +325,47 @@ self_test() {
   run_lane "synthetic-fail-midway" "-" "true && false && true" >/dev/null 2>&1
   run_lane "synthetic-skip" "definitely-not-a-real-tool-xyzzy" "true" >/dev/null 2>&1
 
+  # SDKGATE-001: an unsatisfiable floor SKIPS the lane by name instead of
+  # letting it run and produce nine unattributable TypeErrors.
+  run_lane "synthetic-floor" "pyfloor:definitely-not-installed-xyzzy" "true" >/dev/null 2>&1
+
+  # ...and the POSITIVE control, which both reviewers required: without it a
+  # `pyfloor:*` branch broken to always `return 1` still printed ok here while
+  # skipping every real lane and running zero contract tests. `pip` is a floor
+  # this interpreter satisfies by construction, so the fixture needs no
+  # network and no install.
+  local floor_fixture="$scratch_floor/pyproject.toml"
+  mkdir -p "$scratch_floor"
+  printf 'dependencies = [\n  "pip>=0.1",\n]\n' > "$floor_fixture"
+  # `--self-test` dispatches BEFORE the PYTHON_BIN preflight runs, so the
+  # fixture resolves its own interpreter; without this both controls read as
+  # "no interpreter" and proved nothing about the comparison.
+  local floor_py="${PYTHON_BIN:-$(command -v python3 || true)}"
+  if PYTHON_BIN="$floor_py" ROOT="$scratch_floor_root" have "pyfloor:pip"; then
+    printf '  ok   a SATISFIED floor passes the prerequisite\n'
+  else
+    printf '  FAIL a satisfied floor was reported unsatisfied — the branch may be broken shut\n'
+    fails=$((fails + 1))
+  fi
+
+  # And an UNDER-floor version must not pass, which the missing-distribution
+  # case cannot prove: it never reaches the comparison at all.
+  printf 'dependencies = [\n  "pip>=99999.0",\n]\n' > "$floor_fixture"
+  if PYTHON_BIN="$floor_py" ROOT="$scratch_floor_root" have "pyfloor:pip"; then
+    printf '  FAIL an under-floor version satisfied the prerequisite\n'
+    fails=$((fails + 1))
+  else
+    printf '  ok   an UNDER-floor version fails the prerequisite\n'
+  fi
+
   assert_eq "PASSED" "$PASSED" "1"
   assert_eq "FAILED" "$FAILED" "2"
-  assert_eq "SKIPPED" "$SKIPPED" "1"
+  assert_eq "SKIPPED" "$SKIPPED" "2"
+
+  case "$SKIPPED_LANES" in
+    *synthetic-floor*) printf '  ok   under-floor dependency skips the lane BY NAME\n' ;;
+    *) printf '  FAIL under-floor dependency did not name its lane\n'; fails=$((fails + 1)) ;;
+  esac
 
   case "$FAILED_LANES" in
     *synthetic-fail*) printf '  ok   failing lane is named in the report\n' ;;
@@ -347,7 +453,7 @@ run_lane "cross-SDK conformance" "python" \
 # `pysdk` is what closes the dead gate: without the editable install this lane
 # died in collection on `import httpx2`, and every spec assertion in
 # tests/test_sdk_contract.py was unreachable.
-run_lane "repository contract and catalog guards" "pysdk py:httpx2 py:openai py:pytest git" \
+run_lane "repository contract and catalog guards" "pysdk py:httpx2 py:openai pyfloor:openai py:pytest git" \
   "cd '$ROOT' \
    && '$PYTHON_BIN' -m unittest tests/test_sdk_contract.py \
    && '$PYTHON_BIN' -m pytest -q tests/test_release_versions.py \
@@ -362,7 +468,7 @@ run_lane "dependency security audit" "osv-scanner pip-audit npm" \
 run_lane "JavaScript / TypeScript" "npm" \
   "cd '$ROOT/sdks/js' && npm test"
 
-run_lane "Python" "pysdk py:pytest py:pytest_asyncio" \
+run_lane "Python" "pysdk py:pytest py:pytest_asyncio pyfloor:openai" \
   "cd '$ROOT/sdks/python' && '$PYTHON_BIN' -m pytest -q"
 
 run_lane "Java" "mvn jre" \

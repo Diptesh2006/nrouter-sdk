@@ -55,6 +55,15 @@ from doc_header_count import check_doc_header_enumeration  # noqa: E402
 from doc_header_count import self_test as doc_header_count_self_test  # noqa: E402
 from source_defaults import self_test as source_defaults_self_test  # noqa: E402
 
+# A FOURTH corpus, and the one none of the others can express: how each SDK
+# BEHAVES on the wire. The spec fixes headers, endpoints and error codes and
+# carries no timeout and no retry policy, `doc_wires` reads documentation and
+# `source_defaults` reads only the default MODEL — so a client that waited 60 s,
+# or forever, and a vendor client that silently retried an already-billed POST,
+# were invisible to all three.
+from client_timeouts import check_client_timeouts  # noqa: E402
+from client_timeouts import self_test as client_timeouts_self_test  # noqa: E402
+
 # Which files carry the contract, per SDK. A file listed here that does not
 # exist is an ERROR, not a skip: an SDK that vanished must not read as passing.
 SDK_SOURCES: dict[str, list[str]] = {
@@ -1209,6 +1218,7 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
     failures.extend(check_release_versions(root, spec))
     failures.extend(check_doc_wires(root, spec))
     failures.extend(check_source_defaults(root))
+    failures.extend(check_client_timeouts(root))
     # SDKDOC-001 — a DERIVED count restated as prose rots on the next header.
     failures.extend(check_doc_header_count(root))
     # SDKENUM-001 — and the harder shape the count gate could not see: a
@@ -1246,6 +1256,13 @@ def self_test() -> int:
     # So does the default-model half.
     if source_defaults_self_test():
         problems.append("source_defaults self-test failed; see its own output above")
+
+    # And the client-behaviour half — deadlines and the no-retry-on-a-billed-
+    # request pin. Importing only `check_client_timeouts` and not its
+    # `self_test` would leave its planted cases unreachable from here, so a
+    # broken regex would print green while catching nothing.
+    if client_timeouts_self_test():
+        problems.append("client_timeouts self-test failed; see its own output above")
 
     # And the header-set half, which is now TWO checks — the hard-coded count
     # and the enumerated completeness promise — sharing one `self_test`.

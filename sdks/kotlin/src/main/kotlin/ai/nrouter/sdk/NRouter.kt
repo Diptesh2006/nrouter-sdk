@@ -2,6 +2,7 @@ package ai.nrouter.sdk
 
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -41,13 +42,53 @@ import org.json.JSONObject
  * async API, so calling one from a UI coroutine never blocks the main thread,
  * and cancelling that coroutine actually cancels the in-flight request rather
  * than leaving a billed inference running.
+ *
+ * ### Timeouts
+ *
+ * The default transport is [defaultHttpClient], NOT `OkHttpClient()`: OkHttp's
+ * own 10-second read timeout is far below a normal completion and far below an
+ * image, video or TTS response, so the library defaults abort requests the
+ * gateway completes, settles and BILLS. Pass your own [OkHttpClient] to replace
+ * them entirely — nothing here is layered back on top of yours.
  */
 public class NRouter @JvmOverloads constructor(
     apiKey: String? = null,
     baseURL: String = DEFAULT_BASE_URL,
-    private val http: OkHttpClient = OkHttpClient(),
+    http: OkHttpClient = defaultHttpClient(),
+    bufferedCallTimeoutMillis: Long = BUFFERED_CALL_TIMEOUT_MILLIS,
 ) {
     private val apiKey: String = resolveApiKey(apiKey)
+
+    /**
+     * The transport for STREAMING and BINARY paths — no whole-call ceiling.
+     *
+     * Exposed so a caller can read the timeouts actually in force rather than
+     * inferring them from the builder they passed.
+     */
+    public val httpClient: OkHttpClient = http
+
+    /**
+     * The transport for BUFFERED JSON paths — [httpClient] plus a whole-call
+     * ceiling, sharing its connection pool and dispatcher.
+     *
+     * A buffered call is one where "the server went quiet" and "this response
+     * is legitimately long" are the same observation, so a total ceiling is the
+     * only thing standing between a stalled peer and a caller that never
+     * returns. Streaming and binary downloads are the opposite case: being long
+     * is NORMAL there, and a ceiling that fires kills a response the gateway
+     * has already completed, settled and BILLED.
+     *
+     * An injected client that already carries its own `callTimeout` is used
+     * VERBATIM — the caller stated a ceiling and it is not ours to widen or
+     * narrow. OkHttp cannot distinguish "unset" from "deliberately unbounded"
+     * (both are 0), so 0 is read as unset and takes the SDK default.
+     */
+    public val bufferedHttpClient: OkHttpClient =
+        if (http.callTimeoutMillis == 0 && bufferedCallTimeoutMillis > 0) {
+            http.newBuilder().callTimeout(bufferedCallTimeoutMillis, TimeUnit.MILLISECONDS).build()
+        } else {
+            http
+        }
 
     /** The gateway this client talks to, with any trailing slash removed. */
     public val baseURL: String = baseURL.trimEnd('/')
@@ -198,7 +239,10 @@ public class NRouter @JvmOverloads constructor(
             .header("Accept", "text/event-stream")
             .post(streamed.toString().toRequestBody(JSON))
             .build()
-        val call = http.newCall(request)
+        // httpClient, never bufferedHttpClient: an SSE stream is long BY
+        // DESIGN, and a whole-call ceiling would fire mid-completion on a
+        // request the gateway has already billed.
+        val call = httpClient.newCall(request)
         call.enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
                 close(NRouterError.Transport(e.message ?: "the stream never reached nRouter"))
@@ -314,7 +358,9 @@ public class NRouter @JvmOverloads constructor(
             builder.post(encodeJson(body).toRequestBody(JSON)).build()
         }
 
-        return runCall(request) {
+        // httpClient, never bufferedHttpClient: generated audio and a rendered
+        // video are large and slow by nature, and already paid for.
+        return runCall(httpClient, request) {
             val status = it.code
             val meta = NRouterResponseMeta.fromLookup { name -> it.header(name) }
             val raw = it.body?.bytes() ?: ByteArray(0)
@@ -357,6 +403,7 @@ public class NRouter @JvmOverloads constructor(
      * completion anyway.
      */
     private suspend fun <T> runCall(
+        client: OkHttpClient,
         request: Request,
         read: (okhttp3.Response) -> T,
     ): T {
@@ -365,7 +412,7 @@ public class NRouter @JvmOverloads constructor(
             .build()
 
         return suspendCancellableCoroutine { continuation ->
-            val call = http.newCall(authed)
+            val call = client.newCall(authed)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : okhttp3.Callback {
                 override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
@@ -382,14 +429,30 @@ public class NRouter @JvmOverloads constructor(
                         continuation.resume(response.use(read))
                     } catch (e: Throwable) {
                         if (continuation.isCancelled) return
-                        continuation.resumeWithException(e)
+                        // A read that dies MID-BODY — a reset socket, or the
+                        // buffered ceiling firing — surfaces as a raw
+                        // IOException. Unwrapped it escapes this SDK's error
+                        // contract: a caller matching on NRouterError gets a
+                        // java.io exception instead, for a request that may
+                        // already have been billed. `read` raises NRouterError
+                        // deliberately (a non-JSON 2xx, a typed gateway
+                        // failure); those pass straight through.
+                        continuation.resumeWithException(
+                            if (e is java.io.IOException) {
+                                NRouterError.Transport(
+                                    e.message ?: "the response body could not be read"
+                                )
+                            } else {
+                                e
+                            }
+                        )
                     }
                 }
             })
         }
     }
 
-    private suspend fun send(request: Request): Response = runCall(request) {
+    private suspend fun send(request: Request): Response = runCall(bufferedHttpClient, request) {
             val status = it.code
             val meta = NRouterResponseMeta.fromLookup { name -> it.header(name) }
             val contentType = it.header("content-type").orEmpty().lowercase()
@@ -434,6 +497,71 @@ public class NRouter @JvmOverloads constructor(
 
         /** Every customer key carries this prefix. */
         public const val KEY_PREFIX: String = "sk-nrouter-"
+
+        /**
+         * TCP and TLS handshake with the gateway.
+         *
+         * The gateway allows itself 10s to connect to a PROVIDER; reaching our
+         * own edge is cheaper, so 15s is headroom for a bad mobile or corporate
+         * network while staying finite.
+         */
+        public const val CONNECT_TIMEOUT_MILLIS: Long = 15_000
+
+        /**
+         * Gap between bytes, on EVERY path — and the reason OkHttp needs no
+         * whole-call ceiling to cut a dead peer. It bounds time-to-headers and
+         * the pause between two reads, never the total, so it cuts a server
+         * that went silent without ever cutting a completion that is merely
+         * long.
+         *
+         * OkHttp's default is 10s. That is far below a normal LLM completion
+         * and far below an image, a video or a TTS response, so the client was
+         * aborting requests the gateway completes, settles and BILLS —
+         * indistinguishable from us being broken, and it costs the customer
+         * money. 120s matches the gateway's own between-bytes budget toward a
+         * provider.
+         */
+        public const val READ_TIMEOUT_MILLIS: Long = 120_000
+
+        /** How long a request BODY may take to push — an audio file for transcription. */
+        public const val WRITE_TIMEOUT_MILLIS: Long = 60_000
+
+        /**
+         * Whole-call ceiling for BUFFERED JSON requests only. 0 means unbounded.
+         *
+         * Sized against the gateway's worst honest case rather than a
+         * comfortable average: up to three provider attempts, up to 20s of
+         * cumulative backoff between them, a 120s between-bytes budget on each.
+         * Ten minutes sits comfortably above that and comfortably below
+         * infinity. Erring high is deliberate — a client that gives up early
+         * aborts a billed call and the customer pays for nothing.
+         */
+        public const val BUFFERED_CALL_TIMEOUT_MILLIS: Long = 600_000
+
+        /**
+         * The transport this SDK builds when the caller injects none.
+         *
+         * `OkHttpClient()` was the defect being fixed: its defaults are a 10s
+         * read timeout, which cuts ordinary completions.
+         *
+         * `retryOnConnectionFailure(false)` is not a detail. OkHttp will
+         * otherwise re-send a request that failed after it was written, which
+         * for a billed POST is a SECOND CALL AND A SECOND BILL with nothing to
+         * deduplicate on. The gateway reserves credit once per customer request
+         * and owns retry and failover across providers; this SDK adds no retry
+         * loop of its own.
+         *
+         * `java.time.Duration` overloads are avoided on purpose: they need API
+         * 26 on Android, and the Android SDK's floor is API 21.
+         */
+        @JvmStatic
+        public fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(CONNECT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            .readTimeout(READ_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            .writeTimeout(WRITE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .retryOnConnectionFailure(false)
+            .build()
 
         private val JSON = "application/json; charset=utf-8".toMediaType()
         private val OCTET_STREAM = "application/octet-stream".toMediaType()

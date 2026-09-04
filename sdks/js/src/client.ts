@@ -33,6 +33,32 @@ export const ENV_KEY = 'NROUTER_API_KEY';
 export const KEY_PREFIX = 'sk-nrouter-';
 
 /**
+ * Automatic client-side retries. ZERO, deliberately, and overridable.
+ *
+ * The per-request pin in `NRouterSurface.raw()` only ever reached the `nr.*`
+ * helpers. MEASURED on this package against a 503: `nr.chat`, `nr.stream` and
+ * `nr.media.*` each sent ONE request, while `chat.completions.create`,
+ * `responses.create`, `embeddings.create`, `images.generate` and
+ * `audio.speech.create` each sent THREE — one attempt plus the vendor's two
+ * retries. Those five are inherited resources that never pass through `raw()`,
+ * they are all billed non-idempotent POSTs, and `chat.completions.create` is
+ * the call the README quickstart shows. Gateway gate 8: a retry is a second
+ * call and a second BILL, the gateway reserves credit once per customer request
+ * and owns retry and failover on its own side.
+ *
+ * Setting it on the CLIENT rather than adding a second per-request pin is the
+ * point: a helper added tomorrow inherits it without anyone remembering to.
+ * `test/retries.test.ts` pins both halves.
+ *
+ * A caller who passes `maxRetries` still gets exactly what they asked for, and
+ * the per-method split stays expressible: with `maxRetries: 2` the GETs retry
+ * and the `nr.*` billed POSTs stay pinned at 0 by `raw()`. What changes with no
+ * setting at all is that a GET no longer retries either — re-reading `/models`
+ * is free, so this costs a convenience, whereas the reverse default costs money.
+ */
+export const DEFAULT_MAX_RETRIES = 0;
+
+/**
  * Resolve and validate a key: the explicit argument first, then the
  * environment.
  *
@@ -586,6 +612,11 @@ export class nRouter extends OpenAI {
       fetch: pinnedFetch,
       apiKey,
       baseURL,
+      // AFTER the spread, so it is a DEFAULT and not a ceiling: an explicit
+      // `maxRetries` in `options` is already in `...options` and is read here
+      // rather than overwritten. See DEFAULT_MAX_RETRIES for why the vendor's
+      // 2 cannot be inherited on a billed POST.
+      maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
       organization: null,
       project: null,
       defaultHeaders: nrouterHeaders(options.defaultHeaders, apiKey),
@@ -817,6 +848,12 @@ export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
       // credit is reserved once per customer request.
       //
       // GET keeps the caller's setting: re-reading /models costs nothing.
+      //
+      // STILL LOAD-BEARING after the client-level DEFAULT_MAX_RETRIES. That
+      // default protects the inherited resources, which never reach this
+      // method; this pin is what keeps the billed `nr.*` POSTs at zero even
+      // when a caller deliberately raises `maxRetries` for their own GETs.
+      // Deleting either one re-arms a billed retry somewhere.
       ...(req.method === 'GET' ? {} : { maxRetries: 0 }),
       // The vendor client would otherwise JSON-encode `body` a second time.
       //

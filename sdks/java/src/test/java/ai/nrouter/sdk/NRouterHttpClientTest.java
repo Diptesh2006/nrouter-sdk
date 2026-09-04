@@ -3,12 +3,27 @@ package ai.nrouter.sdk;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.Authenticator;
+import java.net.CookieHandler;
 import java.net.InetSocketAddress;
+import java.net.ProxySelector;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 import org.junit.jupiter.api.Test;
 
 class NRouterHttpClientTest {
@@ -28,6 +43,60 @@ class NRouterHttpClientTest {
             this.contentType = contentType;
             this.body = body;
         }
+    }
+
+    /**
+     * Delegates to a real client while recording the {@link HttpRequest} it was
+     * handed.
+     *
+     * <p>This exists because the behavioural tests below cannot decide the
+     * question on their own: today's JDK stops the per-request timer once
+     * response HEADERS arrive, so a slow BODY survives whether or not the SDK
+     * set a timeout, and a behavioural assertion stays green under the mutation
+     * it is supposed to catch. What the SDK actually promises is a property of
+     * the request it builds, so assert that directly.
+     */
+    private static final class RecordingHttpClient extends HttpClient {
+        private final HttpClient delegate;
+        final List<HttpRequest> sent = new CopyOnWriteArrayList<>();
+
+        RecordingHttpClient(HttpClient delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> handler)
+                throws IOException, InterruptedException {
+            sent.add(request);
+            return delegate.send(request, handler);
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+                HttpRequest request, HttpResponse.BodyHandler<T> handler) {
+            sent.add(request);
+            return delegate.sendAsync(request, handler);
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+                HttpRequest request,
+                HttpResponse.BodyHandler<T> handler,
+                HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
+            sent.add(request);
+            return delegate.sendAsync(request, handler, pushPromiseHandler);
+        }
+
+        @Override public Optional<CookieHandler> cookieHandler() { return delegate.cookieHandler(); }
+        @Override public Optional<Duration> connectTimeout() { return delegate.connectTimeout(); }
+        @Override public Redirect followRedirects() { return delegate.followRedirects(); }
+        @Override public Optional<ProxySelector> proxy() { return delegate.proxy(); }
+        @Override public SSLContext sslContext() { return delegate.sslContext(); }
+        @Override public SSLParameters sslParameters() { return delegate.sslParameters(); }
+        @Override public Optional<Authenticator> authenticator() { return delegate.authenticator(); }
+        @Override public Version version() { return delegate.version(); }
+        @Override public Optional<Executor> executor() { return delegate.executor(); }
+        @Override public WebSocket.Builder newWebSocketBuilder() { return delegate.newWebSocketBuilder(); }
     }
 
     @Test
@@ -321,6 +390,206 @@ class NRouterHttpClientTest {
                 assertEquals("req_broken_stream", error.meta().requestId());
                 assertTrue(error.getMessage().contains("may have been billed"));
             }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void defaultTransportBoundsConnectAndBufferedRequestTime() {
+        // HttpClient.newHttpClient() carries NEITHER, so a stall hung the caller
+        // forever. Assert the values, not that a builder was called.
+        NRouterHttpClient client = NRouter.httpClient("sk-nrouter-test", "http://127.0.0.1:1/v1");
+        assertEquals(
+                Optional.of(Duration.ofSeconds(15)),
+                client.httpClient().connectTimeout());
+        assertEquals(Duration.ofMinutes(10), client.requestTimeout());
+        // The buffered ceiling must sit above the gateway's worst honest case:
+        // three provider attempts, up to 20s cumulative backoff, a 120s
+        // between-bytes budget each. Cutting below that aborts a call the
+        // gateway settles and BILLS.
+        assertTrue(client.requestTimeout().compareTo(Duration.ofMinutes(7)) > 0);
+    }
+
+    @Test
+    void aStalledServerCutsABufferedRequestInsteadOfHangingForever() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/models", exchange -> {
+            try {
+                Thread.sleep(5_000);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.sendResponseHeaders(200, 0);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+            NRouterHttpClient client = NRouter.httpClient(
+                    "sk-nrouter-test", base, NRouterHttpClient.defaultHttpClient(), Duration.ofMillis(400));
+            long started = System.nanoTime();
+            NRouterException error = assertThrows(NRouterException.class, client::models);
+            long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
+            assertEquals(NRouterException.Kind.TRANSPORT, error.kind());
+            assertTrue(elapsedMillis < 4_000, "the buffered request was not cut: " + elapsedMillis + "ms");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void aSlowStreamingBodyIsNeverCutByTheBufferedRequestTimeout() throws Exception {
+        // SSE is long BY DESIGN. A whole-exchange ceiling on this path would
+        // kill a healthy completion the gateway has already billed for.
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/messages", exchange -> {
+            exchange.getResponseHeaders().set("content-type", "text/event-stream");
+            exchange.getResponseHeaders().set("x-nr-request-id", "req_slow_stream");
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write("data: {\"delta\":\"one\"}\n\n".getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                Thread.sleep(1_200);
+                out.write("data: {\"delta\":\"two\"}\n\ndata: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+                out.flush();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+            NRouterHttpClient client = NRouter.httpClient(
+                    "sk-nrouter-test", base, NRouterHttpClient.defaultHttpClient(), Duration.ofMillis(200));
+            try (NRouterStreamResponse stream = client.messagesStream(Map.of("model", "claude"))) {
+                List<String> lines = stream.lines().toList();
+                assertEquals("req_slow_stream", stream.meta().requestId());
+                assertTrue(lines.contains("data: {\"delta\":\"two\"}"),
+                        "the stream was cut before its second frame: " + lines);
+                assertTrue(lines.contains("data: [DONE]"), "the stream never reached [DONE]: " + lines);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void aSlowBinaryDownloadIsNeverCutByTheBufferedRequestTimeout() throws Exception {
+        // Generated audio and video are large and slow, and already paid for.
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/audio/speech", exchange -> {
+            exchange.getResponseHeaders().set("content-type", "application/octet-stream");
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(new byte[] {1, 2});
+                out.flush();
+                Thread.sleep(1_200);
+                out.write(new byte[] {3, 4});
+                out.flush();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+            NRouterHttpClient client = NRouter.httpClient(
+                    "sk-nrouter-test", base, NRouterHttpClient.defaultHttpClient(), Duration.ofMillis(200));
+            assertArrayEquals(new byte[] {1, 2, 3, 4}, client.audioSpeech(Map.of("model", "tts")).body());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void anInjectedTransportFullyOverridesTheDefaults() throws Exception {
+        HttpClient injected = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
+        NRouterHttpClient client = NRouter.httpClient(
+                "sk-nrouter-test", "http://127.0.0.1:1/v1", injected, Duration.ofSeconds(7));
+        assertSame(injected, client.httpClient());
+        assertEquals(Optional.of(Duration.ofSeconds(3)), client.httpClient().connectTimeout());
+        assertEquals(Duration.ofSeconds(7), client.requestTimeout());
+
+        // And it is the transport actually used, not merely stored.
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/models", exchange -> {
+            byte[] body = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("content-type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+            NRouterHttpResponse response = NRouter
+                    .httpClient("sk-nrouter-test", base, injected, Duration.ofSeconds(7))
+                    .models();
+            assertTrue(response.body().get("ok").asBoolean());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void aNonPositiveRequestTimeoutIsRefusedRatherThanMeaningUnbounded() {
+        HttpClient injected = HttpClient.newHttpClient();
+        assertThrows(IllegalArgumentException.class, () ->
+                NRouter.httpClient("sk-nrouter-test", "http://127.0.0.1:1/v1", injected, Duration.ZERO));
+        assertThrows(IllegalArgumentException.class, () ->
+                NRouter.httpClient("sk-nrouter-test", "http://127.0.0.1:1/v1", injected, Duration.ofSeconds(-1)));
+    }
+
+    @Test
+    void onlyBufferedRequestsCarryAWholeRequestTimeout() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1", exchange -> {
+            boolean binary = exchange.getRequestURI().getPath().equals("/v1/audio/speech")
+                    || exchange.getRequestURI().getPath().endsWith("/content");
+            boolean stream = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)
+                    .contains("\"stream\":true");
+            byte[] body = binary
+                    ? new byte[] {1}
+                    : (stream ? "data: [DONE]\n\n" : "{\"ok\":true}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set(
+                    "content-type",
+                    binary ? "application/octet-stream" : (stream ? "text/event-stream" : "application/json"));
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+            RecordingHttpClient recorder = new RecordingHttpClient(NRouterHttpClient.defaultHttpClient());
+            Duration ceiling = Duration.ofSeconds(42);
+            NRouterHttpClient client = NRouter.httpClient("sk-nrouter-test", base, recorder, ceiling);
+
+            client.chatCompletions(Map.of("model", "test"));                       // buffered JSON POST
+            client.models();                                                       // buffered JSON GET
+            client.audioTranscriptions("a.wav", new byte[] {1}, Map.of());         // buffered multipart
+            client.audioSpeech(Map.of("model", "tts"));                            // binary download
+            client.downloadVideoContent("vid");                                    // binary download
+            try (NRouterStreamResponse stream = client.messagesStream(Map.of("model", "claude"))) {
+                stream.lines().forEach(ignored -> { });
+            }
+
+            List<Optional<Duration>> timeouts = new ArrayList<>();
+            for (HttpRequest request : recorder.sent) {
+                timeouts.add(request.timeout());
+            }
+            assertEquals(
+                    List.of(
+                            Optional.of(ceiling),   // POST /v1/chat/completions
+                            Optional.of(ceiling),   // GET  /v1/models
+                            Optional.of(ceiling),   // POST /v1/audio/transcriptions
+                            Optional.empty(),       // POST /v1/audio/speech      — generated audio
+                            Optional.empty(),       // GET  /v1/videos/vid/content — generated video
+                            Optional.empty()),      // POST /v1/messages (SSE)     — long by design
+                    timeouts);
         } finally {
             server.stop(0);
         }

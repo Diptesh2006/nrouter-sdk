@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import ai.nrouter.sdk.NRouter
 import ai.nrouter.sdk.NRouterError
+import okhttp3.OkHttpClient
 
 /**
  * Android entry point for the nRouter SDK.
@@ -38,11 +39,36 @@ import ai.nrouter.sdk.NRouterError
  * a published key. For a production app, mint a short-lived key on your own
  * backend and pass it to [create]; the manifest path is for internal builds and
  * prototypes, and [create] is deliberately explicit about that.
+ *
+ * ### Timeouts
+ *
+ * [create] never falls back to a bare `OkHttpClient()`. OkHttp's default read
+ * timeout is 10 seconds, which is far below a normal LLM completion and far
+ * below an image, video or TTS response — so on a handset the app would abort
+ * requests the gateway completes, settles and BILLS, and the user would pay for
+ * an answer they were shown as a failure. [defaultHttpClient] supplies the
+ * bounds instead, and a caller can replace it wholesale.
  */
 public object NRouterAndroid {
 
     /** The `meta-data` name read from `AndroidManifest.xml`. */
     public const val MANIFEST_KEY: String = "ai.nrouter.sdk.API_KEY"
+
+    /**
+     * The transport [create] builds when the caller injects none.
+     *
+     * Deliberately the SHARED core factory, not a second set of numbers. Two
+     * clients disagreeing about how long an inference may take is how one
+     * platform starts cutting completions the other tolerates, and the wire
+     * behaviour is already shared for exactly this reason.
+     *
+     * It carries no retry policy. The gateway reserves credit once per customer
+     * request and owns retry and failover; a client retry of a billed POST is a
+     * second call and a second bill, which on a flaky mobile network is the
+     * easiest possible way to charge a user twice.
+     */
+    @JvmStatic
+    public fun defaultHttpClient(): OkHttpClient = NRouter.defaultHttpClient()
 
     /**
      * Build a client for Android.
@@ -53,6 +79,9 @@ public object NRouterAndroid {
      *     manifest — convenient for internal builds, and readable by anyone
      *     holding the APK.
      *
+     * @param http the transport. Defaults to [defaultHttpClient]; pass your own
+     *   to control proxy, TLS, connection pool or timeouts, and it is used
+     *   verbatim — the SDK layers nothing back on top of it.
      * @throws NRouterError.Configuration when neither supplies a usable key.
      *   Configuration, not Transport: nothing left the process, so it is
      *   permanent — a caller retrying on `isRetryable` would loop forever. The
@@ -65,6 +94,7 @@ public object NRouterAndroid {
         context: Context,
         apiKey: String? = null,
         baseURL: String = NRouter.DEFAULT_BASE_URL,
+        http: OkHttpClient = defaultHttpClient(),
     ): NRouter {
         val resolved = apiKey?.takeIf { it.isNotEmpty() } ?: manifestKey(context)
         if (resolved.isNullOrEmpty()) {
@@ -75,7 +105,7 @@ public object NRouterAndroid {
                     "android:value=\"sk-nrouter-...\"/> for an internal build."
             )
         }
-        return NRouter(apiKey = resolved, baseURL = baseURL)
+        return NRouter(apiKey = resolved, baseURL = baseURL, http = http)
     }
 
     /**

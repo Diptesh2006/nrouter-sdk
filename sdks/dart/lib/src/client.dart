@@ -77,12 +77,58 @@ class NRouter {
   /// Every customer key carries this prefix.
   static const String keyPrefix = 'sk-nrouter-';
 
+  // --- transport deadlines --------------------------------------------------
+  //
+  // `package:http` applies NO timeout of any kind: a `Client` that connects to
+  // a gateway which then goes silent leaves the future pending forever, and on
+  // Flutter that is a spinner nobody can cancel. There is no socket-level knob
+  // to set either — the package exposes none — so the bound has to be applied
+  // to the FUTURE, which is what the two constants below do.
+  //
+  // Both are explicit decisions — name it, or you have chosen infinity — sized
+  // against the gateway's own budget rather than picked for feel. The gateway's
+  // worst HONEST case before a first byte is roughly 410 s: up to three
+  // provider attempts, each with a 10 s connect timeout and a 120 s
+  // between-bytes read timeout, plus at most 20 s of cumulative backoff. A
+  // client deadline below that aborts a request the gateway is about to
+  // answer — and the customer is billed anyway, because the provider tokens
+  // were already spent.
+  //
+  // Neither ever RETRIES. Waiting is bounded here; re-sending is not done at
+  // all. The gateway reserves credit ONCE per customer request and owns retry
+  // and failover, so a client retry of a billed POST is a second call and a
+  // second bill with nothing to dedupe on.
+
+  /// Whole-request ceiling for BUFFERED calls — JSON `POST`/`GET` and
+  /// multipart upload — 600 s.
+  ///
+  /// Above the gateway's ~410 s worst honest case with margin, and the same
+  /// order as the OpenAI and Anthropic clients' own 600 s defaults, so a
+  /// caller migrating from either is not surprised.
+  static const Duration defaultTimeout = Duration(seconds: 600);
+
+  /// Time-to-RESPONSE-HEADERS bound for streaming and binary calls — 180 s.
+  ///
+  /// [stream] and [bytes] bound only the wait for the first response headers;
+  /// the body that follows is deliberately UNBOUNDED. A whole-request ceiling
+  /// there would sever an SSE stream mid-generation and truncate a long
+  /// `GET /videos/{id}/content` — both of them already billed. 180 s sits above
+  /// the gateway's own 120 s between-bytes read timeout, so the gateway's
+  /// honest error reaches the caller instead of a client-side abort racing it.
+  static const Duration defaultStreamTimeout = Duration(seconds: 180);
+
   /// Build a client. The key is validated up front so a malformed one fails
   /// here rather than as a 401 that reads like a revoked credential.
+  ///
+  /// [timeout] and [streamTimeout] are separate from [httpClient] on purpose:
+  /// `package:http`'s `Client` interface carries no timeout, so injecting one
+  /// cannot supply the bound and would silently restore the unbounded default.
   NRouter({
     required String apiKey,
     String baseUrl = defaultBaseUrl,
     http.Client? httpClient,
+    this.timeout = defaultTimeout,
+    this.streamTimeout = defaultStreamTimeout,
   })  : _apiKey = validateApiKey(apiKey),
         baseUrl = baseUrl.endsWith('/')
             ? baseUrl.substring(0, baseUrl.length - 1)
@@ -93,6 +139,24 @@ class NRouter {
   final String _apiKey;
   final http.Client _http;
   final bool _ownsClient;
+
+  /// Whole-request ceiling applied to buffered JSON and multipart calls.
+  final Duration timeout;
+
+  /// Time-to-response-headers ceiling applied to streaming and binary calls.
+  final Duration streamTimeout;
+
+  /// The one place a deadline turns into an error, so every path says the same
+  /// thing — including that the request may already have been BILLED. The
+  /// gateway reserves credit before it calls a provider, so a blind re-send
+  /// after a timeout is a second call and a second bill.
+  static NRouterTransportError _timedOut(Duration bound, String what) =>
+      NRouterTransportError(
+        'nRouter did not $what within ${bound.inSeconds}s. package:http applies '
+        'no timeout of its own, so this bound is the SDK default; pass '
+        '`timeout:` or `streamTimeout:` to change it. The request may already '
+        'have been billed — do not re-send it blindly.',
+      );
 
   /// The gateway this client talks to, with any trailing slash removed.
   final String baseUrl;
@@ -172,7 +236,15 @@ class NRouter {
 
     final http.StreamedResponse response;
     try {
-      response = await _http.send(request);
+      // Only the wait for RESPONSE HEADERS is bounded. The SSE body that
+      // follows has no ceiling: a long generation is a working stream, and
+      // cutting it off discards tokens the caller has already paid for.
+      response = await _http.send(request).timeout(
+            streamTimeout,
+            onTimeout: () => throw _timedOut(streamTimeout, 'start streaming'),
+          );
+    } on NRouterError {
+      rethrow;
     } on Exception catch (e) {
       throw NRouterTransportError(e.toString());
     }
@@ -285,8 +357,16 @@ class NRouter {
 
     http.Response response;
     try {
-      final streamed = await _http.send(request);
+      // A multipart POST is buffered: `send` completes only once the file has
+      // been uploaded AND the response headers are back, so the whole-request
+      // ceiling is the right bound here. The JSON body that follows is small.
+      final streamed = await _http.send(request).timeout(
+            timeout,
+            onTimeout: () => throw _timedOut(timeout, 'answer'),
+          );
       response = await http.Response.fromStream(streamed);
+    } on NRouterError {
+      rethrow;
     } on Exception catch (e) {
       throw NRouterTransportError(e.toString());
     }
@@ -374,11 +454,23 @@ class NRouter {
       if (body != null) 'Content-Type': 'application/json',
     };
 
+    // Sent through `send` rather than `get`/`post` so the header wait and the
+    // body read are two separate waits. Generated audio and video are large:
+    // a whole-request ceiling truncates a download that has already been
+    // billed, so only the wait for headers is bounded.
+    final request = http.Request(body == null ? 'GET' : 'POST', uri)
+      ..headers.addAll(headers);
+    if (body != null) request.body = jsonEncode(body);
+
     http.Response response;
     try {
-      response = body == null
-          ? await _http.get(uri, headers: headers)
-          : await _http.post(uri, headers: headers, body: jsonEncode(body));
+      final streamed = await _http.send(request).timeout(
+            streamTimeout,
+            onTimeout: () => throw _timedOut(streamTimeout, 'send headers for'),
+          );
+      response = await http.Response.fromStream(streamed);
+    } on NRouterError {
+      rethrow;
     } on Exception catch (e) {
       throw NRouterTransportError(e.toString());
     }
@@ -423,9 +515,12 @@ class NRouter {
 
     http.Response response;
     try {
-      response = method == 'GET'
-          ? await _http.get(uri, headers: headers)
-          : await _http.post(uri, headers: headers, body: jsonEncode(body));
+      response = await (method == 'GET'
+              ? _http.get(uri, headers: headers)
+              : _http.post(uri, headers: headers, body: jsonEncode(body)))
+          .timeout(timeout, onTimeout: () => throw _timedOut(timeout, 'answer'));
+    } on NRouterError {
+      rethrow;
     } on Exception catch (e) {
       throw NRouterTransportError(e.toString());
     }

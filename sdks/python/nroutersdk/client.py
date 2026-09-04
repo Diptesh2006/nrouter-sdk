@@ -79,6 +79,104 @@ _KEY_PREFIX = "sk-nrouter-"
 #: `tests/test_defaults.py` and by `conformance/source_defaults.py`.
 DEFAULT_MODEL = "gpt-5.4-mini"
 
+# ---------------------------------------------------------------------------
+# Transport defaults
+# ---------------------------------------------------------------------------
+
+#: Automatic client-side retries. ZERO, deliberately.
+#:
+#: NO CLIENT-SIDE RETRY ON A BILLED POST. The vendor client defaults to TWO
+#: automatic retries on 408, 409, 429 and every 5xx, and subclassing it without
+#: saying otherwise inherited that default onto `/v1/chat/completions`,
+#: `/v1/responses`, `/v1/embeddings`, `/v1/images/generations`,
+#: `/v1/audio/speech`, `/v1/audio/transcriptions` and `/v1/videos` — none of
+#: which are idempotent. Gateway gate 8 is explicit that a retry is a SECOND
+#: CALL and a SECOND BILL: the gateway reserves credit exactly once per customer
+#: request and owns retry and failover on its own side, above the provider and
+#: below that reservation, so a client retrying on top of it pays twice for one
+#: answer and the gateway has nothing to dedupe the second call against.
+#:
+#: The dangerous case is the timeout or the 5xx, not the honest refusal. The
+#: gateway may have accepted, dispatched and billed the request before the
+#: socket died, so the attempt that "failed" is a completed purchase and the
+#: retry buys another one. A 400 is safe and is not retried by anyone.
+#:
+#: OVERRIDABLE: `nRouter(max_retries=3)` is honoured exactly as passed.
+#:
+#: NOT PER-METHOD, and that is a loss taken knowingly. The JS SDK forces 0 only
+#: on the billed non-GET paths and leaves GET on the caller's setting, because
+#: the vendor JS client accepts `maxRetries` as a PER-REQUEST option. The Python
+#: vendor client does not expose one: no resource method takes `max_retries`
+#: (measured — `chat.completions.create` and friends surface only
+#: `extra_headers`, `extra_query`, `extra_body` and `timeout`), and the two
+#: public levers, the constructor and `client.with_options(max_retries=n)`, are
+#: both per-CLIENT and method-blind. Splitting by method would mean overriding
+#: the private `request()` on the hot path of both the sync and the async
+#: client, and the failure mode of that after an upstream signature change is
+#: SILENT: `super()` is still called, unchanged, and billed POSTs quietly get
+#: vendor retries back. A silent money defect is worse than the loss below.
+#:
+#: WHAT WAS GIVEN UP: the two inherited GETs, `models.list()` and
+#: `models.retrieve()`, no longer retry a transient 5xx by themselves. Nothing
+#: else changes, and the SDK gets MORE consistent rather than less — the
+#: nRouter-native helpers (`nrouter_models.list()`, `messages`, `videos`) go
+#: straight through `self._client`, a plain httpx client that has never had
+#: retries at all, so every GET here now behaves one way instead of two. A
+#: caller who wants it back asks per call, on the vendor's own public API, and
+#: arms no POST doing so::
+#:
+#:     client.with_options(max_retries=2).models.list()
+DEFAULT_MAX_RETRIES = 0
+
+#: Per-attempt timeout: 600 s in total, 10 s to connect.
+#:
+#: EXPLICIT rather than inherited. The vendor's own default happens to be 600 s
+#: with a 5 s connect today, but this number is load-bearing here in a way it is
+#: not there: with retries off (above) a timeout is FINAL, so it has to be
+#: generous enough for the slowest thing the gateway legitimately does rather
+#: than for the typical one. 600 s covers a long reasoning completion, a
+#: full-length speech synthesis and a large image or transcription response. The
+#: video routes never need it — `videos.create` returns a job id and the render
+#: is polled — so nothing here waits on a generation to finish.
+#:
+#: The connect leg is 10 s rather than 5 s for the same reason: a cold TLS
+#: handshake on a slow corporate or CI network is no longer retried away, and
+#: 10 s still fails fast against a genuinely unreachable host.
+#:
+#: OVERRIDABLE, and it does not steal a custom transport's own setting — see
+#: `_apply_transport_defaults`.
+DEFAULT_TIMEOUT = httpx.Timeout(600.0, connect=10.0)
+
+#: httpx's own default, which the vendor uses as a STRUCTURAL sentinel for "this
+#: custom http_client was never given a timeout". Constructed rather than
+#: imported because upstream it is the private `httpx2._config`
+#: `DEFAULT_TIMEOUT_CONFIG`; measured equal to it on httpx2 2.12.0.
+_HTTPX_DEFAULT_TIMEOUT = httpx.Timeout(5.0)
+
+
+def _apply_transport_defaults(kwargs: dict[str, Any]) -> None:
+    """Pin retries and timeout without overruling what the caller asked for.
+
+    Both defaults are applied through `kwargs`, so an explicit `max_retries=` or
+    `timeout=` wins by simply being there already.
+
+    The `http_client` branch reproduces the vendor's own precedence rule: given
+    no `timeout`, it adopts a custom client's timeout when that client carries a
+    non-default one. Passing ours unconditionally would silently overrule a
+    caller who had configured their transport for a corporate proxy — which is
+    the README's own worked example — so in that one case the default is left
+    alone and the caller's client decides.
+    """
+    kwargs.setdefault("max_retries", DEFAULT_MAX_RETRIES)
+    if "timeout" in kwargs:
+        return
+    supplied = kwargs.get("http_client")
+    if supplied is not None:
+        supplied_timeout = getattr(supplied, "timeout", _HTTPX_DEFAULT_TIMEOUT)
+        if supplied_timeout != _HTTPX_DEFAULT_TIMEOUT:
+            return
+    kwargs["timeout"] = DEFAULT_TIMEOUT
+
 
 def _resolve_api_key(api_key: str | None) -> str:
     resolved_key = api_key or os.environ.get(_ENV_KEY)
@@ -620,10 +718,14 @@ class nRouter(_OpenAI):
             base_url: Optional gateway base URL. Defaults to the NROUTER_BASE_URL
                 environment variable or 'https://api.nrouter.ai/v1'.
             **kwargs: Extra arguments passed directly to OpenAI client constructor
-                (e.g. timeout, max_retries, http_client).
+                (e.g. timeout, max_retries, http_client). `max_retries` defaults
+                to `DEFAULT_MAX_RETRIES` (0 — see the note there: a retry of a
+                billed POST is a second bill) and `timeout` to `DEFAULT_TIMEOUT`
+                (600 s, 10 s connect); passing either overrides the default.
         """
         resolved_key = _resolve_api_key(api_key)
         resolved_base = _resolve_base_url(base_url)
+        _apply_transport_defaults(kwargs)
 
         super().__init__(api_key=resolved_key, base_url=resolved_base, **kwargs)
 
@@ -669,9 +771,22 @@ class nRouter(_OpenAI):
         string-match it.
 
         `_make_status_error` is the correct seam rather than an httpx event
-        hook: the OpenAI SDK exhausts its own retries BEFORE constructing the
-        error, so a 429 that succeeds on retry never lands here, while a hook
-        would raise on the first attempt and defeat the retry entirely.
+        hook, and it stays the correct one now that retries default to 0
+        (`DEFAULT_MAX_RETRIES`). It is the ONE place the vendor client turns a
+        non-2xx into an exception, so overriding it once covers every inherited
+        resource. A response hook would instead raise from INSIDE the transport,
+        where the vendor wraps whatever escapes into a connection error — making
+        a permanent 402 look like a transient network failure to any caller
+        branching on the type.
+
+        The retry argument that used to be the whole of this note still holds
+        wherever a caller re-arms retries — `nRouter(max_retries=3)`, or
+        `with_options(max_retries=2)` on a GET. There, the vendor exhausts its
+        retries BEFORE constructing the error, so a 429 that succeeds on a later
+        attempt never reaches this method, while a hook would raise on the first
+        attempt and defeat the retry the caller explicitly asked for. Under the
+        default of 0 there is no retry to defeat; that changes how much work the
+        argument is doing, not whether it is true.
         """
         try:
             _maybe_raise_nrouter_error(
@@ -755,10 +870,14 @@ class AsyncnRouter(_AsyncOpenAI):
             base_url: Optional gateway base URL. Defaults to the NROUTER_BASE_URL
                 environment variable or 'https://api.nrouter.ai/v1'.
             **kwargs: Extra arguments passed directly to AsyncOpenAI client constructor
-                (e.g. timeout, max_retries, http_client).
+                (e.g. timeout, max_retries, http_client). `max_retries` defaults
+                to `DEFAULT_MAX_RETRIES` (0 — see the note there: a retry of a
+                billed POST is a second bill) and `timeout` to `DEFAULT_TIMEOUT`
+                (600 s, 10 s connect); passing either overrides the default.
         """
         resolved_key = _resolve_api_key(api_key)
         resolved_base = _resolve_base_url(base_url)
+        _apply_transport_defaults(kwargs)
 
         super().__init__(api_key=resolved_key, base_url=resolved_base, **kwargs)
 
@@ -801,9 +920,22 @@ class AsyncnRouter(_AsyncOpenAI):
         string-match it.
 
         `_make_status_error` is the correct seam rather than an httpx event
-        hook: the OpenAI SDK exhausts its own retries BEFORE constructing the
-        error, so a 429 that succeeds on retry never lands here, while a hook
-        would raise on the first attempt and defeat the retry entirely.
+        hook, and it stays the correct one now that retries default to 0
+        (`DEFAULT_MAX_RETRIES`). It is the ONE place the vendor client turns a
+        non-2xx into an exception, so overriding it once covers every inherited
+        resource. A response hook would instead raise from INSIDE the transport,
+        where the vendor wraps whatever escapes into a connection error — making
+        a permanent 402 look like a transient network failure to any caller
+        branching on the type.
+
+        The retry argument that used to be the whole of this note still holds
+        wherever a caller re-arms retries — `nRouter(max_retries=3)`, or
+        `with_options(max_retries=2)` on a GET. There, the vendor exhausts its
+        retries BEFORE constructing the error, so a 429 that succeeds on a later
+        attempt never reaches this method, while a hook would raise on the first
+        attempt and defeat the retry the caller explicitly asked for. Under the
+        default of 0 there is no retry to defeat; that changes how much work the
+        argument is doing, not whether it is true.
         """
         try:
             _maybe_raise_nrouter_error(

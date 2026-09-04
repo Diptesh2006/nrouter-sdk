@@ -565,6 +565,114 @@ final class ContractTests: XCTestCase {
         let client = try NRouter(apiKey: "sk-nrouter-abc", baseURL: "https://api.nrouter.ai/v1/")
         XCTAssertEqual(client.baseURL, "https://api.nrouter.ai/v1")
     }
+
+    // MARK: - Transport deadlines
+
+    func testDefaultTimeoutsAreDeclaredAndWiredIntoTheDefaultSessions() {
+        // The VALUES, so a silent change to any of them is a failing test.
+        XCTAssertEqual(NRouter.defaultRequestTimeout, 180)
+        XCTAssertEqual(NRouter.defaultResourceTimeout, 600)
+        XCTAssertEqual(NRouter.defaultStreamingResourceTimeout, 86_400)
+
+        // ...and that they reach the sessions. A constant nobody wires in is
+        // decoration, and this SDK shipped `URLSession.shared` for exactly as
+        // long as nothing asserted otherwise.
+        let buffered = NRouter.makeDefaultSession().configuration
+        XCTAssertEqual(buffered.timeoutIntervalForRequest, NRouter.defaultRequestTimeout)
+        XCTAssertEqual(buffered.timeoutIntervalForResource, NRouter.defaultResourceTimeout)
+
+        let streaming = NRouter.makeDefaultStreamingSession().configuration
+        XCTAssertEqual(streaming.timeoutIntervalForRequest, NRouter.defaultRequestTimeout)
+        XCTAssertEqual(
+            streaming.timeoutIntervalForResource,
+            NRouter.defaultStreamingResourceTimeout
+        )
+
+        // The two defaults this SDK deliberately left behind: `URLSession.shared`
+        // carries a 60 s request timeout — below the gateway's own worst honest
+        // case, so it aborted requests the gateway went on to bill — and a
+        // seven-day resource timeout, which is not a bound.
+        XCTAssertNotEqual(buffered.timeoutIntervalForRequest, 60)
+        XCTAssertNotEqual(buffered.timeoutIntervalForResource, 7 * 24 * 60 * 60)
+    }
+
+    func testTheDefaultDeadlineReachesTheOutgoingRequest() async throws {
+        // `URLRequest(url:)` starts at Foundation's 60 s and a request-level
+        // timeout wins over the session configuration, so a session carrying
+        // 180 s proves nothing on its own — the number has to arrive on the
+        // request. Injecting a session whose configuration says 180 and reading
+        // it back off the captured request is what proves the copy happens.
+        StubProtocol.captured = nil
+        StubProtocol.response = (200, ["content-type": "application/json"], Data("{}".utf8))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        config.timeoutIntervalForRequest = NRouter.defaultRequestTimeout
+        let client = try NRouter(
+            apiKey: "sk-nrouter-test",
+            session: URLSession(configuration: config)
+        )
+
+        _ = try await client.chatCompletions(["model": "gpt-5.4-mini"])
+
+        let request = try XCTUnwrap(StubProtocol.captured)
+        XCTAssertEqual(request.timeoutInterval, NRouter.defaultRequestTimeout)
+    }
+
+    func testAnInjectedSessionOverridesTheDefaultDeadline() async throws {
+        // The injection point survives the change: a caller who supplies a
+        // session gets THEIR deadline on the wire, not the SDK's.
+        StubProtocol.captured = nil
+        StubProtocol.response = (200, ["content-type": "application/json"], Data("{}".utf8))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        config.timeoutIntervalForRequest = 7
+        config.timeoutIntervalForResource = 11
+        let client = try NRouter(
+            apiKey: "sk-nrouter-test",
+            session: URLSession(configuration: config)
+        )
+
+        _ = try await client.chatCompletions(["model": "gpt-5.4-mini"])
+
+        let request = try XCTUnwrap(StubProtocol.captured)
+        XCTAssertEqual(request.timeoutInterval, 7)
+        XCTAssertNotEqual(request.timeoutInterval, NRouter.defaultRequestTimeout)
+    }
+
+    func testOneInjectedSessionAlsoCoversStreamingAndBinary() async throws {
+        // A single injected `session:` replaces BOTH defaults, so a caller who
+        // sets one deadline does not silently keep the SDK's on the streaming
+        // and binary paths — the surface where the two differ most.
+        StubProtocol.captured = nil
+        StubProtocol.response = (200, ["content-type": "audio/mpeg"], Data([0x49, 0x44]))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        config.timeoutIntervalForRequest = 9
+        let client = try NRouter(
+            apiKey: "sk-nrouter-test",
+            session: URLSession(configuration: config)
+        )
+
+        _ = try await client.audioSpeech(["model": "tts-1", "input": "hi"])
+
+        let request = try XCTUnwrap(StubProtocol.captured)
+        XCTAssertEqual(request.timeoutInterval, 9)
+    }
+
+    func testStreamingAndBinaryAreNotCappedByTheBufferedCeiling() throws {
+        // The property that keeps a paid response intact: a whole-request
+        // ceiling severs an SSE stream mid-generation and truncates a long
+        // /v1/videos/{id}/content download, both of them already billed. The
+        // streaming session's ceiling must therefore be strictly larger, while
+        // the stall bound stays identical on both.
+        let buffered = NRouter.makeDefaultSession().configuration
+        let streaming = NRouter.makeDefaultStreamingSession().configuration
+        XCTAssertGreaterThan(
+            streaming.timeoutIntervalForResource,
+            buffered.timeoutIntervalForResource
+        )
+        XCTAssertEqual(streaming.timeoutIntervalForRequest, buffered.timeoutIntervalForRequest)
+    }
 }
 
 /// Captures the request the SDK actually builds, so assertions are about the

@@ -10,6 +10,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -34,15 +35,92 @@ public final class NRouterHttpClient {
             "model_not_found", "rate_limit_exceeded", "tpm_limit_exceeded",
             "credit_check_failed", "service_unavailable");
     private static final Pattern KEY = Pattern.compile("sk-nrouter-[A-Za-z0-9._-]+");
+
+    /**
+     * How long to wait for the TCP and TLS handshake with the gateway.
+     *
+     * <p>The gateway allows itself 10s to connect to a PROVIDER; reaching our
+     * own edge is cheaper than that, so 15s is generous headroom for a bad
+     * mobile or corporate network while still being finite. {@code
+     * HttpClient.newHttpClient()} sets none at all, which is how a dead route
+     * turns into a caller that never returns.
+     */
+    public static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(15);
+
+    /**
+     * Whole-exchange ceiling for a BUFFERED request (the JSON and multipart
+     * paths). Never applied to SSE or to a binary download — see
+     * {@link #buffered(String)}.
+     *
+     * <p>Sized against the gateway's own worst honest case, not against a
+     * comfortable average: it may make up to three provider attempts with up to
+     * 20s of cumulative backoff between them, holding a 120s between-bytes read
+     * timeout on each. Ten minutes sits comfortably above that and comfortably
+     * below infinity.
+     *
+     * <p>Erring high is deliberate. A client that gives up while the gateway is
+     * still completing the call aborts a request that the gateway settles and
+     * BILLS: the customer pays for tokens they never receive, and it is
+     * indistinguishable from us being broken.
+     */
+    public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofMinutes(10);
+
+    /**
+     * Gap-between-bytes ceiling. The JDK's {@link HttpClient} has no socket
+     * read timeout to apply it to — it offers a connect timeout and a
+     * whole-exchange timeout and nothing in between — so this exists for the
+     * OkHttp-backed {@code OpenAIClient} that {@code NRouter.create} builds,
+     * where it IS expressible. Matches the gateway's own between-bytes budget.
+     */
+    public static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(120);
+
+    /** How long a request BODY may take to push — an audio file for transcription. */
+    public static final Duration DEFAULT_WRITE_TIMEOUT = Duration.ofSeconds(60);
+
     private final String apiKey;
     private final String baseUrl;
     private final HttpClient http;
+    private final Duration requestTimeout;
     private final ObjectMapper json = new ObjectMapper();
 
     NRouterHttpClient(String apiKey, String baseUrl) {
+        this(apiKey, baseUrl, defaultHttpClient(), DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    NRouterHttpClient(String apiKey, String baseUrl, HttpClient http, Duration requestTimeout) {
+        if (http == null) {
+            throw new IllegalArgumentException("httpClient must not be null");
+        }
+        if (requestTimeout == null || requestTimeout.isZero() || requestTimeout.isNegative()) {
+            throw new IllegalArgumentException("requestTimeout must be a positive duration");
+        }
         this.apiKey = apiKey;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
-        this.http = HttpClient.newHttpClient();
+        this.http = http;
+        this.requestTimeout = requestTimeout;
+    }
+
+    /**
+     * The transport this SDK builds when the caller injects none.
+     *
+     * <p>There is deliberately NO retry policy here. The gateway reserves credit
+     * once per customer request and owns retry and failover across providers; a
+     * client-side retry of a billed POST is a second call and a second bill with
+     * nothing to deduplicate on. The JDK client does not retry a non-idempotent
+     * request by default, and nothing here turns that on.
+     */
+    public static HttpClient defaultHttpClient() {
+        return HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).build();
+    }
+
+    /** The transport in force, so a caller can read the timeouts it actually carries. */
+    public HttpClient httpClient() {
+        return http;
+    }
+
+    /** The whole-exchange ceiling applied to buffered requests, and to nothing else. */
+    public Duration requestTimeout() {
+        return requestTimeout;
     }
 
     public NRouterHttpResponse chatCompletions(Map<String, ?> body) { return post("/chat/completions", body); }
@@ -82,20 +160,24 @@ public final class NRouterHttpClient {
 
     /** Send a JSON POST to a custom gateway path. Prefer the named helpers above. */
     public NRouterHttpResponse post(String path, Object body) {
-        return sendJson(request(path).header("Accept", "application/json")
+        return sendJson(buffered(path).header("Accept", "application/json")
                 .header("Content-Type", "application/json").POST(jsonBody(body)).build());
     }
 
     private NRouterHttpResponse get(String path) {
-        return sendJson(request(path).header("Accept", "application/json").GET().build());
+        return sendJson(buffered(path).header("Accept", "application/json").GET().build());
     }
 
     private NRouterBinaryResponse postBinary(String path, Object body) {
+        // No whole-exchange ceiling: this is generated audio, and a long one is
+        // a healthy one. See buffered(String).
         return sendBinary(request(path).header("Accept", "application/octet-stream")
                 .header("Content-Type", "application/json").POST(jsonBody(body)).build());
     }
 
     private NRouterBinaryResponse getBinary(String path) {
+        // No whole-exchange ceiling: a rendered video is large and slow by
+        // nature, and the customer has already paid for it. See buffered(String).
         return sendBinary(request(path).header("Accept", "application/octet-stream").GET().build());
     }
 
@@ -103,7 +185,7 @@ public final class NRouterHttpClient {
             String path, String filename, byte[] file, Map<String, ?> fields) {
         String boundary = "nrouter-" + UUID.randomUUID();
         byte[] body = multipart(boundary, filename, file, fields);
-        HttpRequest request = request(path)
+        HttpRequest request = buffered(path)
                 .header("Accept", "application/json")
                 .header("Content-Type", "multipart/form-data; boundary=" + boundary)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
@@ -120,6 +202,8 @@ public final class NRouterHttpClient {
         // contradictory value in a caller-reused body map.
         streamed.put("stream", true);
         try {
+            // No whole-exchange ceiling: an SSE stream is long BY DESIGN, and
+            // the ceiling would fire mid-completion. See buffered(String).
             HttpResponse<Stream<String>> response = http.send(
                     request(path).header("Accept", "text/event-stream")
                             .header("Content-Type", "application/json").POST(jsonBody(streamed)).build(),
@@ -279,6 +363,34 @@ public final class NRouterHttpClient {
     private HttpRequest.Builder request(String path) {
         return HttpRequest.newBuilder(URI.create(baseUrl + "/" + path.replaceFirst("^/+", "")))
                 .header("Authorization", "Bearer " + apiKey);
+    }
+
+    /**
+     * A request builder for a BUFFERED exchange, bounded by {@link #requestTimeout()}.
+     *
+     * <p>The streaming and binary-download paths deliberately do NOT get this,
+     * and the difference is not an oversight.
+     *
+     * <p>{@code HttpRequest.timeout} is specified as a bound on receiving THE
+     * RESPONSE, and the JDK offers no between-bytes (idle) timeout to use
+     * instead. So by its own contract it cannot tell "the server stopped
+     * responding" apart from "this response is legitimately long". On a buffered
+     * JSON call those are the same thing, and this ceiling is the only thing
+     * standing between a stalled peer and a caller that hangs forever. On an SSE
+     * stream, a TTS download or a generated video, being long is the NORMAL
+     * case, and a ceiling that fires would kill a response the gateway has
+     * already completed, settled and BILLED — the customer pays for bytes they
+     * never receive.
+     *
+     * <p>Today's JDK implementation happens to stop the clock once response
+     * HEADERS arrive, which would make the ceiling harmless on those paths. That
+     * is an implementation detail the javadoc does not promise, and betting a
+     * billed stream on it is how a JDK upgrade starts cutting customer
+     * completions. Streaming and binary are bounded by connect time and by the
+     * caller closing the response, not by a total.
+     */
+    private HttpRequest.Builder buffered(String path) {
+        return request(path).timeout(requestTimeout);
     }
 
     private HttpRequest.BodyPublisher jsonBody(Object body) {

@@ -214,6 +214,126 @@ void main() {
     });
   });
 
+  group('transport deadlines', () {
+    test('the declared defaults are the ones a client gets', () {
+      expect(NRouter.defaultTimeout, const Duration(seconds: 600));
+      expect(NRouter.defaultStreamTimeout, const Duration(seconds: 180));
+
+      final client = NRouter(apiKey: 'sk-nrouter-test');
+      expect(client.timeout, NRouter.defaultTimeout);
+      expect(client.streamTimeout, NRouter.defaultStreamTimeout);
+      client.close();
+    });
+
+    test('a buffered call that never answers fails instead of hanging',
+        () async {
+      // package:http applies NO timeout of its own, so without this bound the
+      // future below never completes and the caller hangs forever.
+      final mock = MockClient((request) async {
+        await Future<void>.delayed(const Duration(seconds: 30));
+        return http.Response('{}', 200);
+      });
+      final client = NRouter(
+        apiKey: 'sk-nrouter-test',
+        httpClient: mock,
+        timeout: const Duration(seconds: 1),
+      );
+
+      await expectLater(
+        client.chatCompletions({'model': 'gpt-5.4-mini'}),
+        throwsA(
+          isA<NRouterTransportError>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('within 1s'), contains('may already have been billed')),
+          ),
+        ),
+      );
+    });
+
+    test('an injected client keeps the caller timeout, not the SDK default',
+        () async {
+      // The injection point survives the change: `httpClient` cannot carry a
+      // deadline (package:http's Client interface has none), so `timeout:` is
+      // the separate knob — and a 1 s bound firing proves the 600 s default is
+      // not silently in force behind the injected client.
+      final stopwatch = Stopwatch()..start();
+      final mock = MockClient((request) async {
+        await Future<void>.delayed(const Duration(seconds: 30));
+        return http.Response('{}', 200);
+      });
+      final client = NRouter(
+        apiKey: 'sk-nrouter-test',
+        httpClient: mock,
+        timeout: const Duration(seconds: 1),
+      );
+      expect(client.timeout, const Duration(seconds: 1));
+
+      await expectLater(
+        client.models(),
+        throwsA(isA<NRouterTransportError>()),
+      );
+      stopwatch.stop();
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 10)));
+    });
+
+    test('a stream body outlives the buffered ceiling', () async {
+      // The property that keeps a paid response intact. `timeout` here is
+      // shorter than the gap before the first token, so a whole-request ceiling
+      // would sever a stream the customer is already being billed for. Only the
+      // wait for RESPONSE HEADERS is bounded, by `streamTimeout`.
+      final mock = MockClient.streaming((request, bodyStream) async {
+        await bodyStream.drain<void>();
+        return http.StreamedResponse(
+          () async* {
+            await Future<void>.delayed(const Duration(milliseconds: 300));
+            yield utf8.encode(
+                'event: content_block_delta\ndata: {"delta":{"type":"text_delta","text":"hello"}}\n\n');
+            yield utf8.encode(
+                'event: message_stop\ndata: {"type":"message_stop"}\n\n');
+          }(),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final client = NRouter(
+        apiKey: 'sk-nrouter-test',
+        httpClient: mock,
+        timeout: const Duration(milliseconds: 10),
+        streamTimeout: const Duration(seconds: 5),
+      );
+
+      final chunks = await client.messagesStream({'model': 'claude'}).toList();
+
+      expect(chunks.single.delta, 'hello');
+    });
+
+    test('a stream whose headers never arrive fails on streamTimeout',
+        () async {
+      final mock = MockClient.streaming((request, bodyStream) async {
+        await bodyStream.drain<void>();
+        await Future<void>.delayed(const Duration(seconds: 30));
+        return http.StreamedResponse(const Stream.empty(), 200);
+      });
+      final client = NRouter(
+        apiKey: 'sk-nrouter-test',
+        httpClient: mock,
+        streamTimeout: const Duration(seconds: 1),
+      );
+
+      await expectLater(
+        client.messagesStream({'model': 'claude'}).drain<void>(),
+        throwsA(
+          isA<NRouterTransportError>().having(
+            (e) => e.message,
+            'message',
+            contains('start streaming within 1s'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('over the wire', () {
     test('messagesStream parses incremental Anthropic deltas', () async {
       late http.BaseRequest seen;

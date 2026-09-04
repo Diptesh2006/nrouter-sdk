@@ -15,6 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -538,5 +539,174 @@ class ContractTest {
         assertEquals("org soft_budget 80.00/100.00", meta.budgetWarning)
         assertEquals("pass", meta.guardrails)
         assertTrue(meta.isPriced)
+    }
+
+    // ---- timeouts -----------------------------------------------------------
+
+    private fun tuned(
+        readTimeoutMillis: Long = NRouter.READ_TIMEOUT_MILLIS,
+        callTimeoutMillis: Long = 0,
+    ) = NRouter.defaultHttpClient().newBuilder()
+        .readTimeout(readTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .callTimeout(callTimeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .build()
+
+    @Test
+    fun `the default transport bounds connect, read and write time`() {
+        // OkHttpClient() ships a 10s READ timeout — far below a normal
+        // completion, and far below an image, video or TTS response. The client
+        // was aborting requests the gateway completes, settles and BILLS.
+        val client = NRouter(apiKey = "sk-nrouter-test")
+
+        assertEquals(15_000, client.httpClient.connectTimeoutMillis)
+        assertEquals(120_000, client.httpClient.readTimeoutMillis)
+        assertEquals(60_000, client.httpClient.writeTimeoutMillis)
+        assertTrue(
+            client.httpClient.readTimeoutMillis >= 60_000,
+            "a read timeout under a minute cuts ordinary completions",
+        )
+
+        // Streaming and binary paths: no whole-call ceiling at all.
+        assertEquals(0, client.httpClient.callTimeoutMillis)
+        // Buffered JSON: a ceiling above the gateway's worst honest case
+        // (3 provider attempts, 20s cumulative backoff, 120s between bytes).
+        assertEquals(600_000, client.bufferedHttpClient.callTimeoutMillis)
+    }
+
+    @Test
+    fun `the SDK adds no retry loop of its own`() = runBlocking {
+        // The gateway reserves credit ONCE per customer request and owns retry
+        // and failover. A client retry of a billed POST is a second call and a
+        // second bill with nothing to deduplicate on.
+        assertFalse(
+            NRouter.defaultHttpClient().retryOnConnectionFailure,
+            "OkHttp would re-send a request that failed after it was written",
+        )
+
+        // A RETRYABLE failure is the interesting case: the SDK must still not
+        // retry it. Retrying is the gateway's job, above one credit reservation.
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(503)
+                .setHeader("content-type", "application/json")
+                .setBody("""{"error":{"code":"service_unavailable","message":"upstream is down"}}"""),
+        )
+        val error = assertFailsWith<NRouterError.Service> { clientFor(server).chatCompletions(JSONObject()) }
+        assertTrue(error.isRetryable)
+        assertEquals(1, server.requestCount, "a 503 was retried; that is a second call and a second bill")
+    }
+
+    @Test
+    fun `a stalled server cuts a buffered call rather than hanging forever`() = runBlocking {
+        val client = NRouter(
+            apiKey = "sk-nrouter-test",
+            baseURL = server.url("/v1").toString(),
+            http = tuned(readTimeoutMillis = 300),
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "application/json")
+                .setBody("{}")
+                .setHeadersDelay(5, java.util.concurrent.TimeUnit.SECONDS),
+        )
+        val started = System.nanoTime()
+        assertFailsWith<NRouterError.Transport> { client.chatCompletions(JSONObject()) }
+        val elapsedMillis = (System.nanoTime() - started) / 1_000_000
+        assertTrue(elapsedMillis < 4_000, "the call was not cut: ${elapsedMillis}ms")
+    }
+
+    @Test
+    fun `the buffered ceiling cuts a call whose body never finishes`() = runBlocking {
+        // The read timeout catches silence between bytes; this catches a peer
+        // that keeps dribbling forever, which is the other way to hang.
+        val client = NRouter(
+            apiKey = "sk-nrouter-test",
+            baseURL = server.url("/v1").toString(),
+            bufferedCallTimeoutMillis = 400,
+        )
+        assertEquals(400, client.bufferedHttpClient.callTimeoutMillis)
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "application/json")
+                .setBody("{}")
+                .setBodyDelay(5, java.util.concurrent.TimeUnit.SECONDS),
+        )
+        val started = System.nanoTime()
+        assertFailsWith<NRouterError.Transport> { client.chatCompletions(JSONObject()) }
+        val elapsedMillis = (System.nanoTime() - started) / 1_000_000
+        // Not merely "it failed": it failed at the CEILING, not five seconds later.
+        assertTrue(elapsedMillis < 4_000, "the ceiling never fired: ${elapsedMillis}ms")
+    }
+
+    @Test
+    fun `a slow stream body is never cut by the buffered ceiling`() = runBlocking {
+        // SSE is long BY DESIGN. A ceiling here kills a completion the gateway
+        // has already settled and billed.
+        val client = NRouter(
+            apiKey = "sk-nrouter-test",
+            baseURL = server.url("/v1").toString(),
+            bufferedCallTimeoutMillis = 400,
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "text/event-stream")
+                .setHeader("x-nr-request-id", "req_slow_stream")
+                .setBody("data: {\"delta\":\"one\"}\n\ndata: {\"delta\":\"two\"}\n\ndata: [DONE]\n\n")
+                .setBodyDelay(1_500, java.util.concurrent.TimeUnit.MILLISECONDS),
+        )
+        val chunks = client.chatCompletionsStream(JSONObject()).toList()
+        assertEquals(listOf("one", "two"), chunks.map { it.delta })
+        assertEquals("req_slow_stream", chunks.first().meta.requestId)
+    }
+
+    @Test
+    fun `a slow binary download is never cut by the buffered ceiling`() = runBlocking {
+        // Generated audio and a rendered video are large and slow by nature,
+        // and the customer has already paid for them.
+        val client = NRouter(
+            apiKey = "sk-nrouter-test",
+            baseURL = server.url("/v1").toString(),
+            bufferedCallTimeoutMillis = 400,
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "audio/mpeg")
+                .setBody("audio-bytes")
+                .setBodyDelay(1_500, java.util.concurrent.TimeUnit.MILLISECONDS),
+        )
+        assertEquals("audio-bytes", String(client.audioSpeech(JSONObject()).bytes))
+    }
+
+    @Test
+    fun `an injected client fully overrides the defaults`() = runBlocking {
+        val injected = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(7, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(9, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(11, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        val client = NRouter(
+            apiKey = "sk-nrouter-test",
+            baseURL = server.url("/v1").toString(),
+            http = injected,
+        )
+
+        assertSame(injected, client.httpClient)
+        assertEquals(3_000, client.httpClient.connectTimeoutMillis)
+        assertEquals(7_000, client.httpClient.readTimeoutMillis)
+        assertEquals(9_000, client.httpClient.writeTimeoutMillis)
+        // The caller stated a ceiling; the SDK does not widen or narrow it, and
+        // does not layer its own on top.
+        assertSame(injected, client.bufferedHttpClient)
+        assertEquals(11_000, client.bufferedHttpClient.callTimeoutMillis)
+
+        // And it is the transport actually used, not merely stored.
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "application/json").setBody("{}"))
+        client.chatCompletions(JSONObject())
+        assertEquals("/v1/chat/completions", server.takeRequest().path)
     }
 }

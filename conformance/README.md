@@ -123,3 +123,54 @@ constant, would pass. Both shapes are deliberately narrow so that the
 `"model": "claude-sonnet-4-5"` map literal every SDK carries in its package doc
 comment does not trip it; widening them until doc comments matched would produce
 a gate nobody could keep green, which is the same as no gate.
+
+## The client-behaviour half — `conformance/client_timeouts.py`
+
+Two properties the spec cannot express, because neither is on the wire: how long
+an SDK WAITS, and whether it RE-SENDS.
+
+Every transport already has an opinion about waiting, and usually the wrong one.
+`URLSession.shared` waited 60 s — below what the gateway may honestly take, so it
+aborted requests the gateway went on to finish and BILL — and seven days for the
+resource, which is not a bound. `package:http` applies no timeout at all, and
+`httr` passes none to libcurl, whose own default means "wait forever": one silent
+gateway then hangs the calling process, and in a Flutter app that is a spinner
+nobody can cancel. The gateway's worst HONEST case before a first byte is roughly
+410 s (three provider attempts, each 10 s to connect and 120 s between bytes,
+plus up to 20 s of backoff), so every bound sits above that and below infinity —
+and a streaming or binary response is bounded by when the bytes STOP, never by a
+whole-request ceiling, because severing one of those truncates a response the
+customer already paid for.
+
+Re-sending is the money half. A retry is a second call and a SECOND BILL: the
+gateway reserves credit once per customer request and owns retry and failover, so
+a client retrying on top of it pays twice for one answer with nothing to dedupe
+against (gateway gate 8). The two SDKs built on a vendor client inherit automatic
+retries unless they say otherwise, which is why Python pins `DEFAULT_MAX_RETRIES
+= 0` and JS forces `maxRetries: 0` on every non-GET. Those pins are a required
+property here, not an observation somebody once made.
+
+```bash
+python3 conformance/client_timeouts.py             # check
+python3 conformance/client_timeouts.py --self-test # prove the gate bites
+```
+
+It runs as part of `check_conformance.py`, and each property has two halves. An
+SDK registered as declaring its own deadline must carry the construct AND a site
+that applies it; an SDK registered as inheriting a transport's default must still
+declare none, so one added tomorrow is promoted into the checked registry rather
+than going unlooked-at. Same shape for retries: the two pinned SDKs must keep
+their pin, the eight retry-free ones must contain no retry construct at all. An
+inherited bound of `None` — a transport that imposes none — is a failure, not a
+note: inheriting decides WHICH bound applies, never that there is none.
+
+**What it will not catch.** Most entries assert the construct's PRESENCE, not its
+value, and that is deliberate: Go's 600 s is time-to-headers, Rust's is
+between-bytes, Swift's is a whole-request ceiling, Kotlin's `120_000` an OkHttp
+socket read in millis. Pinning them to one literal would compare unlike things
+and would move numbers that belong in each SDK's own suite — with their semantics
+attached — into this file. Only Swift, Dart and R pin values here, and each is
+also asserted by that SDK's own tests, so the two cannot drift apart quietly.
+The retry scan is likewise narrow on purpose: `isRetryable`, `retry_after` and a
+pin of zero are the OPPOSITE of retrying, every SDK ships them, and a scan wide
+enough to flag them would be a gate nobody could keep green.

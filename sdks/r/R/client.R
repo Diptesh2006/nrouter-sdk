@@ -15,6 +15,98 @@ nrouter_env_key <- function() "NROUTER_API_KEY"
 #' @export
 nrouter_key_prefix <- function() "sk-nrouter-"
 
+# --- transport deadlines -----------------------------------------------------
+#
+# \pkg{httr} passes no timeout to libcurl unless one is given, and libcurl's own
+# CURLOPT_TIMEOUT defaults to ZERO, which means "wait forever". A gateway that
+# accepts the connection and then goes silent hung the calling R session with no
+# way out but interrupting it. Every number below is an explicit decision --
+# name it, or you have chosen infinity -- sized against the gateway's own budget
+# rather than picked for feel.
+#
+# The gateway's worst HONEST case before a first byte is roughly 410 s: up to
+# three provider attempts, each with a 10 s connect timeout and a 120 s
+# between-bytes read timeout, plus at most 20 s of cumulative backoff. A client
+# deadline below that aborts a request the gateway is about to answer -- and the
+# customer is billed anyway, because the provider tokens were already spent.
+#
+# None of these ever RETRIES. Waiting is bounded here; re-sending is not done at
+# all. The gateway reserves credit ONCE per customer request and owns retry and
+# failover, so a client retry of a billed POST is a second call and a second
+# bill with nothing to dedupe on.
+
+#' Whole-request ceiling for buffered calls, in seconds
+#'
+#' Applied to \code{nrouter_request()} and \code{nrouter_multipart()} as
+#' \code{httr::timeout()}. 600 s is above the gateway's ~410 s worst honest case
+#' with margin, and the same order as the OpenAI and Anthropic clients' own
+#' 600 s defaults.
+#' @return The default request timeout in seconds.
+#' @export
+nrouter_default_timeout_seconds <- function() 600
+
+#' Connect-phase ceiling, in seconds
+#'
+#' Bounds DNS resolution plus the TCP handshake and nothing after it, so a
+#' black-holed gateway address is reported rather than waited on. Matches the
+#' gateway's own 10 s provider connect timeout.
+#' @return The default connect timeout in seconds.
+#' @export
+nrouter_default_connect_timeout_seconds <- function() 10
+
+#' Stall ceiling for streaming and binary transfers, in seconds
+#'
+#' \code{nrouter_stream()} and \code{nrouter_bytes()} deliberately set NO
+#' whole-request timeout: a whole-request ceiling severs an SSE stream
+#' mid-generation and truncates a long \code{/v1/videos/\{id\}/content}
+#' download, both of them already billed. They bound the transfer with libcurl's
+#' low-speed limit instead, so a transfer that STOPS producing bytes for this
+#' long is abandoned while a working one runs as long as it needs. 180 s sits
+#' above the gateway's own 120 s between-bytes read timeout, so the gateway's
+#' honest error reaches the caller instead of a client-side abort racing it.
+#' @return The default stall timeout in seconds.
+#' @export
+nrouter_default_stream_idle_seconds <- function() 180
+
+# One place the deadlines turn into httr/curl options, so no request path can
+# quietly acquire a different bound. `%||%`-style fallbacks are deliberate: a
+# client list built before these fields existed must still get the defaults
+# rather than silently reverting to libcurl's "wait forever".
+nrouter_timeout_seconds <- function(client) {
+  value <- client$timeout_seconds
+  if (is.null(value)) nrouter_default_timeout_seconds() else value
+}
+
+nrouter_connect_timeout_seconds <- function(client) {
+  value <- client$connect_timeout_seconds
+  if (is.null(value)) nrouter_default_connect_timeout_seconds() else value
+}
+
+nrouter_stream_idle_seconds <- function(client) {
+  value <- client$stream_idle_seconds
+  if (is.null(value)) nrouter_default_stream_idle_seconds() else value
+}
+
+# Buffered calls: a hard whole-request ceiling plus a connect ceiling.
+nrouter_request_config <- function(client) {
+  c(
+    httr::timeout(nrouter_timeout_seconds(client)),
+    httr::config(connecttimeout = nrouter_connect_timeout_seconds(client))
+  )
+}
+
+# Streaming and binary transfers: a connect ceiling and a STALL ceiling, and
+# deliberately no `timeout`. `low_speed_limit = 1` with `low_speed_time = n`
+# aborts a transfer averaging under one byte per second for n seconds, which
+# bounds the failure that matters without capping a legitimately long transfer.
+nrouter_transfer_config <- function(client) {
+  httr::config(
+    connecttimeout = nrouter_connect_timeout_seconds(client),
+    low_speed_limit = 1,
+    low_speed_time = nrouter_stream_idle_seconds(client)
+  )
+}
+
 #' Resolve and validate an nRouter API key
 #'
 #' Explicit argument first, then \code{NROUTER_API_KEY}. Validation happens
@@ -52,6 +144,13 @@ nrouter_resolve_api_key <- function(api_key = NULL) {
 #'
 #' @param api_key nRouter API key. Defaults to \code{NROUTER_API_KEY}.
 #' @param base_url Gateway base URL.
+#' @param timeout_seconds Whole-request ceiling for buffered calls. See
+#'   \code{\link{nrouter_default_timeout_seconds}}.
+#' @param connect_timeout_seconds Connect-phase ceiling. See
+#'   \code{\link{nrouter_default_connect_timeout_seconds}}.
+#' @param stream_idle_seconds Stall ceiling for streaming and binary transfers,
+#'   which carry no whole-request ceiling. See
+#'   \code{\link{nrouter_default_stream_idle_seconds}}.
 #' @return An object of class \code{nrouter_client}.
 #' @examples
 #' \dontrun{
@@ -64,12 +163,20 @@ nrouter_resolve_api_key <- function(api_key = NULL) {
 #' print(result$meta)
 #' }
 #' @export
-nrouter_client <- function(api_key = NULL, base_url = nrouter_default_base_url()) {
+nrouter_client <- function(api_key = NULL, base_url = nrouter_default_base_url(),
+                           timeout_seconds = nrouter_default_timeout_seconds(),
+                           connect_timeout_seconds =
+                             nrouter_default_connect_timeout_seconds(),
+                           stream_idle_seconds =
+                             nrouter_default_stream_idle_seconds()) {
   structure(
     class = "nrouter_client",
     list(
-      api_key  = nrouter_resolve_api_key(api_key),
-      base_url = sub("/+$", "", base_url)
+      api_key                 = nrouter_resolve_api_key(api_key),
+      base_url                = sub("/+$", "", base_url),
+      timeout_seconds         = timeout_seconds,
+      connect_timeout_seconds = connect_timeout_seconds,
+      stream_idle_seconds     = stream_idle_seconds
     )
   )
 }
@@ -141,12 +248,14 @@ nrouter_request <- function(client, path, body = NULL,
   url <- paste0(client$base_url, "/", sub("^/+", "", path))
   auth <- httr::add_headers(Authorization = paste("Bearer", client$api_key))
 
+  deadlines <- nrouter_request_config(client)
+
   response <- tryCatch(
     if (identical(method, "GET")) {
-      httr::GET(url, auth)
+      httr::GET(url, auth, deadlines)
     } else {
       httr::POST(
-        url, auth, httr::content_type_json(),
+        url, auth, httr::content_type_json(), deadlines,
         body = jsonlite::toJSON(body, auto_unbox = TRUE, null = "null")
       )
     },
@@ -209,11 +318,15 @@ nrouter_bytes <- function(client, path, body = NULL) {
   url <- paste0(client$base_url, "/", sub("^/+", "", path))
   auth <- httr::add_headers(Authorization = paste("Bearer", client$api_key))
 
+  # A STALL ceiling, not a whole-request one: generated audio and video are
+  # large, and a whole-request timeout truncates a download already billed.
+  deadlines <- nrouter_transfer_config(client)
+
   response <- tryCatch(
     if (is.null(body)) {
-      httr::GET(url, auth)
+      httr::GET(url, auth, deadlines)
     } else {
-      httr::POST(url, auth, httr::content_type_json(),
+      httr::POST(url, auth, httr::content_type_json(), deadlines,
                  body = jsonlite::toJSON(body, auto_unbox = TRUE, null = "null"))
     },
     error = function(e) stop(nrouter_transport_condition(conditionMessage(e)))
@@ -330,7 +443,8 @@ nrouter_multipart <- function(client, path, file_path, fields = list()) {
   body <- c(fields, list(file = httr::upload_file(file_path)))
 
   response <- tryCatch(
-    httr::POST(url, auth, body = body, encode = "multipart"),
+    httr::POST(url, auth, nrouter_request_config(client),
+               body = body, encode = "multipart"),
     error = function(e) stop(nrouter_transport_condition(conditionMessage(e)))
   )
 
@@ -595,9 +709,17 @@ nrouter_stream <- function(client, path, body, on_chunk) {
     Accept = "text/event-stream",
     "Content-Type" = "application/json"
   )
+  # Same deadlines as the httr paths, set on the raw handle because this one
+  # bypasses httr. No `timeout`: an SSE stream that is producing tokens is a
+  # WORKING stream however long it runs, and cutting it off discards tokens the
+  # caller has already paid for. `low_speed_limit`/`low_speed_time` bound the
+  # failure that matters -- a stream that has stopped producing bytes.
   curl::handle_setopt(
     handle,
     customrequest = "POST",
+    connecttimeout = nrouter_connect_timeout_seconds(client),
+    low_speed_limit = 1,
+    low_speed_time = nrouter_stream_idle_seconds(client),
     postfields = charToRaw(jsonlite::toJSON(
       payload, auto_unbox = TRUE, null = "null"
     ))

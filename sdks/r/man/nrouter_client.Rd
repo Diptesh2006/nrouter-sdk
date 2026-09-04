@@ -4,12 +4,28 @@
 \alias{nrouter_client}
 \title{Create an nRouter client}
 \usage{
-nrouter_client(api_key = NULL, base_url = nrouter_default_base_url())
+nrouter_client(
+  api_key = NULL,
+  base_url = nrouter_default_base_url(),
+  timeout_seconds = nrouter_default_timeout_seconds(),
+  connect_timeout_seconds = nrouter_default_connect_timeout_seconds(),
+  stream_idle_seconds = nrouter_default_stream_idle_seconds()
+)
 }
 \arguments{
 \item{api_key}{nRouter API key. Defaults to \code{NROUTER_API_KEY}.}
 
 \item{base_url}{Gateway base URL.}
+
+\item{timeout_seconds}{Whole-request ceiling for buffered calls. See
+\code{\link{nrouter_default_timeout_seconds}}.}
+
+\item{connect_timeout_seconds}{Connect-phase ceiling. See
+\code{\link{nrouter_default_connect_timeout_seconds}}.}
+
+\item{stream_idle_seconds}{Stall ceiling for streaming and binary transfers,
+which carry no whole-request ceiling. See
+\code{\link{nrouter_default_stream_idle_seconds}}.}
 }
 \value{
 An object of class \code{nrouter_client}.

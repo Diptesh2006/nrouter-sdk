@@ -2,6 +2,9 @@ package ai.nrouter.sdk;
 
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.core.Timeout;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -49,8 +52,33 @@ public final class NRouter {
         return OpenAIOkHttpClient.builder()
                 .apiKey(resolved)
                 .baseUrl(baseUrl != null ? baseUrl : DEFAULT_BASE_URL)
+                // Same numbers as the native client, from the same constants —
+                // two clients against one gateway must not disagree about how
+                // long an inference is allowed to take.
+                .timeout(OPENAI_TIMEOUT)
+                // NOT the library default of 2. The gateway reserves credit once
+                // per customer request and owns retry and failover; a client-side
+                // retry of a billed POST is a second call and a second bill, with
+                // no idempotency key to deduplicate on.
+                .maxRetries(0)
                 .build();
     }
+
+    /**
+     * The timeout profile both Java surfaces use.
+     *
+     * <p>{@code request} is a whole-exchange ceiling and {@code read} is the gap
+     * between bytes; the OkHttp-backed client can express both, so it does. The
+     * native {@link NRouterHttpClient} can only express the connect and
+     * whole-exchange halves and drops the streaming/binary paths out of the
+     * ceiling instead.
+     */
+    private static final Timeout OPENAI_TIMEOUT = Timeout.builder()
+            .connect(NRouterHttpClient.DEFAULT_CONNECT_TIMEOUT)
+            .read(NRouterHttpClient.DEFAULT_READ_TIMEOUT)
+            .write(NRouterHttpClient.DEFAULT_WRITE_TIMEOUT)
+            .request(NRouterHttpClient.DEFAULT_REQUEST_TIMEOUT)
+            .build();
 
     /** Native Java 11 surface with raw nRouter metadata and typed errors. */
     public static NRouterHttpClient httpClient(String apiKey) {
@@ -62,6 +90,29 @@ public final class NRouter {
         return new NRouterHttpClient(
                 resolveApiKey(apiKey),
                 baseUrl != null ? baseUrl : DEFAULT_BASE_URL);
+    }
+
+    /**
+     * Native Java 11 surface over a transport you built — proxy, connection
+     * pool, executor, TLS. The SDK's own defaults are what you are replacing;
+     * nothing here is layered back on top of yours.
+     */
+    public static NRouterHttpClient httpClient(String apiKey, String baseUrl, HttpClient http) {
+        return httpClient(apiKey, baseUrl, http, NRouterHttpClient.DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    /**
+     * Native Java 11 surface over your transport and your whole-exchange
+     * ceiling. The ceiling still applies only to buffered requests: SSE and
+     * binary downloads are never bounded by a total.
+     */
+    public static NRouterHttpClient httpClient(
+            String apiKey, String baseUrl, HttpClient http, Duration requestTimeout) {
+        return new NRouterHttpClient(
+                resolveApiKey(apiKey),
+                baseUrl != null ? baseUrl : DEFAULT_BASE_URL,
+                http,
+                requestTimeout);
     }
 
     public static Map<String, Object> buildExtraBody(

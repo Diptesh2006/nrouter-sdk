@@ -30,9 +30,80 @@ public struct NRouter: Sendable {
     /// Every customer key carries this prefix.
     public static let keyPrefix = "sk-nrouter-"
 
+    // MARK: - Transport deadlines
+    //
+    // This client used to be built on `URLSession.shared`, which carries
+    // Foundation's defaults: a 60 s request timeout and a SEVEN DAY resource
+    // timeout. Sixty seconds is BELOW what the gateway may honestly take, so a
+    // long completion or an image job was aborted here for a request the
+    // gateway went on to finish and BILL; seven days is not a bound at all.
+    // Every number below is an explicit decision — name it, or you have chosen
+    // infinity — sized against the gateway's own budget rather than picked for
+    // feel.
+    //
+    // The gateway's worst HONEST case before a first byte is roughly 410 s: up
+    // to three provider attempts, each with a 10 s connect timeout and a 120 s
+    // between-bytes read timeout, plus at most 20 s of cumulative backoff. A
+    // client deadline below that aborts a request the gateway is about to
+    // answer — and the customer is billed anyway, because the provider tokens
+    // were already spent.
+    //
+    // None of these ever RETRIES. Waiting is bounded here; re-sending is not
+    // done at all. The gateway reserves credit ONCE per customer request and
+    // owns retry and failover, so a client retry of a billed POST is a second
+    // call and a second bill with nothing to dedupe on.
+
+    /// Longest gap BETWEEN BYTES before a task is abandoned — 180 s.
+    ///
+    /// `URLSessionConfiguration.timeoutIntervalForRequest` is a between-bytes
+    /// timeout, not a whole-request one, which is why it is safe on a stream.
+    /// 180 s sits above the gateway's own 120 s between-bytes read timeout, so
+    /// the gateway's honest error reaches the caller instead of a client-side
+    /// abort racing it.
+    public static let defaultRequestTimeout: TimeInterval = 180
+
+    /// Whole-request ceiling for BUFFERED calls (JSON and multipart) — 600 s.
+    ///
+    /// Above the gateway's ~410 s worst honest case with margin, and the same
+    /// order as the OpenAI and Anthropic clients' own 600 s defaults, so a
+    /// caller migrating from either is not surprised.
+    public static let defaultResourceTimeout: TimeInterval = 600
+
+    /// Whole-request ceiling for STREAMING and BINARY calls — 24 hours.
+    ///
+    /// A leak-stopper, NOT a request bound. `timeoutIntervalForResource` covers
+    /// the response body, so applying the 600 s ceiling here would sever an SSE
+    /// stream mid-generation and truncate a long `GET /videos/{id}/content` —
+    /// both of them already billed. The bound that actually protects these
+    /// calls is ``defaultRequestTimeout``, which fires when the bytes STOP.
+    public static let defaultStreamingResourceTimeout: TimeInterval = 86_400
+
+    /// The session buffered JSON and multipart calls use when none is injected.
+    public static func makeDefaultSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = defaultRequestTimeout
+        configuration.timeoutIntervalForResource = defaultResourceTimeout
+        return URLSession(configuration: configuration)
+    }
+
+    /// The session SSE streaming and binary downloads use when none is injected.
+    public static func makeDefaultStreamingSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = defaultRequestTimeout
+        configuration.timeoutIntervalForResource = defaultStreamingResourceTimeout
+        return URLSession(configuration: configuration)
+    }
+
+    // Built once and shared by every client, so the connection POOL is shared
+    // too — the one property `URLSession.shared` had that a per-instance
+    // session would quietly lose inside a timeout fix.
+    private static let sharedSession = makeDefaultSession()
+    private static let sharedStreamingSession = makeDefaultStreamingSession()
+
     public let baseURL: String
     private let apiKey: String
     private let session: URLSession
+    private let streamingSession: URLSession
 
     /// A body paired with the metadata the gateway reported for it.
     ///
@@ -90,15 +161,21 @@ public struct NRouter: Sendable {
     /// - Parameters:
     ///   - apiKey: Explicit key. Falls back to `NROUTER_API_KEY`.
     ///   - baseURL: Gateway base URL. Defaults to production.
-    ///   - session: Inject your own to control proxy, timeout, or caching.
+    ///   - session: Inject your own to control proxy, timeout, or caching. It
+    ///     replaces BOTH default sessions unless `streamingSession` is also
+    ///     given, so one injected session bounds every call the same way.
+    ///   - streamingSession: Inject one separately to give SSE and binary
+    ///     downloads different deadlines from buffered calls.
     public init(
         apiKey: String? = nil,
         baseURL: String = NRouter.defaultBaseURL,
-        session: URLSession = .shared
+        session: URLSession? = nil,
+        streamingSession: URLSession? = nil
     ) throws {
         self.apiKey = try NRouter.resolveAPIKey(apiKey)
         self.baseURL = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
-        self.session = session
+        self.session = session ?? NRouter.sharedSession
+        self.streamingSession = streamingSession ?? session ?? NRouter.sharedStreamingSession
     }
 
     /// Resolve and validate a key: explicit argument first, then environment.
@@ -322,11 +399,12 @@ public struct NRouter: Sendable {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: streamed)
+        NRouter.applyDeadline(&request, from: streamingSession)
 
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
-            (bytes, response) = try await session.bytes(for: request)
+            (bytes, response) = try await streamingSession.bytes(for: request)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -432,6 +510,10 @@ public struct NRouter: Sendable {
     /// video, and `stream: true` returns SSE. The JSON helpers refuse those
     /// rather than handing back an empty body for a request you were billed
     /// for; this is the method that returns them.
+    ///
+    /// Runs on the STREAMING session: a download of generated video may
+    /// legitimately outlast ``defaultResourceTimeout``, and cutting it off
+    /// truncates a response that has already been billed.
     public func bytes(_ path: String, _ body: [String: Any]? = nil) async throws -> (
         data: Data, meta: NRouterResponseMeta, statusCode: Int
     ) {
@@ -442,11 +524,12 @@ public struct NRouter: Sendable {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        NRouter.applyDeadline(&request, from: streamingSession)
 
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await streamingSession.data(for: request)
         } catch {
             throw NRouterError.transport(error.localizedDescription)
         }
@@ -465,6 +548,19 @@ public struct NRouter: Sendable {
     }
 
     // MARK: - Internals
+
+    /// Copy a session's between-bytes bound onto the request about to use it.
+    ///
+    /// `URLRequest(url:)` starts at Foundation's 60 s `timeoutInterval`, and a
+    /// request-level timeout takes precedence over the session
+    /// configuration's `timeoutIntervalForRequest`. Leaving it alone therefore
+    /// keeps the very 60 s default this SDK moved off — the session's number
+    /// would be set and silently unused, which is a control that reads as
+    /// present and is not. Copying it also means an INJECTED session's bound
+    /// is the one that applies, with no second number to keep in step.
+    private static func applyDeadline(_ request: inout URLRequest, from session: URLSession) {
+        request.timeoutInterval = session.configuration.timeoutIntervalForRequest
+    }
 
     private func url(_ path: String) throws -> URL {
         let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
@@ -494,6 +590,7 @@ public struct NRouter: Sendable {
     private func send(_ request: URLRequest) async throws -> Response {
         var request = request
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        NRouter.applyDeadline(&request, from: session)
 
         let data: Data
         let response: URLResponse

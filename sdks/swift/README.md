@@ -93,10 +93,15 @@ print("request \(meta.requestID ?? "-") | model \(meta.model ?? "-")")
 print(meta.isPriced ? "cost $\(meta.cost!)" : "cost unpriced")
 ```
 
-`NRouterResponseMeta` carries every `x-nr-*` header: `requestID`,
-`cost`, `costStatus`, `model`, `inputTokens`, `outputTokens`, `totalTokens`,
-`cacheReadTokens`, `cacheWriteTokens`, `limitSource`, `budgetWarning`, `guardrails`, `authReason`,
-`responseCache`, `responseCacheAge`.
+`NRouterResponseMeta` carries every `x-nr-*` header the gateway emits, named
+in lowerCamelCase — `x-nr-request-cost` becomes `cost` and
+`x-nr-cache-read-tokens` becomes `cacheReadTokens` (`x-nr-request-id` is
+`requestID`). The authoritative set is
+[`spec/gateway-response-headers.json`](../../spec/gateway-response-headers.json),
+derived from the gateway and held against this SDK by `conformance/check_conformance.py`. This page does not
+restate it: a copied list of a set that grows is a list that goes stale, and
+under the word "every" it becomes a false claim of exhaustiveness rather than a
+stale number.
 
 `meta` is `Sendable`, so cost and token counts cross actor boundaries freely.
 `Response.body` is `[String: Any]` and deliberately is **not** `Sendable` —

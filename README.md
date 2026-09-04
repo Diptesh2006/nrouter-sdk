@@ -325,9 +325,19 @@ across npm, PyPI, Maven/Gradle, Cargo and Dart dependency graphs. Install
 It also runs `scripts/sast.sh`, which is a **different** check and not a
 substitute for either direction: `security-audit.sh` looks for known
 vulnerabilities in third-party dependencies, `sast.sh` runs static analysis over
-the code in this repository. It uses semgrep's `p/default` ruleset — install
-`semgrep`, or the lane is reported `SKIPPED` and named, never passed. Prove it
-bites before trusting a green run:
+the code in this repository. It uses semgrep's `p/default` ruleset:
+
+```bash
+brew install semgrep                   # macOS
+python3 -m pip install --user semgrep  # any platform
+```
+
+Without it the lane is reported `SKIPPED` and named, never passed, and
+`scripts/sast.sh` run directly exits `78` with that install command rather than
+a bare `command not found`. The three exit states are deliberately distinct —
+`0` scanned and clean, `1` scanned and found something, `78` never ran — because
+semgrep itself uses `0`/`1`, so absence must be neither or "not installed" reads
+as "clean". Prove it bites before trusting a green run:
 
 ```bash
 scripts/sast.sh --self-test
@@ -336,6 +346,16 @@ scripts/sast.sh --self-test
 That plants a git-tracked file containing a command injection and fails unless
 the scan reports it. Tracked is deliberate: semgrep scans git-tracked files
 only, so an untracked probe is skipped and the scan still exits 0.
+
+**This is a mirror, not parity.** It stands in for the GitHub CodeQL default
+setup, which is dormant while Actions is unavailable. Measured over this tree,
+`p/default` is comparable to CodeQL on **Python, TypeScript, JavaScript, Java
+and Go**; it is **thin on Kotlin (18 rules) and Swift (2 rules)**, which nothing
+local now replaces; **Rust** is thin in semgrep but genuinely covered by
+`cargo clippy -D warnings` in the Rust lane. **Dart and R are scanned by
+nothing** — CodeQL never covered them either, so that hole is pre-existing.
+CodeQL's `actions` workflow analysis is **not** mirrored. `scripts/sast.sh`
+carries the per-language rule counts and how to re-derive them.
 
 Each language is an independent lane, so one absent toolchain no longer blocks
 the rest. A lane whose prerequisites are missing is reported `SKIPPED`, named,
@@ -466,8 +486,13 @@ Every language under `examples/` holds standalone, runnable starter scripts and 
 
 ## Response Headers
 
-The gateway emits only the following public `x-nr-*` response headers. Most are
-conditional; `x-nr-request-id` is the only header present on every response.
+The gateway's public `x-nr-*` response headers, and what each one means. Most
+are conditional; `x-nr-request-id` is the one present on every response. The
+authoritative set is
+[`spec/gateway-response-headers.json`](spec/gateway-response-headers.json),
+derived from the gateway and held against all ten SDKs by
+`conformance/check_conformance.py` — this table describes the headers, and is
+not itself the register of which ones exist.
 
 | Header | Type | Description |
 |--------|------|-------------|
@@ -482,6 +507,10 @@ conditional; `x-nr-request-id` is the only header present on every response.
 | `x-nr-cache-write-tokens` | integer | Cache-write tokens; emitted only when nonzero |
 | `x-nr-limit-source` | string | `key`, `plan`, `team`, `user`, or `budget` on 429 responses |
 | `x-nr-budget-warning` | string | A soft budget you configured was crossed by this request, which still served; `<scope> soft_budget <spend>/<ceiling>`, e.g. `org soft_budget 80.00/100.00` |
+| `x-nr-guardrails` | string | Pre-call guardrail posture; absent means the response makes no guardrail claim, never `none`, which is an explicit token |
+| `x-nr-auth-reason` | string | On a 401, the gateway's stable reason for refusing the key |
+| `x-nr-response-cache` | string | `hit` or `miss`; absent when the response cache did not participate |
+| `x-nr-response-cache-age` | integer | Age of a cache `hit` in seconds |
 
 Python SDK captures these automatically in `client.last_response`. Other languages read them from HTTP response headers.
 

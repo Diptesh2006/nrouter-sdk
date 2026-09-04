@@ -76,7 +76,7 @@ An in-band output-guardrail event terminates collection with
 
 ## What a call cost
 
-Every response carries the gateway's `x-nr-*` metadata:
+The gateway's `x-nr-*` metadata comes back with every response:
 
 ```kotlin
 val meta = result.meta
@@ -99,8 +99,15 @@ if (meta.isPriced) println("cost $${meta.cost}") else println("cost unpriced")
 | `cacheReadTokens` / `cacheWriteTokens` | `x-nr-cache-*-tokens` | Provider cache tokens |
 | `limitSource` | `x-nr-limit-source` | On a 429, which ceiling refused |
 | `budgetWarning` | `x-nr-budget-warning` | A soft budget you configured was crossed; the request still served (`<scope> soft_budget <spend>/<ceiling>`) |
+| `guardrails` | `x-nr-guardrails` | Pre-call guardrail posture; **null** means the response makes no guardrail claim — never "none", which is an explicit token |
 | `authReason` | `x-nr-auth-reason` | On a 401, the gateway's stable reason |
 | `responseCache` / `responseCacheAge` | `x-nr-response-cache*` | `hit`/`miss` and age in seconds |
+
+The table documents the properties this SDK exposes and what each one means;
+the authoritative header set is
+[`spec/gateway-response-headers.json`](../../spec/gateway-response-headers.json),
+held against this SDK by
+`conformance/check_conformance.py`.
 
 ## Errors
 

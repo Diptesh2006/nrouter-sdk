@@ -98,11 +98,15 @@ if (nrouter_is_priced(result$meta)) {
 }
 ```
 
-`nrouter_meta` carries every `x-nr-*` header: `request_id`, `cost`,
-`cost_status`, `model`, `input_tokens`, `output_tokens`, `total_tokens`,
-`cache_read_tokens`, `cache_write_tokens`, `limit_source`, `budget_warning`, `guardrails`, `auth_reason`,
-`response_cache`, `response_cache_age`. Each is `NULL` when the gateway did not
-send it.
+`nrouter_meta` carries every `x-nr-*` header the gateway emits, named in
+snake_case — `x-nr-request-cost` becomes `cost` and
+`x-nr-cache-read-tokens` becomes `cache_read_tokens`. Any element is `NULL`
+when the gateway did not send that header. The authoritative set is
+[`spec/gateway-response-headers.json`](../../spec/gateway-response-headers.json),
+derived from the gateway and held against this SDK by
+`conformance/check_conformance.py`. This page does not restate it: a copied
+list of a set that grows is a list that goes stale, and under the word "every"
+it becomes a false claim of exhaustiveness rather than a stale number.
 
 ## Errors are classed conditions
 

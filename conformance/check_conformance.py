@@ -51,6 +51,7 @@ from doc_wires import self_test as doc_wires_self_test  # noqa: E402
 # user makes.
 from source_defaults import check_source_defaults  # noqa: E402
 from doc_header_count import check_doc_header_count  # noqa: E402
+from doc_header_count import check_doc_header_enumeration  # noqa: E402
 from doc_header_count import self_test as doc_header_count_self_test  # noqa: E402
 from source_defaults import self_test as source_defaults_self_test  # noqa: E402
 
@@ -1210,6 +1211,12 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
     failures.extend(check_source_defaults(root))
     # SDKDOC-001 — a DERIVED count restated as prose rots on the next header.
     failures.extend(check_doc_header_count(root))
+    # SDKENUM-001 — and the harder shape the count gate could not see: a
+    # completeness PROMISE ("every `x-nr-*` header") standing over an
+    # enumeration. `5f05390` created exactly that in five READMEs by obeying the
+    # count gate and leaving the fourteen-item lists in place, which is a
+    # STRONGER false claim than the count it replaced.
+    failures.extend(check_doc_header_enumeration(root))
     return failures
 
 
@@ -1240,8 +1247,10 @@ def self_test() -> int:
     if source_defaults_self_test():
         problems.append("source_defaults self-test failed; see its own output above")
 
-    # And the header-count half. Importing only `check_doc_header_count` and
-    # not its `self_test` would leave the new gate's ELEVEN fixture cases
+    # And the header-set half, which is now TWO checks — the hard-coded count
+    # and the enumerated completeness promise — sharing one `self_test`.
+    # Importing only the check functions and not their `self_test` would leave
+    # the fixture cases
     # unreachable from `check_conformance.py --self-test`, so a broken regex
     # would go green here while catching nothing — the exact shape the
     # workspace calls "a gate that prints green while checking nothing".

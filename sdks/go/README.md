@@ -75,8 +75,13 @@ response, and the gateway's nine error codes arrive as typed values.
 
 ## Response metadata
 
-`Response.Meta` carries every `x-nr-*` header. Every numeric field is a
-pointer, deliberately:
+`Response.Meta` exposes the gateway's `x-nr-*` headers as typed fields. The
+authoritative header set is
+[`spec/gateway-response-headers.json`](../../spec/gateway-response-headers.json),
+derived from the gateway and held against this SDK by
+`conformance/check_conformance.py`; the table below documents what a nil MEANS
+per field, which is the part the spec cannot carry. Every numeric
+field is a pointer, deliberately:
 
 | Field | Header | Nil means |
 |---|---|---|

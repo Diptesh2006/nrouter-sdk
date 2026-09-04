@@ -142,6 +142,179 @@ def check_doc_header_count(root: Path = ROOT) -> list[str]:
     return failures
 
 
+# ---------------------------------------------------------------------------
+# SDKENUM-001 — the SAME staleness, one level harder: a COMPLETENESS PROMISE
+# followed by an ENUMERATION.
+# ---------------------------------------------------------------------------
+#
+# The count gate above refuses "all fourteen `x-nr-*` headers". `5f05390`
+# obeyed it by writing "every `x-nr-*` header:" — and left the fourteen-item
+# list standing underneath. That is STRICTLY WORSE than the count it replaced:
+# "fourteen" was wrong but self-consistent, while "every" over a list of
+# fourteen is an exhaustiveness claim a customer will act on, on the only
+# PUBLIC repo in the workspace. `94d608c` repaired those five documents by
+# hand; nothing stopped the sixth, and there WAS a sixth — `sdks/kotlin`'s
+# table omitted `x-nr-guardrails` while `ResponseMeta.kt:44` exposed it.
+#
+# THIS GATE NEVER COMPARES HEADER NAMES, and that is the whole design.
+# A first implementation did, and mis-fired two ways:
+#
+#   1. the Go README separates its promise from its table by a blank line and
+#      an intervening sentence, so a same-paragraph window saw an empty list
+#      and reported every header missing;
+#   2. every SDK spells the fields its own way — `x-nr-request-cost` is `cost`
+#      in dart/rust/r/swift and `Cost` in go — so a suffix match reported
+#      headers missing from lists that DID contain them.
+#
+# Both are legitimate text. A gate that fires on correct text trains people to
+# ignore it, which is the failure this repo already carries a card for. So the
+# gate refuses the SHAPE instead: a completeness promise about the `x-nr-*` set
+# with an enumeration under it. The shape is decidable from the document alone,
+# so neither spelling nor layout can make it wrong.
+#
+# Either half may go, and the choice is editorial:
+#
+#   * a list that only restates field names carries nothing the naming rule and
+#     `spec/gateway-response-headers.json` do not -> DROP THE LIST, keep the
+#     promise. The promise is not a snapshot: `check_conformance.py` holds every
+#     SDK to the derived header set, so "every" is machine-checked;
+#   * a table that carries per-header SEMANTICS (what nil means, which status
+#     narrows an error) is real documentation -> KEEP THE TABLE, drop the
+#     completeness claim and cite the spec as authoritative. It then documents
+#     what it documents and cannot rot into a lie when header sixteen ships.
+
+# A quantifier that GOVERNS the header set. It must appear BEFORE the `x-nr-`
+# marker: "every `x-nr-*` header" is a claim about the set, while "`x-nr-*`
+# headers with every response" is a claim about frequency and is honest.
+_COMPLETENESS = (
+    r"(?:every|all|each|only the following|the following|the full set of|"
+    r"the complete set of|the entire set of|exhaustive|complete list of)"
+)
+# The `|` exclusion is inherited from the count patterns above and for the same
+# reason: a markdown cell boundary ends the clause, so a quantifier in one cell
+# cannot be dragged into the next one's header noun.
+PROMISE_RE = re.compile(
+    rf"\b{_COMPLETENESS}\b[^|]{{0,45}}?x-nr-[^|]{{0,45}}?\b(?:headers?|metadata|fields?)\b",
+    re.IGNORECASE,
+)
+_BACKTICKED = re.compile(r"`[^`\n]+`")
+_BULLET = re.compile(r"^\s*[-*+]\s")
+_FENCE = re.compile(r"^\s*(```|~~~)")
+
+
+def _blocks(text: str) -> list[tuple[str, int, list[str]]]:
+    """Split a document into (kind, first_lineno, lines) blocks.
+
+    Blank lines are separators and are dropped. The kinds that matter are
+    `heading` (which bounds a promise's section), `table` and `list` (either of
+    which can BE the enumeration), `fence` (skipped over -- Kotlin puts a code
+    example between its promise and its table, so a fence must not end the
+    scan) and `para`.
+    """
+    lines = text.splitlines()
+    out: list[tuple[str, int, list[str]]] = []
+    i, n = 0, len(lines)
+    while i < n:
+        stripped = lines[i].strip()
+        if not stripped:
+            i += 1
+            continue
+        if _FENCE.match(lines[i]):
+            marker = stripped[:3]
+            j = i + 1
+            while j < n and not lines[j].strip().startswith(marker):
+                j += 1
+            out.append(("fence", i + 1, lines[i : min(j + 1, n)]))
+            i = j + 1
+            continue
+        if stripped.startswith("#"):
+            out.append(("heading", i + 1, [lines[i]]))
+            i += 1
+            continue
+        if stripped.startswith("|"):
+            j = i
+            while j < n and lines[j].strip().startswith("|"):
+                j += 1
+            out.append(("table", i + 1, lines[i:j]))
+            i = j
+            continue
+        kind = "list" if _BULLET.match(lines[i]) else "para"
+        j = i + 1
+        while j < n:
+            nxt = lines[j]
+            if not nxt.strip() or nxt.strip().startswith(("#", "|")) or _FENCE.match(nxt):
+                break
+            if kind == "para" and _BULLET.match(nxt):
+                break
+            j += 1
+        out.append((kind, i + 1, lines[i:j]))
+        i = j
+    return out
+
+
+def _is_enumeration(kind: str, lines: list[str]) -> bool:
+    """A table, or a bullet list of three or more backticked items."""
+    if kind == "table":
+        # A one-row table is a shape, not a list. Header + separator + a row.
+        return len(lines) >= 3
+    if kind == "list":
+        items = [ln for ln in lines if _BULLET.match(ln) and "`" in ln]
+        return len(items) >= 3
+    return False
+
+
+def check_doc_header_enumeration(root: Path = ROOT) -> list[str]:
+    """Return failure strings; empty means no completeness promise is enumerated."""
+    failures: list[str] = []
+    for path in corpus(root):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        blocks = _blocks(text)
+        for idx, (kind, lineno, lines) in enumerate(blocks):
+            if kind not in ("para", "list"):
+                continue
+            # Join the block's lines: markdown hard-wraps, and the Dart/Rust/R
+            # promises run their list across three physical lines.
+            joined = " ".join(ln.strip() for ln in lines)
+            match = PROMISE_RE.search(joined)
+            if not match:
+                continue
+
+            where = ""
+            tail = joined[match.end() :]
+            # (a) the enumeration is INLINE, in the same sentence: three or more
+            #     backticked items separated by commas. Two is a pair, not a
+            #     list, and `CLAUDE.md`'s "`sk-nrouter-` prefix, every `x-nr-*`
+            #     header and nine error codes" must stay clean.
+            if len(_BACKTICKED.findall(tail)) >= 3 and tail.count("`,") >= 2:
+                where = f"an inline list of {len(_BACKTICKED.findall(tail))} items"
+            else:
+                # (b) the enumeration is a TABLE or BULLET LIST later in the same
+                #     section. Bounded by the next heading, so a plans table two
+                #     sections down is not dragged in; fences are stepped over,
+                #     never treated as a boundary.
+                for nkind, nline, nlines in blocks[idx + 1 :]:
+                    if nkind == "heading":
+                        break
+                    if _is_enumeration(nkind, nlines):
+                        where = f"the {nkind} at line {nline}"
+                        break
+            if not where:
+                continue
+            failures.append(
+                f"{path.relative_to(root)}:{lineno}: a COMPLETENESS PROMISE about the "
+                f"`x-nr-*` set ({match.group(0).strip()!r}) is followed by {where}. "
+                f"The set is derived from the gateway's nr_headers::all_emitted_names() "
+                f"and grows, so the enumeration rots and the promise turns it into a "
+                f"false exhaustiveness claim. Either drop the enumeration and cite "
+                f"spec/gateway-response-headers.json, or keep it and drop the "
+                f"completeness claim."
+            )
+    return failures
+
+
 def self_test(root: Path = ROOT) -> int:
     """Prove the gate bites, and that it does not fire on the honest wording."""
     import tempfile
@@ -220,18 +393,134 @@ def self_test(root: Path = ROOT) -> int:
         "Typed errors from nine codes and all fourteen `x-nr-*` headers.",
         True,
     )
+
+    # ---- SDKENUM-001: a completeness PROMISE followed by an ENUMERATION ----
+    def ecase(name: str, body: str, expect_hit: bool) -> None:
+        nonlocal fails
+        with tempfile.TemporaryDirectory() as d:
+            box = Path(d)
+            (box / "README.md").write_text(body, encoding="utf-8")
+            hits = check_doc_header_enumeration(box)
+            got = bool(hits)
+            if got != expect_hit:
+                print(f"  FAIL {name}: expected hit={expect_hit}, got {hits}")
+                fails += 1
+            else:
+                print(f"  ok   {name}")
+
+    # The exact shape 5f05390 shipped into five READMEs: "every" over a list.
+    ecase(
+        "promise then inline list",
+        "`ResponseMeta` carries every `x-nr-*` header: `request_id`, `cost`,\n"
+        "`cost_status`, `model`, `input_tokens`, `output_tokens`.\n",
+        True,
+    )
+    # REVERT CASE 1 — the Go shape. The promise is separated from its table by a
+    # BLANK LINE and an intervening sentence, so a same-paragraph window sees an
+    # empty list and the first implementation reported every header missing.
+    ecase(
+        "promise, blank line, then a table (the Go shape)",
+        "## Response metadata\n\n"
+        "`Response.Meta` carries every `x-nr-*` header. Every numeric field is a\n"
+        "pointer, deliberately:\n\n"
+        "| Field | Header | Nil means |\n"
+        "|---|---|---|\n"
+        "| `RequestID` | `x-nr-request-id` | - |\n"
+        "| `Cost` | `x-nr-request-cost` | **unpriced, not free** |\n",
+        True,
+    )
+    # REVERT CASE 2 — SDK-SPECIFIC SPELLINGS. `x-nr-request-cost` is `cost` here
+    # and `Cost` in Go, so any name/suffix match reports it missing from a list
+    # that does contain it. This gate never compares names, so the spelling is
+    # irrelevant and the promise+enumeration shape still fires.
+    ecase(
+        "promise then a list in the SDK's own field spelling",
+        "`NRouterResponseMeta` carries every `x-nr-*` header: `requestId`,\n"
+        "`cost`, `costStatus`, `model`, `inputTokens`.\n",
+        True,
+    )
+    # The Kotlin shape: promise, a fenced example, THEN the table. The fence must
+    # not end the scan, or the sixth document stays invisible.
+    ecase(
+        "promise, fenced example, then a table",
+        "## What a call cost\n\n"
+        "Every response carries the gateway's `x-nr-*` metadata:\n\n"
+        "```kotlin\nval meta = result.meta\n```\n\n"
+        "| Property | Header | Meaning |\n"
+        "|---|---|---|\n"
+        "| `requestId` | `x-nr-request-id` | Always present |\n",
+        True,
+    )
+    # The "only the following" spelling, which is a completeness claim without
+    # the word "every".
+    ecase(
+        "only-the-following then a table",
+        "## Response Headers\n\n"
+        "The gateway emits only the following public `x-nr-*` response headers.\n\n"
+        "| Header | Type |\n|---|---|\n| `x-nr-request-id` | string |\n",
+        True,
+    )
+    # A bulleted enumeration is the same claim in another shape.
+    ecase(
+        "promise then a bullet list",
+        "It exposes all `x-nr-*` headers:\n\n"
+        "- `request_id` - the id\n- `cost` - USD\n- `model` - the model\n",
+        True,
+    )
+    # ---- and the honest wordings, which must stay clean --------------------
+    # The remedy for an inline list: keep the gated promise, drop the list.
+    ecase(
+        "promise with no enumeration at all",
+        "`ResponseMeta` carries every `x-nr-*` header the gateway emits; the\n"
+        "authoritative set is spec/gateway-response-headers.json.\n",
+        False,
+    )
+    # The remedy for a table worth keeping: drop the completeness claim.
+    ecase(
+        "table with no completeness promise",
+        "## Response metadata\n\n"
+        "`Response.Meta` exposes the gateway's `x-nr-*` headers as typed fields.\n\n"
+        "| Field | Header |\n|---|---|\n| `Cost` | `x-nr-request-cost` |\n",
+        False,
+    )
+    # A quantifier that governs RESPONSES, not the header set, with no list.
+    ecase(
+        "quantifier after the marker",
+        "The gateway emits canonical `x-nr-*` headers with every response.\n",
+        False,
+    )
+    # The prose that says the conformance gate covers every header. It is a
+    # gated, true claim and it enumerates nothing.
+    ecase(
+        "gate prose naming other contract items",
+        "It asserts every SDK's source encodes the same base URL, environment\n"
+        "variable, key prefix, every `x-nr-*` header and nine error codes.\n",
+        False,
+    )
+    # A table in a DIFFERENT section than the promise is not its enumeration.
+    ecase(
+        "promise, then a heading, then an unrelated table",
+        "## Contract\n\nThe gate covers every `x-nr-*` header.\n\n"
+        "## Plans\n\n| Plan | Fee |\n|---|---|\n| Tier 1 | 4% |\n",
+        False,
+    )
+
     return 1 if fails else 0
 
 
 if __name__ == "__main__":
     if "--self-test" in sys.argv:
         raise SystemExit(self_test())
-    problems = check_doc_header_count()
-    for p in problems:
-        print(f"FAIL {p}")
+    counts = check_doc_header_count()
+    enums = check_doc_header_enumeration()
+    problems = counts + enums
+    for item in problems:
+        print(f"FAIL {item}")
     print(
-        f"doc header count: {len(problems)} hard-coded count(s) in prose"
+        f"doc header set: {len(counts)} hard-coded count(s) and "
+        f"{len(enums)} enumerated completeness promise(s) in prose"
         if problems
-        else "doc header count: no prose restates the derived x-nr-* header count"
+        else "doc header set: no prose restates or enumerates the derived "
+        "x-nr-* header set"
     )
     raise SystemExit(1 if problems else 0)

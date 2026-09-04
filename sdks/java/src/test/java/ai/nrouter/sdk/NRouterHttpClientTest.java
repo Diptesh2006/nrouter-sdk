@@ -20,8 +20,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import org.junit.jupiter.api.Test;
@@ -542,6 +548,98 @@ class NRouterHttpClientTest {
                 NRouter.httpClient("sk-nrouter-test", "http://127.0.0.1:1/v1", injected, Duration.ZERO));
         assertThrows(IllegalArgumentException.class, () ->
                 NRouter.httpClient("sk-nrouter-test", "http://127.0.0.1:1/v1", injected, Duration.ofSeconds(-1)));
+    }
+
+    @Test
+    void postHeaderBodyStallsFailForBinaryAndStreamingResponses() throws Exception {
+        for (boolean streaming : List.of(false, true)) {
+            CountDownLatch release = new CountDownLatch(1);
+            HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/v1", exchange -> {
+                exchange.getRequestBody().readAllBytes();
+                exchange.getResponseHeaders().set(
+                        "content-type", streaming ? "text/event-stream" : "application/octet-stream");
+                exchange.sendResponseHeaders(200, 0);
+                exchange.getResponseBody().write(streaming
+                        ? "data: {\"delta\":\"first\"}\n\n".getBytes(StandardCharsets.UTF_8)
+                        : new byte[] {1});
+                exchange.getResponseBody().flush();
+                try {
+                    release.await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                exchange.close();
+            });
+            server.start();
+            ExecutorService worker = Executors.newSingleThreadExecutor();
+            try {
+                String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+                NRouterHttpClient client = new NRouterHttpClient(
+                        "sk-nrouter-test",
+                        base,
+                        NRouterHttpClient.defaultHttpClient(),
+                        Duration.ofMinutes(23),
+                        Duration.ofMillis(75));
+                Future<?> call = worker.submit(() -> {
+                    if (streaming) {
+                        try (NRouterStreamResponse response = client.responsesStream(Map.of())) {
+                            response.lines().forEach(ignored -> { });
+                        }
+                    } else {
+                        client.audioSpeech(Map.of("model", "tts"));
+                    }
+                });
+
+                ExecutionException failure = assertThrows(
+                        ExecutionException.class, () -> call.get(1, TimeUnit.SECONDS));
+                NRouterException error = assertInstanceOf(NRouterException.class, failure.getCause());
+                assertEquals(NRouterException.Kind.TRANSPORT, error.kind());
+                assertTrue(error.getMessage().contains("idle"));
+            } finally {
+                release.countDown();
+                worker.shutdownNow();
+                server.stop(0);
+            }
+        }
+    }
+
+    @Test
+    void activeStreamOutlivesOneIdleInterval() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/responses", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            exchange.getResponseHeaders().set("content-type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            for (int i = 0; i < 10; i++) {
+                exchange.getResponseBody().write(("data: {\"delta\":\"" + i + "\"}\n\n")
+                        .getBytes(StandardCharsets.UTF_8));
+                exchange.getResponseBody().flush();
+                try {
+                    Thread.sleep(20);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            exchange.getResponseBody().write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+            NRouterHttpClient client = new NRouterHttpClient(
+                    "sk-nrouter-test",
+                    base,
+                    NRouterHttpClient.defaultHttpClient(),
+                    Duration.ofMinutes(23),
+                    Duration.ofMillis(75));
+            try (NRouterStreamResponse response = client.responsesStream(Map.of())) {
+                assertTrue(response.lines().toList().contains("data: [DONE]"));
+            }
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test

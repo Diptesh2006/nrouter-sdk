@@ -216,6 +216,11 @@ DECLARED_TIMEOUTS: dict[str, Declared] = {
                 re.compile(r"\bDEFAULT_CONNECT_TIMEOUT\s*=\s*Duration\.\w+\("),
                 None,
             ),
+            (
+                "body-idle",
+                re.compile(r"\bDEFAULT_BODY_IDLE_TIMEOUT\s*=\s*Duration\.\w+\("),
+                None,
+            ),
         ),
         applies=(
             ("set on the request", re.compile(r"\.timeout\(requestTimeout\)")),
@@ -390,6 +395,13 @@ AUXILIARY_TIMEOUT_APPLICATIONS: tuple[
         "wrap its SSE response with the body-idle helper",
         re.compile(r"response\s*=\s*_withBodyIdleTimeout\("),
         1,
+    ),
+    (
+        "java",
+        "sdks/java/src/main/java/ai/nrouter/sdk/NRouterHttpClient.java",
+        "wrap buffered and streaming response bodies with the idle deadline",
+        re.compile(r"new IdleTimeoutInputStream\("),
+        2,
     ),
     (
         "dart",
@@ -746,8 +758,11 @@ _CLEAN: dict[str, str] = {
     "sdks/java/src/main/java/ai/nrouter/sdk/NRouterHttpClient.java": (
         "public static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(15);\n"
         "public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofMinutes(10);\n"
+        "public static final Duration DEFAULT_BODY_IDLE_TIMEOUT = Duration.ofSeconds(130);\n"
         "HttpClient.newBuilder().connectTimeout(DEFAULT_CONNECT_TIMEOUT).build();\n"
         "return request(path).timeout(requestTimeout);\n"
+        "new IdleTimeoutInputStream(body, timeout);\n"
+        "new IdleTimeoutInputStream(body, timeout);\n"
     ),
     "sdks/kotlin/src/main/kotlin/ai/nrouter/sdk/NRouter.kt": (
         "public const val CONNECT_TIMEOUT_MILLIS: Long = 15_000\n"
@@ -973,6 +988,22 @@ def self_test() -> int:
         if not any("wrap its SSE response" in f for f in found):
             problems.append(f"an unbounded Dart SSE body NOT reported: {found}")
 
+        # 4g. Java has separate buffered and SSE consumers of its idle wrapper.
+        java = "sdks/java/src/main/java/ai/nrouter/sdk/NRouterHttpClient.java"
+        found = check_client_timeouts(
+            _with(
+                tmp / "d7",
+                java,
+                _CLEAN[java].replace(
+                    "new IdleTimeoutInputStream(body, timeout);\n",
+                    "",
+                    1,
+                ),
+            )
+        )
+        if not any("(1/2 sites)" in f for f in found):
+            problems.append(f"an unbounded Java body path NOT reported: {found}")
+
         # 5. a timeout APPEARING in an SDK registered as inheriting one must be
         #    reported — the hole a registry-only gate always has, and the reason
         #    half two exists.
@@ -1102,7 +1133,7 @@ def self_test() -> int:
         for problem in problems:
             print(f"SELF-TEST FAIL {problem}")
         return 1
-    print("OK  client_timeouts self-test: 20 planted cases, all reported")
+    print("OK  client_timeouts self-test: 21 planted cases, all reported")
     return 0
 
 

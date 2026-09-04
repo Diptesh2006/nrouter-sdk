@@ -2,8 +2,14 @@ package ai.nrouter.sdk;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.UncheckedIOException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -22,6 +28,11 @@ import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -79,6 +90,13 @@ public final class NRouterHttpClient {
      */
     public static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(120);
 
+    /**
+     * Native-client silence bound between response bytes. Ten seconds above
+     * the gateway's 120s provider-read bound lets its structured timeout arrive
+     * before this transport backstop races it.
+     */
+    public static final Duration DEFAULT_BODY_IDLE_TIMEOUT = Duration.ofSeconds(130);
+
     /** How long a request BODY may take to push — an audio file for transcription. */
     public static final Duration DEFAULT_WRITE_TIMEOUT = Duration.ofSeconds(60);
 
@@ -86,23 +104,37 @@ public final class NRouterHttpClient {
     private final String baseUrl;
     private final HttpClient http;
     private final Duration requestTimeout;
+    private final Duration bodyIdleTimeout;
     private final ObjectMapper json = new ObjectMapper();
 
     NRouterHttpClient(String apiKey, String baseUrl) {
-        this(apiKey, baseUrl, defaultHttpClient(), DEFAULT_REQUEST_TIMEOUT);
+        this(apiKey, baseUrl, defaultHttpClient(), DEFAULT_REQUEST_TIMEOUT, DEFAULT_BODY_IDLE_TIMEOUT);
     }
 
     NRouterHttpClient(String apiKey, String baseUrl, HttpClient http, Duration requestTimeout) {
+        this(apiKey, baseUrl, http, requestTimeout, DEFAULT_BODY_IDLE_TIMEOUT);
+    }
+
+    NRouterHttpClient(
+            String apiKey,
+            String baseUrl,
+            HttpClient http,
+            Duration requestTimeout,
+            Duration bodyIdleTimeout) {
         if (http == null) {
             throw new IllegalArgumentException("httpClient must not be null");
         }
         if (requestTimeout == null || requestTimeout.isZero() || requestTimeout.isNegative()) {
             throw new IllegalArgumentException("requestTimeout must be a positive duration");
         }
+        if (bodyIdleTimeout == null || bodyIdleTimeout.isZero() || bodyIdleTimeout.isNegative()) {
+            throw new IllegalArgumentException("bodyIdleTimeout must be a positive duration");
+        }
         this.apiKey = apiKey;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.http = http;
         this.requestTimeout = requestTimeout;
+        this.bodyIdleTimeout = bodyIdleTimeout;
     }
 
     /**
@@ -126,6 +158,11 @@ public final class NRouterHttpClient {
     /** The whole-exchange ceiling applied to buffered requests, and to nothing else. */
     public Duration requestTimeout() {
         return requestTimeout;
+    }
+
+    /** The maximum silence permitted between response body bytes. */
+    public Duration bodyIdleTimeout() {
+        return bodyIdleTimeout;
     }
 
     public NRouterHttpResponse chatCompletions(Map<String, ?> body) { return post("/chat/completions", body); }
@@ -209,18 +246,27 @@ public final class NRouterHttpClient {
         try {
             // No whole-exchange ceiling: an SSE stream is long BY DESIGN, and
             // the ceiling would fire mid-completion. See buffered(String).
-            HttpResponse<Stream<String>> response = http.send(
+            HttpResponse<InputStream> response = http.send(
                     request(path).header("Accept", "text/event-stream")
                             .header("Content-Type", "application/json").POST(jsonBody(streamed)).build(),
-                    HttpResponse.BodyHandlers.ofLines());
+                    HttpResponse.BodyHandlers.ofInputStream());
+            BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    new IdleTimeoutInputStream(response.body(), bodyIdleTimeout), StandardCharsets.UTF_8));
+            Stream<String> lines = reader.lines().onClose(() -> closeQuietly(reader));
             NRouterResponseMeta meta = NRouterResponseMeta.fromHeaders(response.headers());
             if (isSuccess(response.statusCode())) {
-                Stream<String> guarded = guardSse(response.body(), response.statusCode(), meta);
+                Stream<String> guarded = guardSse(lines, response.statusCode(), meta);
                 return new NRouterStreamResponse(guarded, meta, response.statusCode());
             }
             String errorBody;
-            try (Stream<String> lines = response.body()) {
+            try (lines) {
                 errorBody = lines.collect(Collectors.joining("\n"));
+            } catch (UncheckedIOException error) {
+                throw NRouterException.transport(
+                        "the streaming error response became idle; the request may have been billed ("
+                                + redact(error.getMessage()) + ")",
+                        response.statusCode(),
+                        meta);
             }
             throw gatewayFailure(errorBody.getBytes(StandardCharsets.UTF_8), response.statusCode(), meta);
         } catch (NRouterException error) {
@@ -234,13 +280,15 @@ public final class NRouterHttpClient {
     }
 
     private NRouterHttpResponse sendJson(HttpRequest request) {
-        HttpResponse<byte[]> response = send(request);
+        PendingResponse pending = send(request);
+        HttpResponse<InputStream> response = pending.response;
         NRouterResponseMeta meta = NRouterResponseMeta.fromHeaders(response.headers());
+        byte[] body = readBody(pending, meta);
         if (!isSuccess(response.statusCode())) {
-            throw gatewayFailure(response.body(), response.statusCode(), meta);
+            throw gatewayFailure(body, response.statusCode(), meta);
         }
         try {
-            JsonNode parsed = json.readTree(response.body());
+            JsonNode parsed = json.readTree(body);
             if (parsed == null) {
                 throw new IOException("empty JSON body");
             }
@@ -253,23 +301,135 @@ public final class NRouterHttpClient {
     }
 
     private NRouterBinaryResponse sendBinary(HttpRequest request) {
-        HttpResponse<byte[]> response = send(request);
+        PendingResponse pending = send(request);
+        HttpResponse<InputStream> response = pending.response;
         NRouterResponseMeta meta = NRouterResponseMeta.fromHeaders(response.headers());
+        byte[] body = readBody(pending, meta);
         if (!isSuccess(response.statusCode())) {
-            throw gatewayFailure(response.body(), response.statusCode(), meta);
+            throw gatewayFailure(body, response.statusCode(), meta);
         }
         String contentType = response.headers().firstValue("content-type").orElse(null);
-        return new NRouterBinaryResponse(response.body(), meta, response.statusCode(), contentType);
+        return new NRouterBinaryResponse(body, meta, response.statusCode(), contentType);
     }
 
-    private HttpResponse<byte[]> send(HttpRequest request) {
+    private PendingResponse send(HttpRequest request) {
+        long startedNanos = System.nanoTime();
         try {
-            return http.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            return new PendingResponse(
+                    http.send(request, HttpResponse.BodyHandlers.ofInputStream()), startedNanos);
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
             throw NRouterException.transport("nRouter request interrupted");
         } catch (Exception error) {
             throw NRouterException.transport(redact(error.getMessage()));
+        }
+    }
+
+    private byte[] readBody(PendingResponse pending, NRouterResponseMeta meta) {
+        HttpResponse<InputStream> response = pending.response;
+        AtomicBoolean wholeTimedOut = new AtomicBoolean();
+        ScheduledFuture<?> wholeDeadline = response.request().timeout().map(total -> {
+            long elapsed = System.nanoTime() - pending.startedNanos;
+            long remaining = Math.max(0L, total.toNanos() - elapsed);
+            return BODY_IDLE_TIMER.schedule(() -> {
+                wholeTimedOut.set(true);
+                closeQuietly(response.body());
+            }, remaining, TimeUnit.NANOSECONDS);
+        }).orElse(null);
+        try (InputStream body = new IdleTimeoutInputStream(response.body(), bodyIdleTimeout)) {
+            return body.readAllBytes();
+        } catch (IOException error) {
+            String reason;
+            if (wholeTimedOut.get()) {
+                reason = "the buffered response exceeded its whole-request deadline";
+            } else if (error instanceof SocketTimeoutException) {
+                reason = "the response body became idle";
+            } else {
+                reason = "the response body could not be read";
+            }
+            throw NRouterException.transport(
+                    reason + "; the request may have been billed ("
+                            + redact(error.getMessage()) + ")",
+                    response.statusCode(),
+                    meta);
+        } finally {
+            if (wholeDeadline != null) {
+                wholeDeadline.cancel(false);
+            }
+        }
+    }
+
+    private static final class PendingResponse {
+        final HttpResponse<InputStream> response;
+        final long startedNanos;
+
+        PendingResponse(HttpResponse<InputStream> response, long startedNanos) {
+            this.response = response;
+            this.startedNanos = startedNanos;
+        }
+    }
+
+    private static void closeQuietly(java.io.Closeable closeable) {
+        try {
+            closeable.close();
+        } catch (IOException ignored) {
+            // Closing an already-failed response must not mask its typed error.
+        }
+    }
+
+    private static final ScheduledExecutorService BODY_IDLE_TIMER =
+            Executors.newSingleThreadScheduledExecutor(task -> {
+                Thread thread = new Thread(task, "nrouter-java-body-idle");
+                thread.setDaemon(true);
+                return thread;
+            });
+
+    private static final class IdleTimeoutInputStream extends FilterInputStream {
+        private final Duration timeout;
+        private final AtomicBoolean timedOut = new AtomicBoolean();
+
+        IdleTimeoutInputStream(InputStream source, Duration timeout) {
+            super(source);
+            this.timeout = timeout;
+        }
+
+        @Override
+        public int read() throws IOException {
+            byte[] one = new byte[1];
+            int count = read(one, 0, 1);
+            return count < 0 ? -1 : one[0] & 0xff;
+        }
+
+        @Override
+        public int read(byte[] target, int offset, int length) throws IOException {
+            if (timedOut.get()) {
+                throw idleError();
+            }
+            ScheduledFuture<?> deadline = BODY_IDLE_TIMER.schedule(() -> {
+                timedOut.set(true);
+                closeQuietly(in);
+            }, timeout.toNanos(), TimeUnit.NANOSECONDS);
+            try {
+                int count = in.read(target, offset, length);
+                if (timedOut.get()) {
+                    throw idleError();
+                }
+                return count;
+            } catch (IOException error) {
+                if (timedOut.get()) {
+                    SocketTimeoutException timeoutError = idleError();
+                    timeoutError.initCause(error);
+                    throw timeoutError;
+                }
+                throw error;
+            } finally {
+                deadline.cancel(false);
+            }
+        }
+
+        private SocketTimeoutException idleError() {
+            return new SocketTimeoutException(
+                    "response body remained idle for " + timeout.toMillis() + "ms");
         }
     }
 

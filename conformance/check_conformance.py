@@ -8,8 +8,8 @@ serving ten SDKs is only as correct as the one that drifted.
 
 This gate closes that. It reads `spec/nrouter-sdk-spec.json` — the source of
 truth under Rule #14 — and asserts that every SDK's source literally contains
-the base URL, the environment variable, the key prefix, all fourteen `x-nr-*`
-headers and all nine error codes. Every one of the ten SDKs must also expose a
+the base URL, the environment variable, the key prefix, every `x-nr-*` header
+and every error code. Every one of the ten SDKs must also expose a
 named helper for every supported operation or prove an explicit delegation
 seam. Change the spec and
 every SDK goes red until it is updated; drop a header or endpoint helper from

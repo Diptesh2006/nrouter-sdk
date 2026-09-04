@@ -18,17 +18,13 @@
   },
   "files": [
     "dist",
-    "docs/README.md",
-    "docs/cost.md",
-    "docs/errors.md",
-    "docs/guardrails.md",
-    "docs/memory.md",
-    "docs/prompts.md",
-    "docs/routing.md"
+    "docs",
+    "!docs/live-sdk-agent-report.md",
+    "!docs/test-coverage-and-issues.md"
   ],
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc && node -e \"require('node:fs').copyFileSync('src/index.mjs','dist/index.mjs')\"",
-    "test": "npm run build && node test/smoke.js && node test/package-entry.cjs && node test/package-entry.mjs"
+    "test": "npm run build && node test/smoke.js && node test/package-entry.cjs && node test/package-entry.mjs && node test/package-entry-parity.mjs"
   },
   "keywords": [
     "llm",

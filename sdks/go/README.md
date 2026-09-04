@@ -75,7 +75,7 @@ response, and the gateway's nine error codes arrive as typed values.
 
 ## Response metadata
 
-`Response.Meta` carries all fourteen `x-nr-*` headers. Every numeric field is a
+`Response.Meta` carries every `x-nr-*` header. Every numeric field is a
 pointer, deliberately:
 
 | Field | Header | Nil means |

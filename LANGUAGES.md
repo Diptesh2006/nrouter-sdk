@@ -372,8 +372,8 @@ const tools = await client.chat.completions.create({
 
 ## Go
 
-A branded SDK lives in [`sdks/go/`](sdks/go/). It hands back all fourteen
-`x-nr-*` headers and types the gateway's nine error codes, which the vendor
+A branded SDK lives in [`sdks/go/`](sdks/go/). It hands back every
+`x-nr-*` header and types the gateway's nine error codes, which the vendor
 client cannot do without `.WithRawResponse()` plumbing at every call site:
 
 ```go
@@ -693,7 +693,7 @@ val result = client.chatCompletions(
         .put("messages", listOf(mapOf("role" to "user", "content" to "Hello!")))
 )
 
-// Typed errors from the gateway's nine codes, and all 14 x-nr-* headers.
+// Typed errors from the gateway's nine codes, and every x-nr-* header.
 // Unpriced is unknown, not free — never render a null cost as 0.
 println(if (result.meta.isPriced) "cost $${result.meta.cost}" else "unpriced")
 ```

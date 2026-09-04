@@ -93,7 +93,7 @@ print('request ${meta.requestId} | model ${meta.model}');
 print(meta.isPriced ? 'cost \$${meta.cost}' : 'cost unpriced');
 ```
 
-`NRouterResponseMeta` carries all fourteen `x-nr-*` headers: `requestId`,
+`NRouterResponseMeta` carries every `x-nr-*` header: `requestId`,
 `cost`, `costStatus`, `model`, `inputTokens`, `outputTokens`, `totalTokens`,
 `cacheReadTokens`, `cacheWriteTokens`, `limitSource`, `budgetWarning`, `authReason`,
 `responseCache`, `responseCacheAge`.

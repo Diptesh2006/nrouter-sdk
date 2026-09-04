@@ -6,7 +6,7 @@ gateway serving ten clients is only as correct as the one that drifted.
 
 This gate closes that gap. It reads `spec/nrouter-sdk-spec.json` — the source of
 truth under Rule #14 — and asserts every SDK's source encodes the same base URL,
-environment variable, key prefix, fourteen `x-nr-*` headers and nine error codes.
+environment variable, key prefix, every `x-nr-*` header and nine error codes.
 It reports and enforces all **150 route-ownership cells** (15 routes × 10 SDKs):
 seven first-party transports must carry a native helper with the spec's exact
 path and HTTP verb; Android must prove its endpoint-specific Kotlin delegation;

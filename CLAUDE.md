@@ -74,7 +74,7 @@ examples/            # canonical snippets nrouter-app imports (Rule #14)
 
 **`spec/nrouter-sdk-spec.json` is the source of truth, derived from the
 gateway** — never the other way round. Base URL, `NROUTER_API_KEY`, the
-`sk-nrouter-` prefix, fourteen `x-nr-*` headers and nine error codes. When an
+`sk-nrouter-` prefix, every `x-nr-*` header and nine error codes. When an
 SDK and the spec disagree, the SDK is wrong.
 
 ```bash

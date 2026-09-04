@@ -50,6 +50,8 @@ from doc_wires import self_test as doc_wires_self_test  # noqa: E402
 # that model was invisible to both gates while being the first call every new
 # user makes.
 from source_defaults import check_source_defaults  # noqa: E402
+from doc_header_count import check_doc_header_count  # noqa: E402
+from doc_header_count import self_test as doc_header_count_self_test  # noqa: E402
 from source_defaults import self_test as source_defaults_self_test  # noqa: E402
 
 # Which files carry the contract, per SDK. A file listed here that does not
@@ -1206,6 +1208,8 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
     failures.extend(check_release_versions(root, spec))
     failures.extend(check_doc_wires(root, spec))
     failures.extend(check_source_defaults(root))
+    # SDKDOC-001 — a DERIVED count restated as prose rots on the next header.
+    failures.extend(check_doc_header_count(root))
     return failures
 
 
@@ -1235,6 +1239,15 @@ def self_test() -> int:
     # So does the default-model half.
     if source_defaults_self_test():
         problems.append("source_defaults self-test failed; see its own output above")
+
+    # And the header-count half. Importing only `check_doc_header_count` and
+    # not its `self_test` would leave the new gate's ELEVEN fixture cases
+    # unreachable from `check_conformance.py --self-test`, so a broken regex
+    # would go green here while catching nothing — the exact shape the
+    # workspace calls "a gate that prints green while checking nothing".
+    # Caught by the claude-opus-4-6-thinking review of the slice that added it.
+    if doc_header_count_self_test():
+        problems.append("doc_header_count self-test failed; see its own output above")
 
     # --- half one: the SPEC moves, every SDK must go red ---------------------
     for label, mutate in (

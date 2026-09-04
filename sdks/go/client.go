@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -53,6 +54,139 @@ const (
 // returns a megabyte of HTML on a 502 should not be read into memory whole
 // just to produce a message nobody reads past the first line.
 const maxErrorBody = 1 << 20
+
+// The transport deadlines this SDK ships with.
+//
+// http.DefaultClient — which this client used to be built on — has NO timeout
+// of any kind: Timeout is 0 and its transport sets none either, so a gateway
+// or provider that accepts the connection and then goes silent hangs the
+// calling process forever. Every number below is therefore an explicit
+// decision (name it, or you have chosen infinity), and every one is sized
+// against the gateway's own budget rather than picked for feel.
+//
+// The gateway's worst HONEST case before it can send a first byte is roughly
+// 410 s: up to three provider attempts, each with a 10 s connect timeout and a
+// 120 s between-bytes read timeout, plus at most 20 s of cumulative backoff
+// between them. A client deadline BELOW that aborts a request the gateway is
+// about to answer — and the customer is billed for it anyway, because the
+// provider tokens were already spent. So the bounds here sit comfortably above
+// the gateway's worst honest case and comfortably below infinity.
+//
+// None of these ever retries. Waiting is bounded here; re-sending is not done
+// at all — see WithHTTPClient and Error.IsRetryable.
+const (
+	// DefaultConnectTimeout bounds DNS resolution plus the TCP handshake, and
+	// nothing after it. Ten seconds is generous for a connect and short enough
+	// that a black-holed gateway address is reported rather than waited on.
+	DefaultConnectTimeout = 10 * time.Second
+
+	// DefaultTLSHandshakeTimeout bounds the TLS handshake alone. Separate from
+	// the connect timeout because a TCP connect that succeeds into something
+	// that never completes a handshake is its own failure mode.
+	DefaultTLSHandshakeTimeout = 10 * time.Second
+
+	// DefaultResponseHeaderTimeout bounds the wait between the request being
+	// written and the FIRST response header arriving — time-to-headers, not
+	// time-to-body.
+	//
+	// This is the bound that replaces a blunt http.Client.Timeout, and the
+	// distinction is the whole design. http.Client.Timeout covers reading the
+	// response BODY too, so it severs an SSE stream mid-generation and truncates
+	// a long GET /videos/{id}/content download — both of which are already
+	// billed. ResponseHeaderTimeout bounds the failure that actually matters (a
+	// gateway that accepted the connection and said nothing) without putting any
+	// ceiling on how long a working stream or a large download may legitimately
+	// run.
+	//
+	// Ten minutes: above the gateway's ~410 s worst honest time-to-headers with
+	// margin, and the same order as the OpenAI and Anthropic clients' own 600 s
+	// defaults, so a caller migrating from either is not surprised.
+	//
+	// ⚠️ KNOWN GAP, and it is a real asymmetry with the Rust SDK — stated here
+	// rather than left for someone to discover from a hang.
+	//
+	// This bounds time-to-HEADERS only. A gateway that sends headers and then
+	// stalls mid-body — a live TCP connection carrying zero bytes — is NOT cut
+	// by anything here. TCP keepalive detects a DEAD peer, never a live-but-
+	// silent one. The Rust SDK closes this with reqwest's `read_timeout` (a
+	// between-bytes bound); net/http has no equivalent knob on Client or
+	// Transport, so closing it in Go means wrapping the response body in a
+	// reader that arms a per-read deadline on the underlying net.Conn.
+	//
+	// Not done here on purpose: it changes the shape of every response this
+	// package returns, which is a larger change than the defect it fixes, and
+	// the defect it fixes is strictly narrower than the one being fixed now
+	// (waiting forever on a gateway that says NOTHING). A caller who needs the
+	// body-phase bound today can supply their own transport via WithHTTPClient.
+	DefaultResponseHeaderTimeout = 600 * time.Second
+
+	// DefaultIdleConnTimeout is how long an idle pooled connection is kept.
+	// Named rather than inherited, so the pool's shape is a decision here.
+	DefaultIdleConnTimeout = 90 * time.Second
+
+	// DefaultKeepAlive is the TCP keepalive interval. Shorter than the response
+	// header timeout deliberately: a connection silently reaped by an
+	// intermediary is discovered by the keepalive rather than by a caller
+	// waiting out the full header deadline.
+	DefaultKeepAlive = 30 * time.Second
+
+	// DefaultMaxIdleConnsPerHost bounds idle connections kept per host. Go's
+	// default is 2, so a caller making concurrent requests to one gateway would
+	// tear down and re-handshake most of them; a limit is a decision like any
+	// other timeout.
+	DefaultMaxIdleConnsPerHost = 32
+)
+
+// newTransport builds the SDK transport with explicit deadlines.
+//
+// Parameterized rather than written twice so a test can prove the header
+// deadline FIRES without waiting ten minutes, against a transport that is
+// identical to the shipped one in every other property. A second builder chain
+// is how one client keeps a control the other quietly loses.
+func newTransport(connectTimeout, tlsHandshakeTimeout, responseHeaderTimeout time.Duration) *http.Transport {
+	return &http.Transport{
+		// Proxy and ForceAttemptHTTP2 are carried over from
+		// http.DefaultTransport on purpose. A hand-built *http.Transport that
+		// omits them silently drops HTTPS_PROXY support and downgrades every
+		// call to HTTP/1.1 — a regression hidden inside a timeout fix.
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   connectTimeout,
+			KeepAlive: DefaultKeepAlive,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   tlsHandshakeTimeout,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+		IdleConnTimeout:       DefaultIdleConnTimeout,
+		ExpectContinueTimeout: time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   DefaultMaxIdleConnsPerHost,
+	}
+}
+
+// defaultTransport is shared by every client this package builds, so the
+// connection pool is shared too. Clients wrap it; nobody mutates it.
+var defaultTransport = newTransport(
+	DefaultConnectTimeout,
+	DefaultTLSHandshakeTimeout,
+	DefaultResponseHeaderTimeout,
+)
+
+// DefaultHTTPClient returns the HTTP client New uses when WithHTTPClient is
+// not supplied: explicit connect, TLS-handshake and response-header deadlines,
+// and deliberately NO http.Client.Timeout.
+//
+// The zero Timeout is a property, not an omission. http.Client.Timeout covers
+// the response body, so setting one here would kill SSE streaming and truncate
+// GET /videos/{id}/content. Callers who want a whole-request ceiling should set
+// one per call with context.WithTimeout — which is per-request, so a streaming
+// call can opt out — or pass their own client to WithHTTPClient.
+//
+// A fresh *http.Client each call, sharing one transport: mutating the returned
+// client (adding a Timeout, say) affects only your client, never the pool.
+func DefaultHTTPClient() *http.Client {
+	return &http.Client{Transport: defaultTransport}
+}
 
 // ResolveAPIKey resolves and validates a key: the explicit argument first,
 // then the environment.
@@ -100,6 +234,19 @@ func WithBaseURL(baseURL string) Option {
 }
 
 // WithHTTPClient overrides the transport — proxy, timeout, connection pool.
+//
+// It replaces DefaultHTTPClient entirely, including every deadline documented
+// there, so a client passed here is responsible for its own bounds. Two
+// warnings worth carrying:
+//
+//   - Setting http.Client.Timeout applies it to the response BODY, which cuts
+//     SSE streaming and long downloads mid-transfer, already billed. Prefer a
+//     transport-level ResponseHeaderTimeout, or a per-call context deadline.
+//   - This SDK does not retry, and a client that wraps this one in a retry
+//     loop must not do so blindly. Every attempt at a billed POST is billed
+//     again, so a generic `if err.IsRetryable() { retry }` loop around one
+//     spends real credits in a tight loop. IsRetryable reports whether an
+//     identical retry *could* succeed; it is advisory, never an instruction.
 func WithHTTPClient(h *http.Client) Option {
 	return func(c *Client) {
 		if h != nil {
@@ -114,7 +261,7 @@ func New(apiKey string, opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{apiKey: key, baseURL: DefaultBaseURL, http: http.DefaultClient}
+	c := &Client{apiKey: key, baseURL: DefaultBaseURL, http: DefaultHTTPClient()}
 	for _, opt := range opts {
 		opt(c)
 	}

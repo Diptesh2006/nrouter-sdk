@@ -275,3 +275,209 @@ async fn a_codeless_guardrail_400_raises_the_guardrail_variant() {
     );
     assert!(!err.is_retryable());
 }
+
+// --- transport deadlines ----------------------------------------------------
+//
+// `reqwest::Client::new()` sets no timeout of any kind, so a gateway that
+// accepts the connection and then goes silent hangs the caller forever. These
+// pin the replacement: the between-bytes deadline fires, a long body is NOT cut
+// by it (which is what a whole-request `.timeout()` would do to SSE and to
+// `GET /videos/{id}/content`), and `with_http_client` still wins outright.
+
+/// Read one whole HTTP request off the socket — headers, then `Content-Length`
+/// bytes. A single `read()` takes only the first segment, and replying early
+/// can reset the connection while the client is still writing.
+fn read_full_request(stream: &mut std::net::TcpStream) -> Vec<u8> {
+    let mut raw: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let n = match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        raw.extend_from_slice(&chunk[..n]);
+        let Some(head_end) = find(&raw, b"\r\n\r\n") else {
+            continue;
+        };
+        let head = String::from_utf8_lossy(&raw[..head_end]).to_lowercase();
+        let want: usize = head
+            .lines()
+            .find_map(|l| l.strip_prefix("content-length:"))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0);
+        if raw.len() >= head_end + 4 + want {
+            break;
+        }
+    }
+    raw
+}
+
+/// A gateway that accepted the connection and then said nothing.
+fn serve_after_silence(silence: std::time::Duration) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let _ = read_full_request(&mut stream);
+            thread::sleep(silence);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\
+                  Connection: close\r\n\r\n{}",
+            );
+            let _ = stream.flush();
+        }
+    });
+    format!("http://{addr}/v1")
+}
+
+/// Headers immediately, then a body that trickles: each gap is short, the TOTAL
+/// is long. Exactly the shape of a stream and of a large download.
+fn serve_dribbled_body(chunks: usize, gap: std::time::Duration) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let _ = read_full_request(&mut stream);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nContent-Length: {chunks}\r\n\
+                 x-nr-request-id: req_42\r\nConnection: close\r\n\r\n"
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.flush();
+            for _ in 0..chunks {
+                thread::sleep(gap);
+                let _ = stream.write_all(b"x");
+                let _ = stream.flush();
+            }
+        }
+    });
+    format!("http://{addr}/v1")
+}
+
+#[tokio::test]
+async fn a_gateway_that_says_nothing_is_cut_at_the_read_timeout() {
+    let base = serve_after_silence(std::time::Duration::from_secs(5));
+    // The shipped constructor, one deadline shortened — so this proves the real
+    // mechanism rather than a test-only lookalike.
+    let http = Client::http_client_with(
+        Client::DEFAULT_CONNECT_TIMEOUT,
+        std::time::Duration::from_millis(150),
+    )
+    .expect("client");
+    let client = Client::new("sk-nrouter-test")
+        .expect("client")
+        .with_base_url(&base)
+        .with_http_client(http);
+
+    let started = std::time::Instant::now();
+    let err = client
+        .chat_completions(&json!({"model": "claude"}))
+        .await
+        .expect_err("a silent gateway must not hang the caller");
+    let elapsed = started.elapsed();
+
+    assert!(
+        matches!(err, NRouterError::Transport(_)),
+        "want a transport failure, got {err:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "waited {elapsed:?}; the read deadline never fired"
+    );
+}
+
+#[tokio::test]
+async fn a_body_slower_in_total_than_the_read_timeout_is_not_cut() {
+    // Eight 80 ms gaps = ~640 ms of body against a 300 ms BETWEEN-BYTES
+    // deadline. It completes only because no whole-request `.timeout()` is set:
+    // one of 300 ms would sever it, already billed.
+    const CHUNKS: usize = 8;
+    let base = serve_dribbled_body(CHUNKS, std::time::Duration::from_millis(80));
+    let http = Client::http_client_with(
+        Client::DEFAULT_CONNECT_TIMEOUT,
+        std::time::Duration::from_millis(300),
+    )
+    .expect("client");
+    let client = Client::new("sk-nrouter-test")
+        .expect("client")
+        .with_base_url(&base)
+        .with_http_client(http);
+
+    let out = client
+        .bytes("GET", "/videos/v_1/content", None)
+        .await
+        .expect("a trickling download must not be cut");
+    assert_eq!(
+        String::from_utf8_lossy(&out.body),
+        "x".repeat(CHUNKS),
+        "the download was truncated"
+    );
+}
+
+#[tokio::test]
+async fn the_default_client_names_its_deadlines_and_sets_no_whole_request_timeout() {
+    assert!(
+        !Client::DEFAULT_CONNECT_TIMEOUT.is_zero(),
+        "an unnamed connect deadline is infinity"
+    );
+    assert!(
+        !Client::DEFAULT_READ_TIMEOUT.is_zero(),
+        "an unnamed read deadline is infinity"
+    );
+    // Above the gateway's ~410 s worst honest time-to-first-byte: three provider
+    // attempts x (10 s connect + 120 s silence) plus 20 s of cumulative backoff.
+    // Below that, the SDK aborts a request the gateway is about to answer — and
+    // the customer is billed for it anyway.
+    assert!(
+        Client::DEFAULT_READ_TIMEOUT >= std::time::Duration::from_secs(410),
+        "read deadline {:?} is under the gateway's worst honest case",
+        Client::DEFAULT_READ_TIMEOUT
+    );
+
+    // `reqwest`'s Debug prints a deadline only when it is SET, which makes both
+    // halves of the design assertable on the real default client: the
+    // between-bytes deadline is present, and the whole-request one — which would
+    // sever streaming — is absent. (It does not render `connect_timeout`; that
+    // one is covered by the constant above plus the single shared constructor,
+    // which is also what `a_gateway_that_says_nothing_is_cut_at_the_read_timeout`
+    // exercises.)
+    let rendered = format!("{:?}", Client::default_http_client().expect("client"));
+    assert!(
+        rendered.contains("read_timeout"),
+        "no read deadline on the default client — it would wait forever: {rendered}"
+    );
+    assert!(
+        !rendered.contains(" timeout:"),
+        "the default client carries a whole-request timeout, which cuts streaming: {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn with_http_client_fully_overrides_the_default_deadlines() {
+    let base = serve_after_silence(std::time::Duration::from_secs(5));
+    // A whole-request timeout the SDK deliberately does not set. If the override
+    // is total, this cuts the call; if the default leaked through, the call
+    // would sit on the 600 s read deadline instead.
+    let custom = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(150))
+        .build()
+        .expect("custom client");
+    let client = Client::new("sk-nrouter-test")
+        .expect("client")
+        .with_base_url(&base)
+        .with_http_client(custom);
+
+    let started = std::time::Instant::now();
+    let err = client
+        .chat_completions(&json!({}))
+        .await
+        .expect_err("the caller's timeout must apply");
+    assert!(
+        matches!(err, NRouterError::Transport(_)),
+        "want a transport failure, got {err:?}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(3),
+        "the caller's client was not in force"
+    );
+}

@@ -960,3 +960,197 @@ func TestNamedHelpersCoverEveryRemainingGatewayOperation(t *testing.T) {
 		})
 	}
 }
+
+// --- transport deadlines ----------------------------------------------------
+//
+// http.DefaultClient waits forever. These pin the replacement: every deadline
+// explicitly named, the header deadline actually firing, and a long body NOT
+// being severed by it — which is what a blunt http.Client.Timeout would do to
+// SSE streaming and to GET /videos/{id}/content.
+
+func TestDefaultHTTPClientNamesItsDeadlinesAndSetsNoWholeRequestTimeout(t *testing.T) {
+	c := DefaultHTTPClient()
+
+	// The zero Timeout is the property, not an oversight: http.Client.Timeout
+	// covers the response body, so a non-zero value here truncates a stream
+	// that has already been billed.
+	if c.Timeout != 0 {
+		t.Fatalf("http.Client.Timeout = %v; want 0 — a whole-request timeout severs streaming", c.Timeout)
+	}
+
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport is %T; want *http.Transport", c.Transport)
+	}
+	for _, tc := range []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{"TLSHandshakeTimeout", tr.TLSHandshakeTimeout, DefaultTLSHandshakeTimeout},
+		{"ResponseHeaderTimeout", tr.ResponseHeaderTimeout, DefaultResponseHeaderTimeout},
+		{"IdleConnTimeout", tr.IdleConnTimeout, DefaultIdleConnTimeout},
+		{"ExpectContinueTimeout", tr.ExpectContinueTimeout, time.Second},
+	} {
+		if tc.got == 0 {
+			t.Errorf("%s is 0 — an unnamed deadline is infinity", tc.name)
+		}
+		if tc.got != tc.want {
+			t.Errorf("%s = %v; want %v", tc.name, tc.got, tc.want)
+		}
+	}
+	// The connect deadline lives inside the dialer closure and cannot be read
+	// back; what is assertable is that a dialer was installed at all, and that
+	// the constant it was built from is a real number.
+	if tr.DialContext == nil {
+		t.Error("DialContext is nil — the connect timeout would fall back to the OS default, which is minutes")
+	}
+	if DefaultConnectTimeout == 0 {
+		t.Error("DefaultConnectTimeout is 0 — a black-holed address would be waited on indefinitely")
+	}
+	// Carried over from http.DefaultTransport: omitting either drops
+	// HTTPS_PROXY support or silently downgrades every call to HTTP/1.1.
+	if tr.Proxy == nil {
+		t.Error("Proxy is nil — HTTPS_PROXY/HTTP_PROXY would be ignored")
+	}
+	if !tr.ForceAttemptHTTP2 {
+		t.Error("ForceAttemptHTTP2 is false — a custom transport silently drops HTTP/2")
+	}
+	if tr.MaxIdleConnsPerHost != DefaultMaxIdleConnsPerHost {
+		t.Errorf("MaxIdleConnsPerHost = %d; want %d", tr.MaxIdleConnsPerHost, DefaultMaxIdleConnsPerHost)
+	}
+}
+
+func TestNewBuildsOnTheDefaultTimeoutClientNotDefaultClient(t *testing.T) {
+	c, err := New(testKey)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if c.http == http.DefaultClient {
+		t.Fatal("client uses http.DefaultClient, which has no timeout and waits forever")
+	}
+	if c.http.Timeout != 0 {
+		t.Errorf("Timeout = %v; want 0 — see DefaultHTTPClient", c.http.Timeout)
+	}
+	if c.http.Transport != defaultTransport {
+		t.Error("client does not share the package transport, so it does not share the pool either")
+	}
+}
+
+func TestSlowResponseHeadersAreCutAtTheResponseHeaderTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release // the gateway accepted the connection and then said nothing
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer func() { close(release); srv.Close() }()
+
+	// Same constructor as the shipped transport, one deadline shortened, so
+	// this proves the real mechanism rather than a test-only lookalike.
+	slow := &http.Client{Transport: newTransport(
+		DefaultConnectTimeout, DefaultTLSHandshakeTimeout, 150*time.Millisecond,
+	)}
+	c, err := New(testKey, WithBaseURL(srv.URL), WithHTTPClient(slow))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Off the test goroutine, so a transport with NO header deadline fails this
+	// test in three seconds instead of hanging the suite until the panic —
+	// which is what the mutation check does, and a hang is a poor red.
+	done := make(chan error, 1)
+	go func() {
+		_, callErr := c.ChatCompletions(context.Background(), map[string]any{})
+		done <- callErr
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a gateway that never sent a header returned success")
+		}
+		var e *Error
+		if !errors.As(err, &e) || e.Kind != KindTransport {
+			t.Fatalf("got %v; want a KindTransport failure", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("still waiting after 3s; the response-header deadline never fired")
+	}
+}
+
+func TestSlowResponseBodyIsNotCutByTheHeaderTimeout(t *testing.T) {
+	// Headers land immediately; the body then trickles for far longer than the
+	// header deadline. This is SSE and GET /videos/{id}/content, and it is
+	// exactly what an http.Client.Timeout of the same size would sever.
+	const chunks = 8
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
+		flusher.Flush()
+		for i := 0; i < chunks; i++ {
+			time.Sleep(60 * time.Millisecond)
+			_, _ = w.Write([]byte("x"))
+			flusher.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	slow := &http.Client{Transport: newTransport(
+		DefaultConnectTimeout, DefaultTLSHandshakeTimeout, 150*time.Millisecond,
+	)}
+	c, err := New(testKey, WithBaseURL(srv.URL), WithHTTPClient(slow))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	res, err := c.Bytes(context.Background(), http.MethodGet, "/videos/v_1/content", nil)
+	if err != nil {
+		t.Fatalf("a body slower than the header deadline was cut: %v", err)
+	}
+	if got := string(res.Body); got != strings.Repeat("x", chunks) {
+		t.Fatalf("body = %q; want %d bytes — the download was truncated", got, chunks)
+	}
+}
+
+func TestWithHTTPClientFullyOverridesTheDefaultTransport(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer func() { close(release); srv.Close() }()
+
+	// A whole-request Timeout the SDK deliberately does not set. If the option
+	// still overrides everything, this cuts the call; if the default leaked
+	// through, the call would wait out the 600 s header deadline instead.
+	custom := &http.Client{Timeout: 150 * time.Millisecond}
+	c, err := New(testKey, WithBaseURL(srv.URL), WithHTTPClient(custom))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if c.http != custom {
+		t.Fatal("WithHTTPClient did not install the caller's client")
+	}
+
+	start := time.Now()
+	if _, err := c.ChatCompletions(context.Background(), map[string]any{}); err == nil {
+		t.Fatal("the caller's 150ms timeout did not apply")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("waited %v; the caller's client was not in force", elapsed)
+	}
+
+	// A nil client is ignored rather than disarming the defaults.
+	d, err := New(testKey, WithHTTPClient(nil))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if d.http == nil || d.http.Transport != defaultTransport {
+		t.Error("WithHTTPClient(nil) disarmed the default transport")
+	}
+}

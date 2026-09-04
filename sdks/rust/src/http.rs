@@ -8,6 +8,7 @@
 
 use serde_json::Value;
 use std::net::IpAddr;
+use std::time::Duration;
 
 use crate::errors::{ErrorBody, NRouterError};
 use crate::meta::ResponseMeta;
@@ -145,6 +146,85 @@ fn validate_gateway_base_url(value: &str) -> Result<reqwest::Url, NRouterError> 
 }
 
 impl Client {
+    /// How long the gateway has to complete the TCP + TLS handshake.
+    ///
+    /// Named, not buried in a builder chain: an unnamed deadline is infinity,
+    /// and `reqwest::Client::new()` — which this client used to be built from —
+    /// sets none at all. Ten seconds is generous for a handshake and short
+    /// enough that a black-holed gateway address is reported rather than waited
+    /// on.
+    pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// How long the gateway may go SILENT — a BETWEEN-BYTES deadline, applied
+    /// both to the wait for the first response byte and to every gap inside a
+    /// stream.
+    ///
+    /// # Why this is `read_timeout` and deliberately not `timeout`
+    ///
+    /// `reqwest`'s `timeout` is a WHOLE-REQUEST deadline that covers the
+    /// response body, so a stream served through a client carrying one dies
+    /// mid-generation with a partial answer already billed, and a large
+    /// `GET /videos/{id}/content` is truncated the same way. An inactivity
+    /// deadline bounds the failure that actually matters — a gateway that
+    /// accepted the connection and then said nothing — without putting a
+    /// ceiling on how long a working stream may legitimately last. The gateway
+    /// makes exactly this trade for its own provider client, and for the same
+    /// reason; a caller who does want a whole-request ceiling can set one per
+    /// call with `tokio::time::timeout`, which a streaming call can opt out of.
+    ///
+    /// # Why ten minutes, and not the gateway's own 120 s
+    ///
+    /// `reqwest` has no headers-only bound, so this one number must also cover
+    /// the wait for the FIRST byte — and the gateway's worst honest case there
+    /// is roughly 410 s: up to three provider attempts, each with a 10 s connect
+    /// timeout and a 120 s between-bytes read timeout, plus up to 20 s of
+    /// cumulative backoff between them. A client deadline below that aborts a
+    /// request the gateway is about to answer, and the customer is billed for it
+    /// regardless, because the provider tokens were already spent. Ten minutes
+    /// sits above that with margin and is the same order as the OpenAI and
+    /// Anthropic clients' own 600 s defaults.
+    pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(600);
+
+    /// How long an idle pooled connection is kept.
+    pub const DEFAULT_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+
+    /// TCP keepalive interval. Shorter than the read deadline deliberately: a
+    /// connection silently reaped by an intermediary is then discovered by the
+    /// keepalive rather than by a caller waiting out the full read timeout.
+    pub const DEFAULT_TCP_KEEPALIVE: Duration = Duration::from_secs(30);
+
+    /// The HTTP client [`Client::new`] uses when [`Client::with_http_client`]
+    /// is not called: explicit connect and between-bytes deadlines, and
+    /// deliberately NO whole-request `timeout` (see
+    /// [`Client::DEFAULT_READ_TIMEOUT`]).
+    pub fn default_http_client() -> Result<reqwest::Client, NRouterError> {
+        Self::http_client_with(Self::DEFAULT_CONNECT_TIMEOUT, Self::DEFAULT_READ_TIMEOUT)
+    }
+
+    /// [`Client::default_http_client`] with explicit deadlines, so a test can
+    /// prove the read deadline FIRES without waiting ten minutes.
+    ///
+    /// Built by the same chain rather than a second one: every other property
+    /// is identical, so a client that differed anywhere else would prove
+    /// nothing about the client the SDK actually ships.
+    pub fn http_client_with(
+        connect_timeout: Duration,
+        read_timeout: Duration,
+    ) -> Result<reqwest::Client, NRouterError> {
+        reqwest::Client::builder()
+            .connect_timeout(connect_timeout)
+            // BETWEEN-BYTES, never `.timeout()`. See DEFAULT_READ_TIMEOUT.
+            .read_timeout(read_timeout)
+            .pool_idle_timeout(Self::DEFAULT_POOL_IDLE_TIMEOUT)
+            .tcp_keepalive(Self::DEFAULT_TCP_KEEPALIVE)
+            .build()
+            .map_err(|error| {
+                NRouterError::Configuration(format!(
+                    "could not build the nRouter HTTP client: {error}"
+                ))
+            })
+    }
+
     /// Build a client, reading `NROUTER_API_KEY` from the environment.
     pub fn from_env() -> Result<Self, NRouterError> {
         Self::new(resolve_api_key(None)?)
@@ -156,7 +236,7 @@ impl Client {
         Ok(Self {
             api_key: resolve_api_key(Some(&api_key.into()))?,
             base_url: DEFAULT_BASE_URL.to_string(),
-            http: reqwest::Client::new(),
+            http: Self::default_http_client()?,
         })
     }
 
@@ -168,6 +248,20 @@ impl Client {
     }
 
     /// Override the underlying HTTP client — proxy, timeout, connection pool.
+    ///
+    /// It replaces [`Client::default_http_client`] entirely, including every
+    /// deadline documented there, so the client passed here owns its own
+    /// bounds. Two warnings worth carrying:
+    ///
+    /// - A `reqwest` `.timeout()` is a WHOLE-REQUEST deadline covering the
+    ///   response body, so it severs SSE streaming and truncates
+    ///   `GET /videos/{id}/content` mid-transfer — already billed. Prefer
+    ///   `.read_timeout()`, or a per-call `tokio::time::timeout`.
+    /// - This SDK never retries, and a caller must not wrap a billed `POST` in
+    ///   a blind retry loop: every attempt is billed again, so a generic
+    ///   `if err.is_retryable() { retry }` around one spends real credits in a
+    ///   tight loop. `is_retryable()` reports whether an identical retry
+    ///   *could* succeed; it is advisory, never an instruction.
     pub fn with_http_client(mut self, http: reqwest::Client) -> Self {
         self.http = http;
         self
@@ -723,4 +817,63 @@ mod transport_security_tests {
             );
         }
     }
+}
+
+#[cfg(test)]
+mod transport_deadline_tests {
+    use super::Client;
+
+    /// `Client::new` must install [`Client::default_http_client`], not
+    /// `reqwest::Client::new()` — which sets no deadline of any kind and waits
+    /// forever on a gateway that accepted the connection and then went silent.
+    ///
+    /// In-file rather than in `tests/`, because `http` is private: an
+    /// integration test can prove the DEFAULT CLIENT is bounded and cannot prove
+    /// the client `new()` actually installed is the bounded one. That gap is
+    /// exactly the defect this fixes, so it is the gap the test has to close.
+    #[test]
+    fn new_installs_the_bounded_default_client() {
+        let client = Client::new("sk-nrouter-test").expect("client");
+        let rendered = format!("{:?}", client.http);
+        assert!(
+            rendered.contains("read_timeout"),
+            "Client::new built an unbounded HTTP client: {rendered}"
+        );
+        // ANTI-VACUITY CONTROL for the negative assertion below.
+        //
+        // `!rendered.contains(" timeout:")` reads reqwest's UNSTABLE `Debug`
+        // rendering. If a future reqwest stops rendering that field at all, the
+        // negative assertion starts passing for a client that DOES carry a
+        // whole-request timeout — it would go quiet on exactly the regression it
+        // exists to catch. So prove the needle still appears when the thing is
+        // really set: this control fails loudly on a rendering change and forces
+        // the assertion below to be re-derived rather than silently trusted.
+        // MEASURED, not guessed: reqwest renders a whole-request timeout as
+        // `reqwest::config::TotalTimeout: 7s`. The needle this assertion used to
+        // use — `" timeout:"` — appears in NO rendering, so it matched nothing
+        // and passed for every client, including one that carried the very
+        // timeout it was meant to forbid. A negative assertion on an unstable
+        // Debug format is dead the moment the format moves, and it dies SILENT.
+        let bounded = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(1))
+            .build()
+            .expect("a client with a whole-request timeout builds");
+        assert!(
+            format!("{bounded:?}").contains(TOTAL_TIMEOUT_NEEDLE),
+            "reqwest no longer renders a whole-request timeout as \
+             `{TOTAL_TIMEOUT_NEEDLE}`, so the assertion below cannot see one \
+             either and has stopped checking anything. Re-derive the needle \
+             against the current reqwest — do not delete this control."
+        );
+
+        assert!(
+            !rendered.contains(TOTAL_TIMEOUT_NEEDLE),
+            "Client::new carries a whole-request timeout, which cuts streaming: {rendered}"
+        );
+    }
+
+    /// How reqwest's `Debug` spells a whole-request timeout, measured against
+    /// the pinned version. Named once so the control above and the assertion it
+    /// guards can never drift apart.
+    const TOTAL_TIMEOUT_NEEDLE: &str = "TotalTimeout";
 }

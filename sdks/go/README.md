@@ -88,6 +88,7 @@ pointer, deliberately:
 | `CacheReadTokens` / `CacheWriteTokens` | `x-nr-cache-*-tokens` | zero, so omitted |
 | `LimitSource` | `x-nr-limit-source` | the gateway did not say which limit |
 | `BudgetWarning` | `x-nr-budget-warning` | no soft budget was crossed (`<scope> soft_budget <spend>/<ceiling>` when one was) |
+| `Guardrails` | `x-nr-guardrails` | this response makes no guardrail claim — never "none", which is an explicit token |
 | `AuthReason` | `x-nr-auth-reason` | — |
 | `ResponseCache` / `ResponseCacheAge` | `x-nr-response-cache*` | the cache did not participate |
 

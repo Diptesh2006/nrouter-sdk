@@ -95,7 +95,7 @@ print(meta.isPriced ? "cost $\(meta.cost!)" : "cost unpriced")
 
 `NRouterResponseMeta` carries every `x-nr-*` header: `requestID`,
 `cost`, `costStatus`, `model`, `inputTokens`, `outputTokens`, `totalTokens`,
-`cacheReadTokens`, `cacheWriteTokens`, `limitSource`, `budgetWarning`, `authReason`,
+`cacheReadTokens`, `cacheWriteTokens`, `limitSource`, `budgetWarning`, `guardrails`, `authReason`,
 `responseCache`, `responseCacheAge`.
 
 `meta` is `Sendable`, so cost and token counts cross actor boundaries freely.

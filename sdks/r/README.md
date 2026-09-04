@@ -100,7 +100,7 @@ if (nrouter_is_priced(result$meta)) {
 
 `nrouter_meta` carries every `x-nr-*` header: `request_id`, `cost`,
 `cost_status`, `model`, `input_tokens`, `output_tokens`, `total_tokens`,
-`cache_read_tokens`, `cache_write_tokens`, `limit_source`, `budget_warning`, `auth_reason`,
+`cache_read_tokens`, `cache_write_tokens`, `limit_source`, `budget_warning`, `guardrails`, `auth_reason`,
 `response_cache`, `response_cache_age`. Each is `NULL` when the gateway did not
 send it.
 

@@ -95,7 +95,7 @@ print(meta.isPriced ? 'cost \$${meta.cost}' : 'cost unpriced');
 
 `NRouterResponseMeta` carries every `x-nr-*` header: `requestId`,
 `cost`, `costStatus`, `model`, `inputTokens`, `outputTokens`, `totalTokens`,
-`cacheReadTokens`, `cacheWriteTokens`, `limitSource`, `budgetWarning`, `authReason`,
+`cacheReadTokens`, `cacheWriteTokens`, `limitSource`, `budgetWarning`, `guardrails`, `authReason`,
 `responseCache`, `responseCacheAge`.
 
 ## Errors

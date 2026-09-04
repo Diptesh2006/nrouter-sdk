@@ -5,8 +5,28 @@
 name: publish-swift
 
 on:
+  # SDKCI-003 — SWIFT PUBLISHES FROM A GIT TAG, so the tag is what must be
+  # checked. The Swift Package Index indexes on the semver tag push itself, with no
+  # workflow upload in between, and the release step below only
+  # VERIFIES readiness — it uploads nothing. Before this filter existed NO
+  # workflow in the repo had a `tags:` trigger at all, so every check ran
+  # against the main commit PRECEDING the tag and `git push --tags` shipped an
+  # unchecked tree by construction. That was true before the 2026-09-02 Actions
+  # billing lock and would have stayed true after it cleared.
+  #
+  # THE PATTERN IS DOCUMENTED, NOT GUESSED. PUBLISHING.md:33 documents Swift as a BARE SemVer tag (`2.2.1`), NOT a
+  # `sdks/swift/*` one — and the repo bears this out: `git tag` returns
+  # `2.1.0 2.1.1 2.2.1` plus three `sdks/go/*`, and ZERO swift-namespaced tags.
+  # An `sdks/swift/v*` pattern would have been a trigger that fires never.
+  #
+  # `tags:` is a key INSIDE the existing `push:` mapping, never a second
+  # `push:`. YAML takes the last duplicate key, so a separate block silently
+  # DELETES `branches: [main]` — and the workflow still parses, which is what
+  # makes it dangerous. Pinned by tests/test_tag_publish_gated.py.
   push:
     branches: [main]
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
     paths:
       - 'sdks/swift/**'
       - 'Package.swift'

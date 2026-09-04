@@ -5,8 +5,26 @@
 name: publish-go
 
 on:
+  # SDKCI-003 — GO PUBLISHES FROM A GIT TAG, so the tag is what must be
+  # checked. proxy.golang.org resolves `refs/tags/sdks/go/v*` straight from this repo
+  # (`Origin.VCS` is `git`, not a CI upload), and the release step below only
+  # VERIFIES readiness — it uploads nothing. Before this filter existed NO
+  # workflow in the repo had a `tags:` trigger at all, so every check ran
+  # against the main commit PRECEDING the tag and `git push --tags` shipped an
+  # unchecked tree by construction. That was true before the 2026-09-02 Actions
+  # billing lock and would have stayed true after it cleared.
+  #
+  # THE PATTERN IS DOCUMENTED, NOT GUESSED. PUBLISHING.md:34 documents Go as an `sdks/go/v*` tag; the repo carries
+  # `sdks/go/v1.0.0`, `v1.0.1` and `v2.2.1`.
+  #
+  # `tags:` is a key INSIDE the existing `push:` mapping, never a second
+  # `push:`. YAML takes the last duplicate key, so a separate block silently
+  # DELETES `branches: [main]` — and the workflow still parses, which is what
+  # makes it dangerous. Pinned by tests/test_tag_publish_gated.py.
   push:
     branches: [main]
+    tags:
+      - 'sdks/go/v*'
     paths:
       - 'sdks/go/**'
       - 'spec/**'

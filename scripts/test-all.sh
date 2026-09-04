@@ -453,10 +453,16 @@ run_lane "cross-SDK conformance" "python" \
 # `pysdk` is what closes the dead gate: without the editable install this lane
 # died in collection on `import httpx2`, and every spec assertion in
 # tests/test_sdk_contract.py was unreachable.
-run_lane "repository contract and catalog guards" "pysdk py:httpx2 py:openai pyfloor:openai py:pytest git" \
+# `py:yaml` is required, not optional: tests/test_tag_publish_gated.py PARSES the
+# workflow YAML rather than scanning it as text — its first version passed under a
+# widened tag pattern because the SDK path also appears a few lines below in the
+# pull_request filter. Without PyYAML the lane must SKIP by name, not silently
+# lose that check.
+run_lane "repository contract and catalog guards" "pysdk py:httpx2 py:openai pyfloor:openai py:pytest py:yaml git" \
   "cd '$ROOT' \
    && '$PYTHON_BIN' -m unittest tests/test_sdk_contract.py \
    && '$PYTHON_BIN' -m pytest -q tests/test_release_versions.py \
+   && '$PYTHON_BIN' -m pytest -q tests/test_tag_publish_gated.py \
    && bash '$ROOT/tests/sdk-static-catalog-count.test.sh'"
 
 run_lane "cross-language demo E2E" "pysdk node swift mvn jre" \
@@ -464,6 +470,14 @@ run_lane "cross-language demo E2E" "pysdk node swift mvn jre" \
 
 run_lane "dependency security audit" "osv-scanner pip-audit npm" \
   "'$ROOT/scripts/security-audit.sh'"
+
+# SDKCI-004 — FIRST-PARTY static analysis, which the lane above does not do: it
+# audits third-party advisories, this scans the code we wrote. It mirrors the
+# CodeQL default setup that has been dead org-wide since the 2026-09-02 Actions
+# billing lock, on a world-readable repo. Its own --self-test plants a tracked
+# injection and refuses to pass unless the gate reports it.
+run_lane "first-party SAST (CodeQL mirror)" "semgrep git" \
+  "'$ROOT/scripts/sast.sh'"
 
 run_lane "JavaScript / TypeScript" "npm" \
   "cd '$ROOT/sdks/js' && npm test"

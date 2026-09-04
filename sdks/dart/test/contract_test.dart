@@ -272,6 +272,31 @@ void main() {
         expect(stopwatch.elapsed, lessThan(const Duration(seconds: 2)));
         await body.close();
       }
+
+      final active = MockClient.streaming((request, requestBody) async {
+        await requestBody.drain<void>();
+        return http.StreamedResponse(
+          () async* {
+            for (var i = 0; i < 5; i++) {
+              yield utf8.encode('data: {"delta":"$i"}\n\n');
+              await Future<void>.delayed(const Duration(milliseconds: 50));
+            }
+            yield utf8.encode('data: [DONE]\n\n');
+          }(),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final activeClient = NRouter(
+        apiKey: 'sk-nrouter-test',
+        httpClient: active,
+        bodyIdleTimeout: const Duration(milliseconds: 150),
+      );
+      final stopwatch = Stopwatch()..start();
+      final chunks = await activeClient.responsesStream({}).toList();
+      stopwatch.stop();
+      expect(chunks, hasLength(5));
+      expect(stopwatch.elapsed, greaterThan(const Duration(milliseconds: 150)));
     });
 
     test('a buffered call that never answers fails instead of hanging',

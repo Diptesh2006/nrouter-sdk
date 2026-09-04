@@ -19,6 +19,12 @@ import { jsonRequest } from './json';
 import { streamChat, type StreamRunner, type StreamResult } from './stream';
 import type { NRouterCallOptions, NRouterFeatureOptions, NRouterResponse, ResponseMeta } from './types';
 
+// The one route this hybrid client delegates without an nRouter-native helper.
+// This type is erased at runtime but compiled against the lock-resolved OpenAI
+// SDK, so an upstream release that removes or renames the resource makes the
+// package build fail before conformance can count the delegated route cell.
+type _DelegatedCompletionsCreate = OpenAI["completions"]["create"];
+
 /** The gateway's customer surface. A dynamic value: override it for stage. */
 export const DEFAULT_BASE_URL = 'https://api.nrouter.ai/v1';
 /** The one environment variable this SDK reads. */

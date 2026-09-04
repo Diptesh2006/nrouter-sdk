@@ -34,9 +34,16 @@ number.
 | Python | PyPI | [pypi.org/project/nrouter-sdk](https://pypi.org/project/nrouter-sdk/) | `nrouter-sdk` | 2.2.1 |
 | Java | Maven Central | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | `ai.nrouter:nrouter-sdk` | 2.2.1 |
 
-`sdks/{kotlin,android,rust,dart,go,swift,r}` are held to the same public wire
-contract. The six first-party native transports expose named helpers for all 15
-supported gateway operations; Android delegates that exact surface to Kotlin.
+All ten SDKs are held to the same public wire contract. The conformance gate
+accounts for all 150 route-ownership cells (15 routes × 10 SDKs): seven
+first-party transports expose native helpers with the exact path and HTTP verb,
+Android delegates the exact surface to Kotlin, and the JS/Python hybrid clients
+explicitly partition native helpers from their bounded vendor-client
+inheritance seam. Python's native route cells require both sync and async
+implementations. For inherited routes, the source gate proves ownership and a
+compiled resource—not the vendor package's internal HTTP implementation. The
+complete local gate compiles and runs the package suites against their locked
+dependencies.
 
 The conformance gate derives and compares every manifest to the canonical
 version in `spec/nrouter-sdk-spec.json`; release metadata cannot drift silently.
@@ -291,15 +298,15 @@ curl -s https://nrouterai.r-universe.dev/src/contrib/PACKAGES | grep -A4 '^Packa
 Java keeps its vendor-compatible OpenAI factory and adds a Java 11 native HTTP
 surface for all 15 gateway operations, four incremental SSE wires, all fourteen
 `x-nr-*` headers and nine typed gateway errors.
-JavaScript/TypeScript and the six first-party native clients expose the same
-contract. Android delegates those guarantees to Kotlin; Python adds the same
-nRouter typing and metadata capture around its vendor client.
+JavaScript/TypeScript and the seven first-party native transports expose the
+same contract. Android delegates those guarantees to Kotlin; Python adds the
+same nRouter typing and metadata capture around its vendor client.
 
 **Every SDK is held to one contract.** `conformance/check_conformance.py` reads
 [`spec/nrouter-sdk-spec.json`](spec/nrouter-sdk-spec.json) and fails if any SDK drifts on
 the base URL, the environment variable, the key prefix, a response header, an error code,
-one of the 15 native endpoint helpers, or one of the four native streaming
-helpers.
+one of the 150 route-ownership cells, or one of the four native streaming
+helpers per first-party transport.
 It needs no toolchains, and its `--self-test` proves it goes red rather than merely
 printing green. See [`conformance/`](conformance/).
 

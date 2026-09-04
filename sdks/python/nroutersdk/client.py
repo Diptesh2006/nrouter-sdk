@@ -30,6 +30,34 @@ from nroutersdk.sampling import build_sampling_params
 if TYPE_CHECKING:
     from typing_extensions import Self
 
+    # Route-specific compile-time proof for the resources this hybrid client
+    # inherits from the bounded OpenAI dependency. Native nRouter additions
+    # (Messages and video collection) are checked separately. Mypy resolves
+    # every attribute chain here; one removed vendor resource fails the build.
+    def _typecheck_openai_delegation(sync: _OpenAI, asynchronous: _AsyncOpenAI) -> None:
+        _ = (
+            sync.chat.completions.create,
+            sync.completions.create,
+            sync.embeddings.create,
+            sync.images.generate,
+            sync.audio.speech.create,
+            sync.audio.transcriptions.create,
+            sync.models.list,
+            sync.models.retrieve,
+            sync.responses.create,
+            sync.audio.translations.create,
+            asynchronous.chat.completions.create,
+            asynchronous.completions.create,
+            asynchronous.embeddings.create,
+            asynchronous.images.generate,
+            asynchronous.audio.speech.create,
+            asynchronous.audio.transcriptions.create,
+            asynchronous.models.list,
+            asynchronous.models.retrieve,
+            asynchronous.responses.create,
+            asynchronous.audio.translations.create,
+        )
+
 _DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 _ENV_KEY = "NROUTER_API_KEY"
 _ENV_BASE_URL = "NROUTER_BASE_URL"

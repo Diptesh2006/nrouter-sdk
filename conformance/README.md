@@ -7,9 +7,14 @@ gateway serving ten clients is only as correct as the one that drifted.
 This gate closes that gap. It reads `spec/nrouter-sdk-spec.json` — the source of
 truth under Rule #14 — and asserts every SDK's source encodes the same base URL,
 environment variable, key prefix, fourteen `x-nr-*` headers and nine error codes.
-For the six first-party native transports it also requires a named helper for
-every operation the spec marks supported, plus incremental streaming helpers
-for chat completions, legacy completions, Messages, and Responses.
+It reports and enforces all **150 route-ownership cells** (15 routes × 10 SDKs):
+seven first-party transports must carry a native helper with the spec's exact
+path and HTTP verb; Android must prove its endpoint-specific Kotlin delegation;
+and the JS/Python hybrid clients must prove each route's native helper or their
+bounded vendor-client inheritance seam. Python's native cells require the sync
+and async helpers. The seven native transports also require incremental
+streaming helpers for chat completions, legacy completions, Messages, and
+Responses.
 
 The same gate also enforces the coordinated release version across all ten
 distribution manifests, JavaScript/Rust lockfiles, Python's imported version,
@@ -53,7 +58,7 @@ to its type`, the codeless-status tests, and the metadata parsing tests, every
 one mutation-checked. This gate covers what those cannot: that all nine agree
 with each other. Neither replaces the other.
 
-## Exemptions, stated rather than silent
+## Delegation, stated rather than silent
 
 - **`java`** — the vendor-compatible factory remains, while the additive Java
   11 HTTP surface now owns and is checked for all fourteen metadata headers and
@@ -62,6 +67,15 @@ with each other. Neither replaces the other.
   artifact. It must *prove* the delegation by referencing
   `NRouter.DEFAULT_BASE_URL`, and it **fails if it hardcodes the base URL**,
   because a second copy of that constant is the drift this gate is looking for.
+- **`javascript` and `python`** — inherit established resources from their
+  bounded OpenAI dependency and own the nRouter-only/native additions. The gate
+  partitions every route between those two owners and requires a route-specific
+  typed declaration for each delegated resource. This tool verifies that source
+  evidence; the complete local gate runs TypeScript and mypy so dead or invalid
+  declarations fail. It does **not** claim to parse or prove the vendor
+  package's internal path/verb implementation; the package suites exercise the
+  locked dependency through HTTP fakes. Mutation tests cover native JS, native
+  Python, and vendor-inheritance loss.
 
 ## When it goes red
 

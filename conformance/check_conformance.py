@@ -9,8 +9,9 @@ serving ten SDKs is only as correct as the one that drifted.
 This gate closes that. It reads `spec/nrouter-sdk-spec.json` — the source of
 truth under Rule #14 — and asserts that every SDK's source literally contains
 the base URL, the environment variable, the key prefix, all fourteen `x-nr-*`
-headers and all nine error codes. The six first-party native transports must
-also expose a named helper for every supported operation. Change the spec and
+headers and all nine error codes. Every one of the ten SDKs must also expose a
+named helper for every supported operation or prove an explicit delegation
+seam. Change the spec and
 every SDK goes red until it is updated; drop a header or endpoint helper from
 one SDK and only that SDK goes red.
 
@@ -64,6 +65,9 @@ SDK_SOURCES: dict[str, list[str]] = {
     # is held to the same contract as every other native SDK.
     "js": [
         "sdks/js/src/client.ts",
+        "sdks/js/src/chat.ts",
+        "sdks/js/src/multimodal.ts",
+        "sdks/js/src/models.ts",
         # types.ts carries HEADER_NAMES; meta.ts carries the parse sites. The
         # gate's declared-AND-used rule needs both files or every header reads
         # as declared-but-never-parsed.
@@ -138,6 +142,174 @@ RELEASE_METADATA_PATHS = {
 # wire tests prove that the named helper sends the path correctly.
 FIRST_PARTY_NATIVE = {"go", "java", "kotlin", "swift", "rust", "dart", "r"}
 
+# JS and Python deliberately combine their own gateway additions with a
+# vendor-client inheritance seam. Each endpoint belongs to exactly one side of
+# that boundary here: a native helper must be present in executable source; a
+# delegated helper requires the inheritance declaration and bounded vendor
+# dependency. "Wrapper" is never a blanket route exemption.
+HYBRID_NATIVE_HELPERS = {
+    "js": {
+        "chat.completions.create()": r"\bchat\(opts:\s*NRouterCallOptions\)",
+        "embeddings.create()": r"async\s+embeddings\(",
+        "images.generate()": r"async\s+image\(",
+        "videos.create()": r"async\s+video\(",
+        "audio.speech.create()": r"async\s+speech\(",
+        "audio.transcriptions.create()": r"async\s+transcribe\(",
+        "models.list()": r"async\s+list\(\):\s*Promise<NRouterModelList>",
+        "models.retrieve()": r"async\s+get\(modelId:\s*string\)",
+        "messages.create()": r"\bmessages\(\s*body:\s*Record<string, unknown>",
+        "messages.count_tokens()": r"\bcountTokens\(body:\s*Record<string, unknown>",
+        "responses.create()": r"\bresponses\(\s*body:\s*Record<string, unknown>",
+        "audio.translations.create()": r"async\s+translate\(",
+        "videos.retrieve()": r"async\s+videoStatus\(",
+        "videos.download_content()": r"async\s+videoContent\(",
+    },
+}
+
+PYTHON_NATIVE_HELPERS = {
+    "videos.create()": (("_Videos", "create"), ("_AsyncVideos", "create")),
+    "messages.create()": (("_Messages", "create"), ("_AsyncMessages", "create")),
+    "messages.count_tokens()": (
+        ("_Messages", "count_tokens"),
+        ("_AsyncMessages", "count_tokens"),
+    ),
+    "videos.retrieve()": (("_Videos", "retrieve"), ("_AsyncVideos", "retrieve")),
+    "videos.download_content()": (
+        ("_Videos", "download_content"),
+        ("_AsyncVideos", "download_content"),
+    ),
+}
+
+DELEGATED_ROUTE_PROOFS = {
+    "js": {
+        "completions.create()": r'OpenAI\["completions"\]\["create"\]',
+    },
+    "python": {
+        "chat.completions.create()": r"sync\.chat\.completions\.create.*asynchronous\.chat\.completions\.create",
+        "completions.create()": r"sync\.completions\.create.*asynchronous\.completions\.create",
+        "embeddings.create()": r"sync\.embeddings\.create.*asynchronous\.embeddings\.create",
+        "images.generate()": r"sync\.images\.generate.*asynchronous\.images\.generate",
+        "audio.speech.create()": r"sync\.audio\.speech\.create.*asynchronous\.audio\.speech\.create",
+        "audio.transcriptions.create()": r"sync\.audio\.transcriptions\.create.*asynchronous\.audio\.transcriptions\.create",
+        "models.list()": r"sync\.models\.list.*asynchronous\.models\.list",
+        "models.retrieve()": r"sync\.models\.retrieve.*asynchronous\.models\.retrieve",
+        "responses.create()": r"sync\.responses\.create.*asynchronous\.responses\.create",
+        "audio.translations.create()": r"sync\.audio\.translations\.create.*asynchronous\.audio\.translations\.create",
+    },
+}
+
+R_ENDPOINT_PATH_KEYS = {
+    "completions.create()": "completions",
+    "images.generate()": "images_generations",
+    "messages.count_tokens()": "count_tokens",
+    "models.retrieve()": "model",
+    "videos.create()": "create_video",
+    "audio.speech.create()": "audio_speech",
+    "videos.retrieve()": "retrieve_video",
+    "videos.download_content()": "download_video_content",
+}
+
+# Dynamic paths must show the caller-provided identifier flowing through the
+# language's encoder between the exact prefix and suffix. Prefix/suffix
+# substring checks are insufficient: `/videos/static/content` is not evidence
+# for `/videos/{id}/content`.
+DYNAMIC_ROUTE_PATTERNS = {
+    "go": {
+        "models.retrieve()": r'"/models/"\s*\+\s*strings\.Join\(parts,\s*"/"\)',
+        "videos.retrieve()": r'"/videos/"\s*\+\s*url\.PathEscape\(id\)',
+        "videos.download_content()": r'"/videos/"\s*\+\s*url\.PathEscape\(id\)\s*\+\s*"/content"',
+    },
+    "java": {
+        "models.retrieve()": r'"/models/"\s*\+\s*encodeModelId\(modelId\)',
+        "videos.retrieve()": r'"/videos/"\s*\+\s*encodeSegment\(videoId,\s*"videoId"\)',
+        "videos.download_content()": r'"/videos/"\s*\+\s*encodeSegment\(videoId,\s*"videoId"\)\s*\+\s*"/content"',
+    },
+    "kotlin": {
+        "models.retrieve()": r'"/models/\$\{modelPath\(modelID\)\}"',
+        "videos.retrieve()": r'"/videos/\$\{pathSegment\(videoID\)\}"',
+        "videos.download_content()": r'"/videos/\$\{pathSegment\(videoID\)\}/content"',
+    },
+    "swift": {
+        "models.retrieve()": r'"/models/\\\(modelPath\(modelID\)\)"',
+        "videos.retrieve()": r'"/videos/\\\(pathSegment\(videoID\)\)"',
+        "videos.download_content()": r'"/videos/\\\(pathSegment\(videoID\)\)/content"',
+    },
+    "rust": {
+        "models.retrieve()": r'format!\("/models/\{\}",\s*percent_encode_model_id\(model_id\)\)',
+        "videos.retrieve()": r'format!\("/videos/\{\}",\s*percent_encode_segment\(video_id\)\)',
+        "videos.download_content()": r'format!\("/videos/\{\}/content",\s*percent_encode_segment\(video_id\)\)',
+    },
+    "dart": {
+        "models.retrieve()": r"'/models/\$\{modelId\.split\('/'\)\.map\(Uri\.encodeComponent\)\.join\('/'\)\}'",
+        "videos.retrieve()": r"'/videos/\$\{Uri\.encodeComponent\(videoId\)\}'",
+        "videos.download_content()": r"'/videos/\$\{Uri\.encodeComponent\(videoId\)\}/content'",
+    },
+    "js": {
+        "models.retrieve()": r"`/models/\$\{encodeModelId\(modelId\)\}`",
+        "videos.retrieve()": r"`/videos/\$\{encodePathSegment\(id,\s*'video id'\)\}`",
+        "videos.download_content()": r"`/videos/\$\{encodePathSegment\(id,\s*'video id'\)\}/content`",
+    },
+    "python": {
+        "videos.retrieve()": r'f"/v1/videos/\{quote\(video_id,\s*safe=\'\'\)\}"',
+        "videos.download_content()": r'f"/v1/videos/\{quote\(video_id,\s*safe=\'\'\)\}/content"',
+    },
+}
+
+DYNAMIC_ROUTE_PRECONDITIONS = {
+    "go": {
+        "models.retrieve()": (
+            r'parts\s*:=\s*strings\.Split\(id,\s*"/"\).*?'
+            r"for\s+i\s*:=\s*range\s+parts\s*\{\s*"
+            r"parts\[i\]\s*=\s*url\.PathEscape\(parts\[i\]\)\s*\}"
+        ),
+    },
+}
+
+TRANSPORT_CALL_PATTERNS = {
+    "go": r"\bc\.(?:Post|Get|Bytes|Multipart)\(",
+    "java": r"\b(?:post|postBinary|get|getBinary|postMultipart)\(",
+    "kotlin": r"\b(?:post|get|bytes|multipart)\(",
+    "swift": r"\b(?:post|get|bytes|multipart)\(",
+    "rust": r"\bself\.(?:post|get|bytes|multipart)\(",
+    "dart": r"\b(?:post|get|bytes|multipart)\(",
+    "r": r"\bnrouter_(?:request|bytes|multipart)\(",
+    "python": r"\b_nrouter_(?:post|get|get_bytes)\(",
+    "js": r"\b(?:runChat|jsonRequest|this\.send|this\.audioUpload|this\.client\s*\.get)\(",
+}
+
+NEXT_FUNCTION_PATTERNS = {
+    "go": r"^func\s+\(",
+    "java": r"^\s+(?:public|private|protected)\s+",
+    "kotlin": r"^\s+(?:public|private)\s+(?:suspend\s+)?fun\s+",
+    "swift": r"^\s+(?:public|private)\s+func\s+",
+    "rust": r"^\s+(?:pub\s+)?(?:async\s+)?fn\s+",
+    "dart": r"^\s+(?:Future|Stream|void)\b",
+    "r": r"^nrouter_[a-z0-9_]+\s*<-\s*function\(",
+}
+
+R_ENDPOINT_MAPPING_PATTERNS = {
+    "completions.create()": r'completions\s*=\s*"/completions"',
+    "images.generate()": r'images_generations\s*=\s*"/images/generations"',
+    "messages.count_tokens()": r'count_tokens\s*=\s*"/messages/count_tokens"',
+    "models.retrieve()": r'model\s*=\s*paste0\("/models/",\s*model_id\(id\)\)',
+    "videos.create()": r'create_video\s*=\s*"/videos"',
+    "audio.speech.create()": r'audio_speech\s*=\s*"/audio/speech"',
+    "videos.retrieve()": r'retrieve_video\s*=\s*paste0\("/videos/",\s*segment\(id\)\)',
+    "videos.download_content()": r'download_video_content\s*=\s*paste0\("/videos/",\s*segment\(id\),\s*"/content"\)',
+}
+
+DELEGATION_PROOFS = {
+    "js": (
+        ("source inheritance", "sdks/js/src/client.ts", r"export\s+class\s+nRouter\s+extends\s+OpenAI"),
+        ("bounded vendor dependency", "sdks/js/package.json", r'"openai"\s*:\s*"\^7\.8\.0"'),
+    ),
+    "python": (
+        ("sync source inheritance", "sdks/python/nroutersdk/client.py", r"class\s+nRouter\(_OpenAI\)"),
+        ("async source inheritance", "sdks/python/nroutersdk/client.py", r"class\s+AsyncnRouter\(_AsyncOpenAI\)"),
+        ("bounded vendor dependency", "sdks/python/pyproject.toml", r'"openai>=3\.6\.0,<4"'),
+    ),
+}
+
 # The four text-generation wires are genuinely incremental in every native
 # transport. Keep that a contract rather than a README claim.
 STREAMING_NATIVE = FIRST_PARTY_NATIVE
@@ -201,6 +373,496 @@ def stream_helper_pattern(sdk: str, basename: str) -> str:
         "r": rf"nrouter_{snake}\s*<-\s*function\(",
     }
     return patterns[sdk]
+
+
+def path_markers_present(region: str, endpoint: dict) -> bool:
+    """Require one route's literals inside the helper that claims the route."""
+    wire_path = endpoint["path"].removeprefix("/v1")
+    candidates = (wire_path, "/v1" + wire_path)
+    if "{" not in wire_path:
+        return any(
+            re.search(rf'["\']{re.escape(candidate)}["\']', region) is not None
+            for candidate in candidates
+        )
+
+    prefix, remainder = wire_path.split("{", 1)
+    suffix = remainder.split("}", 1)[1]
+    prefix_seen = prefix in region or ("/v1" + prefix) in region
+    return prefix_seen and (not suffix or suffix in region)
+
+
+def helper_region(blob: str, sdk: str, operation: str) -> str | None:
+    basename = HELPER_BASENAMES.get(operation)
+    if basename is None:
+        return None
+    match = re.search(native_helper_pattern(sdk, basename), blob)
+    if match is None:
+        return None
+
+    following = re.search(
+        NEXT_FUNCTION_PATTERNS[sdk],
+        blob[match.end():],
+        flags=re.MULTILINE,
+    )
+    end = match.end() + following.start() if following is not None else len(blob)
+    # The route call is adjacent to every public helper. Bound the last helper
+    # too, so a generic transport path much later in the file cannot satisfy it.
+    return blob[match.start():min(end, match.start() + 2_000)]
+
+
+def braced_region(blob: str, signature_pattern: str) -> str | None:
+    """Return one function body, balancing nested braces and quoted strings."""
+    signature = re.search(
+        signature_pattern,
+        blob,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if signature is None:
+        return None
+    opening = (
+        signature.end() - 1
+        if signature.group(0).endswith("{")
+        else blob.find("{", signature.end())
+    )
+    if opening < 0:
+        return None
+
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    for index in range(opening, len(blob)):
+        char = blob[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {'"', "'", "`"}:
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return blob[signature.start(): index + 1]
+    return None
+
+
+def js_chat_route_present(root: Path) -> bool:
+    """Prove the scoped wrapper → selector → runner → POST call chain."""
+    client_path = root / "sdks/js/src/client.ts"
+    chat_path = root / "sdks/js/src/chat.ts"
+    if not client_path.exists() or not chat_path.exists():
+        return False
+    client = strip_comments(client_path.read_text())
+    chat = strip_comments(chat_path.read_text())
+
+    wrapper = braced_region(
+        client,
+        r"^\s{2}chat\(opts:\s*NRouterCallOptions\):\s*Promise<",
+    )
+    selector = braced_region(chat, r"^export\s+async\s+function\s+chat\(")
+    handoff = braced_region(chat, r"^async\s+function\s+send\(")
+    request = braced_region(
+        client,
+        r"^\s{2}async\s+request\(.*?^\s{2}>\s*\{",
+    )
+    if any(part is None for part in (wrapper, selector, handoff, request)):
+        return False
+    assert wrapper is not None and selector is not None
+    assert handoff is not None and request is not None
+
+    selector_call = balanced_call(selector, r"\bsend")
+    handoff_call = balanced_call(handoff, r"\brunner\.request")
+    return (
+        re.search(r"return\s+runChat\(this,\s*opts\)", wrapper) is not None
+        and re.search(r"CHAT_PATH\s*=\s*['\"]/chat/completions['\"]", chat)
+        is not None
+        and selector_call is not None
+        and re.search(
+            r"messagesWire\s*\?\s*MESSAGES_PATH\s*:\s*CHAT_PATH",
+            selector_call,
+        )
+        is not None
+        and handoff_call is not None
+        and re.search(r"runner\.request\(path,\s*body\)", handoff_call) is not None
+        and re.search(
+            r"typeof\s+pathOrReq\s*===\s*'string'.*?"
+            r"\?\s*\{\s*method:\s*'POST',\s*path:\s*pathOrReq,",
+            request,
+            flags=re.DOTALL,
+        )
+        is not None
+    )
+
+
+def js_audio_upload_present(root: Path) -> bool:
+    """Prove native audio helpers' shared upload seam performs a POST."""
+    path = root / "sdks/js/src/multimodal.ts"
+    if not path.exists():
+        return False
+    blob = strip_comments(path.read_text())
+    region = braced_region(blob, r"^\s{2}private\s+async\s+audioUpload\(")
+    if region is None:
+        return False
+    call = balanced_call(region, r"\bthis\.send")
+    return call is not None and re.search(
+        r"this\.send\(\s*'POST'\s*,\s*path\s*,",
+        call,
+    ) is not None
+
+
+def balanced_call(region: str, callee_pattern: str) -> str | None:
+    """Return one complete call expression, including nested path builders."""
+    callee = re.search(callee_pattern, region)
+    if callee is None:
+        return None
+    opening = region.find("(", callee.end())
+    if opening < 0:
+        return None
+
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    for index in range(opening, len(region)):
+        char = region[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {'"', "'", "`"}:
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return region[callee.start(): index + 1]
+    return None
+
+
+def transport_call(region: str, sdk: str, operation: str, method: str) -> str | None:
+    """Return the single route call whose transport expresses the spec verb.
+
+    Merely finding the right path is not enough: ``GET /models`` and
+    ``POST /models`` are different contracts. These patterns intentionally
+    inspect the named helper's own bounded body. The callee names are the SDKs'
+    tested transport seams; multipart and binary helpers need their own forms.
+    """
+    if method not in {"GET", "POST"}:
+        return None
+    if len(re.findall(TRANSPORT_CALL_PATTERNS[sdk], region)) != 1:
+        return None
+
+    multipart = operation in {
+        "audio.transcriptions.create()",
+        "audio.translations.create()",
+    }
+    binary = operation in {
+        "audio.speech.create()",
+        "videos.download_content()",
+    }
+
+    if sdk == "go":
+        if multipart:
+            pattern = r"\bc\.Multipart"
+        elif binary:
+            pattern = r"\bc\.Bytes"
+        else:
+            pattern = rf"\bc\.{method.title()}"
+    elif sdk == "java":
+        if multipart:
+            pattern = r"\bpostMultipart"
+        elif binary:
+            pattern = r"\bpostBinary" if method == "POST" else r"\bgetBinary"
+        else:
+            pattern = r"\bpost" if method == "POST" else r"\bget"
+    elif sdk in {"kotlin", "swift"}:
+        if multipart:
+            pattern = r"\bmultipart"
+        elif binary:
+            pattern = r"\bbytes"
+        else:
+            pattern = r"\bpost" if method == "POST" else r"\bget"
+    elif sdk == "rust":
+        if multipart:
+            pattern = r"\bself\.multipart"
+        elif binary:
+            pattern = r"\bself\.bytes"
+        else:
+            pattern = r"\bself\.post" if method == "POST" else r"\bself\.get"
+    elif sdk == "dart":
+        if multipart:
+            pattern = r"\bmultipart"
+        elif binary:
+            pattern = r"\bbytes"
+        else:
+            pattern = r"\bpost" if method == "POST" else r"\bget"
+    elif sdk == "r":
+        if multipart:
+            pattern = r"\bnrouter_multipart"
+        elif binary:
+            pattern = r"\bnrouter_bytes"
+        else:
+            pattern = r"\bnrouter_request"
+    elif sdk == "python":
+        if method == "POST":
+            pattern = r"\b_nrouter_post"
+        elif binary:
+            pattern = r"\b_nrouter_get_bytes"
+        else:
+            pattern = r"\b_nrouter_get"
+    elif sdk == "js":
+        if operation == "chat.completions.create()":
+            pattern = r"\brunChat"
+        elif operation in {
+            "messages.create()",
+            "messages.count_tokens()",
+            "responses.create()",
+        }:
+            pattern = r"\bjsonRequest"
+        elif operation in {"models.list()", "models.retrieve()"}:
+            pattern = r"\bthis\.client\s*\.get"
+        elif multipart:
+            pattern = r"\bthis\.audioUpload"
+        else:
+            pattern = r"\bthis\.send"
+    else:
+        return None
+
+    call = balanced_call(region, pattern)
+    if call is None:
+        return None
+
+    # These transports select the verb through an argument rather than a
+    # method-specific callee. Check that argument inside this SAME call.
+    if sdk == "go" and binary:
+        if re.search(rf"\bhttp\.Method{method.title()}\s*,", call) is None:
+            return None
+    elif sdk == "rust" and binary:
+        if re.search(rf'\bself\.bytes\(\s*"{method}"\s*,', call) is None:
+            return None
+    elif sdk == "js" and operation not in {
+        "chat.completions.create()",
+        "messages.create()",
+        "messages.count_tokens()",
+        "responses.create()",
+        "models.list()",
+        "models.retrieve()",
+        "audio.transcriptions.create()",
+        "audio.translations.create()",
+    }:
+        if re.search(rf"\bthis\.send\(\s*'{method}'\s*,", call) is None:
+            return None
+    elif (
+        sdk in {"kotlin", "swift", "dart", "r"} and binary
+    ) or (sdk == "r" and not multipart):
+        has_body = re.search(r",\s*body\s*\)$", call) is not None
+        if has_body != (method == "POST"):
+            return None
+    return call
+
+
+def native_route_present(blob: str, sdk: str, endpoint: dict) -> bool:
+    operation = endpoint["sdk"]
+    region = helper_region(blob, sdk, operation)
+    if region is None:
+        return False
+    precondition = DYNAMIC_ROUTE_PRECONDITIONS.get(sdk, {}).get(operation)
+    if precondition is not None and re.search(
+        precondition, region, flags=re.DOTALL
+    ) is None:
+        return False
+    call = transport_call(region, sdk, operation, endpoint["method"])
+    if call is None:
+        return False
+    if "{" in endpoint["path"]:
+        dynamic = DYNAMIC_ROUTE_PATTERNS.get(sdk, {}).get(operation)
+        if dynamic is not None:
+            return re.search(dynamic, call) is not None
+        if sdk == "r" and operation in R_ENDPOINT_PATH_KEYS:
+            key = R_ENDPOINT_PATH_KEYS[operation]
+            return (
+                f'nrouter_endpoint_path("{key}"' in call
+                and re.search(R_ENDPOINT_MAPPING_PATTERNS[operation], blob) is not None
+            )
+        return False
+    if path_markers_present(call, endpoint):
+        return True
+    if sdk == "r" and operation in R_ENDPOINT_PATH_KEYS:
+        key = R_ENDPOINT_PATH_KEYS[operation]
+        mapping = R_ENDPOINT_MAPPING_PATTERNS[operation]
+        return (
+            f'nrouter_endpoint_path("{key}"' in call
+            and re.search(mapping, blob) is not None
+        )
+    return False
+
+
+def python_native_helper_regions(blob: str, operation: str) -> list[str] | None:
+    owners = PYTHON_NATIVE_HELPERS.get(operation)
+    if owners is None:
+        return None
+    regions: list[str] = []
+    for class_name, method_name in owners:
+        block = re.search(
+            rf"^class\s+{re.escape(class_name)}:.*?(?=^class\s+|\Z)",
+            blob,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        if block is None:
+            return None
+        method = re.search(
+            rf"^\s+(?:async\s+)?def\s+{re.escape(method_name)}\(.*?"
+            rf"(?=^\s+(?:async\s+)?def\s+|\Z)",
+            block.group(0),
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        if method is None:
+            return None
+        regions.append(method.group(0))
+    return regions
+
+
+def js_native_helper_region(blob: str, operation: str) -> str | None:
+    pattern = HYBRID_NATIVE_HELPERS["js"].get(operation)
+    if pattern is None:
+        return None
+    match = re.search(pattern, blob)
+    if match is None:
+        return None
+    following = []
+    for other in HYBRID_NATIVE_HELPERS["js"].values():
+        found = re.search(other, blob[match.end():])
+        if found is not None:
+            following.append(match.end() + found.start())
+    end = min(following, default=len(blob))
+    return blob[match.start():min(end, match.start() + 2_000)]
+
+
+def route_coverage(root: Path, spec: dict) -> tuple[list[str], int, int]:
+    """Prove and count every endpoint-by-SDK ownership cell.
+
+    Native cells bind a helper to its path and verb. Delegated cells prove a
+    route-specific compiled resource on a bounded vendor dependency; they do
+    not pretend a toolchain-free source scan can prove that dependency's
+    internal HTTP implementation.
+    """
+    failures: list[str] = []
+    verified = 0
+    endpoints = spec["supported_endpoints"]
+    total = len(SDK_SOURCES) * len(endpoints)
+
+    blobs: dict[str, str] = {}
+    for sdk, rel_paths in SDK_SOURCES.items():
+        parts = []
+        for rel in rel_paths:
+            path = root / rel
+            if path.exists():
+                parts.append(path.read_text())
+        blobs[sdk] = strip_comments("\n".join(parts))
+
+    delegation_ok: dict[str, bool] = {}
+    for sdk, proofs in DELEGATION_PROOFS.items():
+        ok = True
+        for label, rel, pattern in proofs:
+            path = root / rel
+            text = path.read_text() if path.exists() else ""
+            if re.search(pattern, text) is None:
+                failures.append(f"{sdk}: explicit route delegation lost {label} in {rel}")
+                ok = False
+        delegation_ok[sdk] = ok
+
+    js_chat_ok = js_chat_route_present(root)
+    js_audio_upload_ok = js_audio_upload_present(root)
+
+    for sdk, blob in blobs.items():
+        for endpoint in endpoints:
+            operation = endpoint["sdk"]
+            cell_ok = False
+
+            if sdk in FIRST_PARTY_NATIVE:
+                if HELPER_BASENAMES.get(operation) is None:
+                    failures.append(
+                        f"conformance gate: no native helper mapping for {operation} "
+                        f"({endpoint['method']} {endpoint['path']})"
+                    )
+                    continue
+                cell_ok = native_route_present(blob, sdk, endpoint)
+            elif sdk in DELEGATES:
+                owner = DELEGATES[sdk]["owner"]
+                owner_blob = blobs.get(owner, "")
+                # Android returns the Kotlin NRouter itself; it has no second
+                # route implementation to drift. Bind each delegated cell to
+                # the corresponding owner helper so one missing/miswired
+                # Kotlin route invalidates BOTH Kotlin and Android evidence.
+                cell_ok = (
+                    all(symbol in blob for symbol in DELEGATES[sdk]["symbols"])
+                    and owner in FIRST_PARTY_NATIVE
+                    and native_route_present(owner_blob, owner, endpoint)
+                )
+            elif sdk == "python" and operation in PYTHON_NATIVE_HELPERS:
+                regions = python_native_helper_regions(blob, operation)
+                dynamic = DYNAMIC_ROUTE_PATTERNS["python"].get(operation)
+                cell_ok = regions is not None and all(
+                    (call := transport_call(
+                        region, "python", operation, endpoint["method"]
+                    )) is not None
+                    and (
+                        re.search(dynamic, call) is not None
+                        if dynamic is not None
+                        else path_markers_present(call, endpoint)
+                    )
+                    for region in regions
+                )
+            elif operation in HYBRID_NATIVE_HELPERS.get(sdk, {}):
+                region = js_native_helper_region(blob, operation)
+                if sdk == "js" and operation == "chat.completions.create()":
+                    cell_ok = region is not None and js_chat_ok
+                else:
+                    dynamic = DYNAMIC_ROUTE_PATTERNS["js"].get(operation)
+                    call = (
+                        transport_call(region, sdk, operation, endpoint["method"])
+                        if region is not None
+                        else None
+                    )
+                    cell_ok = call is not None and (
+                        re.search(dynamic, call) is not None
+                        if dynamic is not None
+                        else path_markers_present(call, endpoint)
+                    )
+                    if operation in {
+                        "audio.transcriptions.create()",
+                        "audio.translations.create()",
+                    }:
+                        cell_ok = cell_ok and js_audio_upload_ok
+            elif operation in DELEGATED_ROUTE_PROOFS.get(sdk, {}):
+                cell_ok = delegation_ok.get(sdk, False) and re.search(
+                    DELEGATED_ROUTE_PROOFS[sdk][operation], blob, flags=re.DOTALL
+                ) is not None
+            else:
+                failures.append(
+                    f"{sdk}: {endpoint['method']} {endpoint['path']} has no declared "
+                    "native helper or explicit delegation owner"
+                )
+                continue
+
+            if cell_ok:
+                verified += 1
+            else:
+                failures.append(
+                    f"{sdk}: supported endpoint {endpoint['method']} "
+                    f"{endpoint['path']} has no executable native helper or valid delegation"
+                )
+
+    return failures, verified, total
 
 
 # An SDK that only wraps a vendor client does not restate every constant: the
@@ -503,31 +1165,6 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
             if code not in blob:
                 failures.append(f"{sdk}: error code {code!r} is not mapped")
 
-        if sdk in FIRST_PARTY_NATIVE:
-            for endpoint in spec["supported_endpoints"]:
-                basename = HELPER_BASENAMES.get(endpoint["sdk"])
-                if basename is None:
-                    failures.append(
-                        f"conformance gate: no native helper mapping for "
-                        f"{endpoint['sdk']} ({endpoint['method']} {endpoint['path']})"
-                    )
-                    continue
-                wire_path = endpoint["path"].removeprefix("/v1")
-                if "{" in wire_path:
-                    prefix, remainder = wire_path.split("{", 1)
-                    suffix = remainder.split("}", 1)[1]
-                    present = prefix in blob and (not suffix or suffix in blob)
-                else:
-                    present = wire_path in blob
-                has_helper = (
-                    re.search(native_helper_pattern(sdk, basename), blob) is not None
-                )
-                if not present or not has_helper:
-                    failures.append(
-                        f"{sdk}: supported endpoint {endpoint['method']} "
-                        f"{endpoint['path']} has no executable native helper"
-                    )
-
         if sdk in STREAMING_NATIVE:
             for basename in STREAM_HELPERS.values():
                 if re.search(stream_helper_pattern(sdk, basename), blob) is None:
@@ -563,6 +1200,8 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
                     f"response with that status cannot be classified"
                 )
 
+    route_failures, _, _ = route_coverage(root, spec)
+    failures.extend(route_failures)
     failures.extend(check_swift_manifests(root))
     failures.extend(check_release_versions(root, spec))
     failures.extend(check_doc_wires(root, spec))
@@ -724,6 +1363,273 @@ def self_test() -> int:
             )
         victim.write_text(text)
 
+        # JS owns its multimodal transport. Losing one of those helpers must
+        # fail even though the inherited OpenAI client still has other routes.
+        victim = fake_root / "sdks/js/src/multimodal.ts"
+        text = victim.read_text()
+        victim.write_text(text.replace("async speech(", "async removedSpeech(", 1))
+        failures = check(root=fake_root)
+        if not any("/v1/audio/speech" in f and "js" in f for f in failures):
+            problems.append("deleting a real JS endpoint helper did not fail the check")
+        victim.write_text(text)
+
+        victim.write_text(
+            text.replace(
+                "this.send('POST', path, body, options)",
+                "this.send('GET', path, body, options)",
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/audio/transcriptions" in f and "js" in f for f in failures):
+            problems.append("miswiring the JS audio-upload method did not fail the check")
+        victim.write_text(text)
+
+        # The inherited route proof is route-specific and type-checked by each
+        # SDK's native lane,
+        # not one generic "extends OpenAI" waiver for the whole SDK.
+        victim = fake_root / "sdks/js/src/client.ts"
+        text = victim.read_text()
+        victim.write_text(
+            text.replace(
+                'OpenAI["completions"]["create"]',
+                'OpenAI["completions"]["removed"]',
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/completions" in f and "js" in f for f in failures):
+            problems.append("deleting JS delegated-route evidence did not fail the check")
+        victim.write_text(text)
+
+        # The public chat helper crosses client.ts and chat.ts. Losing the
+        # concrete POST construction must invalidate the route even while the
+        # correct path constant and runChat wrapper remain.
+        victim.write_text(
+            text.replace(
+                "? { method: 'POST', path: pathOrReq,",
+                "? { method: 'GET', path: pathOrReq,",
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/chat/completions" in f and "js" in f for f in failures):
+            problems.append("miswiring the JS chat transport method did not fail the check")
+        victim.write_text(text)
+
+        victim = fake_root / "sdks/js/src/chat.ts"
+        text = victim.read_text()
+        victim.write_text(
+            text.replace(
+                "messagesWire ? MESSAGES_PATH : CHAT_PATH,",
+                "messagesWire ? MESSAGES_PATH : MESSAGES_PATH,",
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/chat/completions" in f and "js" in f for f in failures):
+            problems.append("miswiring JS chat path selection did not fail the check")
+        victim.write_text(text)
+
+        # Python's video helpers are native additions to the inherited OpenAI
+        # client. A deleted helper must not hide behind that inheritance seam.
+        victim = fake_root / "sdks/python/nroutersdk/client.py"
+        text = victim.read_text()
+        victim.write_text(
+            text.replace("def download_content(", "def removed_download_content(", 1)
+        )
+        failures = check(root=fake_root)
+        if not any(
+            "/v1/videos/{id}/content" in f and "python" in f for f in failures
+        ):
+            problems.append("deleting a real Python endpoint helper did not fail the check")
+        victim.write_text(text)
+
+        # Python exposes parallel sync and async native collections. A route
+        # cell is complete only when BOTH implementations remain wired.
+        victim.write_text(
+            text.replace(
+                "async def download_content(",
+                "async def removed_download_content(",
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any(
+            "/v1/videos/{id}/content" in f and "python" in f for f in failures
+        ):
+            problems.append("deleting a Python async endpoint helper did not fail the check")
+        victim.write_text(text)
+
+        victim.write_text(
+            text.replace("sync.audio.speech.create", "sync.audio.speech.removed", 1)
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/audio/speech" in f and "python" in f for f in failures):
+            problems.append("deleting Python delegated-route evidence did not fail the check")
+        victim.write_text(text)
+
+        victim.write_text(
+            text.replace(
+                "asynchronous.audio.speech.create",
+                "asynchronous.audio.speech.removed",
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/audio/speech" in f and "python" in f for f in failures):
+            problems.append("deleting Python async delegation evidence did not fail the check")
+        victim.write_text(text)
+
+        # Bind the path to the helper's own body. Leaving the correct string in
+        # a streaming helper or generic transport elsewhere must not satisfy
+        # the buffered route cell.
+        victim = fake_root / "sdks/go/client.go"
+        text = victim.read_text()
+        victim.write_text(
+            text.replace(
+                'return c.Post(ctx, "/chat/completions", body)',
+                'return c.Post(ctx, "/removed", body)',
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/chat/completions" in f and "go" in f for f in failures):
+            problems.append("miswiring a native helper path did not fail the check")
+        victim.write_text(text)
+
+        # The path can remain exactly right while the verb becomes wrong.
+        # Prove method evidence is independently load-bearing.
+        victim.write_text(
+            text.replace(
+                'return c.Post(ctx, "/chat/completions", body)',
+                'return c.Get(ctx, "/chat/completions")',
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/chat/completions" in f and "go" in f for f in failures):
+            problems.append("miswiring a native helper HTTP method did not fail the check")
+        victim.write_text(text)
+
+        # The expected verb elsewhere in the same helper cannot combine with
+        # the expected path on a different call. They must be one route call.
+        victim.write_text(
+            text.replace(
+                'return c.Post(ctx, "/chat/completions", body)',
+                'c.Post(ctx, "/unrelated", body)\n\treturn c.Get(ctx, "/chat/completions")',
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/chat/completions" in f and "go" in f for f in failures):
+            problems.append("split path and verb markers did not fail the check")
+        victim.write_text(text)
+
+        victim.write_text(
+            text.replace(
+                'return c.Post(ctx, "/chat/completions", body)',
+                'c.Post(ctx, "/chat/completions", body)\n\treturn c.Get(ctx, "/wrong")',
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/chat/completions" in f and "go" in f for f in failures):
+            problems.append("a decoy correct route call did not fail the check")
+        victim.write_text(text)
+
+        victim.write_text(
+            text.replace(
+                'return c.Get(ctx, "/videos/"+url.PathEscape(id))',
+                'return c.Get(ctx, "/videos/static")',
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/videos/{id}" in f and "go" in f for f in failures):
+            problems.append("removing a dynamic route parameter did not fail the check")
+        victim.write_text(text)
+
+        victim.write_text(
+            text.replace(
+                'parts := strings.Split(id, "/")',
+                'parts := strings.Split("fixed", "/")',
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/models/{model_id}" in f and "go" in f for f in failures):
+            problems.append("disconnecting the Go model id did not fail the check")
+        victim.write_text(text)
+
+        victim.write_text(
+            text.replace(
+                "parts[i] = url.PathEscape(parts[i])",
+                "parts[i] = parts[i]",
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/models/{model_id}" in f and "go" in f for f in failures):
+            problems.append("removing Go model-id encoding did not fail the check")
+        victim.write_text(text)
+
+        victim = fake_root / "sdks/r/R/client.R"
+        text = victim.read_text()
+        victim.write_text(
+            text.replace(
+                'retrieve_video = paste0("/videos/", segment(id))',
+                'retrieve_video = "/videos/static"',
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/videos/{id}" in f and "r" in f for f in failures):
+            problems.append("miswiring the R endpoint map did not fail the check")
+        victim.write_text(text)
+
+        victim = fake_root / "sdks/js/src/multimodal.ts"
+        text = victim.read_text()
+        victim.write_text(
+            text.replace(
+                "`/videos/${encodePathSegment(id, 'video id')}`",
+                "'/videos/static'",
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/videos/{id}" in f and "js" in f for f in failures):
+            problems.append("miswiring a JS dynamic helper did not fail the check")
+        victim.write_text(text)
+
+        # Android intentionally delegates every wire to Kotlin. Removing the
+        # delegation seam must invalidate all route-cell evidence, not merely
+        # the base-URL check.
+        victim = fake_root / "sdks/android/src/main/kotlin/ai/nrouter/sdk/android/NRouterAndroid.kt"
+        text = victim.read_text()
+        victim.write_text(text.replace("ai.nrouter.sdk.NRouter", "removed.sdk.NRouter"))
+        failures = check(root=fake_root)
+        if not any("/v1/chat/completions" in f and "android" in f for f in failures):
+            problems.append("breaking Android route delegation did not fail the check")
+        victim.write_text(text)
+
+        # Delegation is endpoint-specific: Android returns the Kotlin client,
+        # so one owner route drifting must invalidate the matching Android cell
+        # rather than leaving all 15 green behind one shared class symbol.
+        victim = fake_root / "sdks/kotlin/src/main/kotlin/ai/nrouter/sdk/NRouter.kt"
+        text = victim.read_text()
+        victim.write_text(
+            text.replace(
+                'post("/images/generations", body)',
+                'post("/removed", body)',
+                1,
+            )
+        )
+        failures = check(root=fake_root)
+        if not any("/v1/images/generations" in f and "android" in f for f in failures):
+            problems.append("a delegated Android endpoint drift did not fail its route cell")
+        victim.write_text(text)
+
         # Delete an error code this SDK really maps.
         victim = fake_root / "sdks/dart/lib/src/errors.dart"
         text = victim.read_text()
@@ -815,6 +1721,8 @@ def main() -> int:
     print(f"    env_var    {spec['env_var']}")
     print(f"    headers    {len(spec['response_headers'])}")
     print(f"    error codes {len(spec['errors'])}")
+    _, verified_routes, total_routes = route_coverage(ROOT, spec)
+    print(f"    route ownership evidence {verified_routes}/{total_routes}")
     for sdk, why in WRAPPER_ONLY.items():
         print(f"    note: {sdk} checked for the connection contract only — {why}")
     for sdk, why in NO_ENV_RESOLUTION.items():

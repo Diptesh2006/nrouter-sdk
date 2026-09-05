@@ -217,4 +217,113 @@ class NRouterAndroidTest {
             server.shutdown()
         }
     }
+
+    // ---- Retry-After & Jittered Backoff -------------------------------------
+
+    @Test
+    fun `Android retry after parsing delegates to core and respects ceilings`() {
+        assertEquals(120L, NRouterAndroid.parseRetryAfter("120"))
+        assertEquals(86400L, NRouterAndroid.MAX_RETRY_AFTER_SECONDS)
+        assertEquals(86400L, NRouterAndroid.parseRetryAfter("99999999"))
+        assertNull(NRouterAndroid.parseRetryAfter(null))
+        assertNull(NRouterAndroid.parseRetryAfter("invalid-value"))
+    }
+
+    @Test
+    fun `Android jittered backoff computes within bounded windows`() {
+        val delay0 = NRouterAndroid.computeJitteredBackoff(0, baseDelayMs = 1000L, maxDelayMs = 5000L, jitterFactor = 0.0)
+        assertEquals(1000L, delay0)
+
+        val delayWithRetryAfter = NRouterAndroid.computeJitteredBackoff(0, retryAfterSeconds = 5L, jitterFactor = 0.0)
+        assertEquals(5000L, delayWithRetryAfter)
+
+        val jittered = NRouterAndroid.computeJitteredBackoff(2, baseDelayMs = 1000L, maxDelayMs = 10000L, jitterFactor = 0.5)
+        assertTrue(jittered in 2000L..4000L, "Backoff should be within jitter factor range: $jittered")
+    }
+
+    @Test
+    fun `Android error formatting and redaction helpers`() {
+        val msg = "Key sk-nrouter-live-12345 or sk-ant-api03-abcdef"
+        val redacted = NRouterAndroid.redactKeys(msg)
+        assertTrue(redacted.contains("sk-nrouter-***"))
+        assertTrue(redacted.contains("sk-***"))
+
+        val json = """{"error":{"message":"Failed with sk-nrouter-test-abcdef","code":"invalid_request_error","param":"model","type":"invalid_request_error"}}"""
+        val envelope = NRouterAndroid.parseGatewayErrorEnvelope(json)
+        assertEquals("invalid_request_error", envelope.code)
+        assertEquals("model", envelope.param)
+        assertEquals("invalid_request_error", envelope.type)
+        assertTrue(envelope.message?.contains("sk-nrouter-***") == true)
+
+        val authError = NRouterError.Authentication(ai.nrouter.sdk.NRouterErrorBody("Invalid key sk-nrouter-live-999"))
+        assertEquals("Authentication failed. Please verify your API key.", NRouterAndroid.formatUserMessage(authError))
+
+        val rateLimitError = NRouterError.RateLimit(ai.nrouter.sdk.NRouterErrorBody("Too many requests", code = "rate_limit_exceeded", status = 429))
+        assertEquals("Rate limit reached. Please wait and try again.", NRouterAndroid.formatUserMessage(rateLimitError))
+
+        val diagnostic = NRouterAndroid.formatDiagnosticMessage(authError)
+        assertTrue(diagnostic.contains("[authentication]"))
+        assertTrue(diagnostic.contains("sk-nrouter-***"))
+    }
+
+    @Test
+    fun `Android client propagates trace context and platform header`() {
+        runBlocking {
+            val server = MockWebServer().also { it.start() }
+            try {
+                server.enqueue(
+                    MockResponse()
+                        .setResponseCode(200)
+                        .setHeader("content-type", "application/json")
+                        .setHeader("x-nr-request-id", "req_android_999")
+                        .setBody("{}"),
+                )
+                val client = NRouterAndroid.create(
+                    context,
+                    apiKey = "sk-nrouter-test",
+                    baseURL = server.url("/v1").toString(),
+                    traceId = "tr_android_1",
+                    sessionId = "sess_android_1",
+                )
+                assertEquals("tr_android_1", client.traceId)
+                assertEquals("sess_android_1", client.sessionId)
+                assertEquals("android", client.clientPlatform)
+
+                val resp = client.chatCompletions(JSONObject())
+                val recorded = server.takeRequest()
+                assertEquals("android", recorded.getHeader("x-nr-client-platform"))
+                assertEquals("kotlin", recorded.getHeader("x-nr-client-language"))
+                assertEquals("tr_android_1", recorded.getHeader("x-nr-trace-id"))
+                assertEquals("sess_android_1", recorded.getHeader("x-nr-session-id"))
+
+                // Trace headers extraction
+                val extracted = NRouterAndroid.extractTraceHeaders(resp.meta)
+                assertEquals("req_android_999", extracted["x-nr-request-id"])
+
+                val headerMap = mapOf(
+                    "x-nr-request-id" to "req_2",
+                    "x-nr-trace-id" to "tr_2",
+                    "x-nr-session-id" to "sess_2",
+                    "foo" to "bar"
+                )
+                val extractedMap = NRouterAndroid.extractTraceHeaders(headerMap)
+                assertEquals(3, extractedMap.size)
+                assertEquals("req_2", extractedMap["x-nr-request-id"])
+                assertEquals("tr_2", extractedMap["x-nr-trace-id"])
+                assertEquals("sess_2", extractedMap["x-nr-session-id"])
+
+                // Trace context injection
+                val injected = NRouterAndroid.withTraceContext(mapOf("orig" to "1"), "tr_3", "sess_3")
+                assertEquals("1", injected["orig"])
+                assertEquals("tr_3", injected["x-nr-trace-id"])
+                assertEquals("sess_3", injected["x-nr-session-id"])
+
+                assertFailsWith<IllegalArgumentException> {
+                    NRouterAndroid.withTraceContext(emptyMap(), "bad\r\ntrace", "sess")
+                }
+            } finally {
+                server.shutdown()
+            }
+        }
+    }
 }

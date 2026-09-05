@@ -156,6 +156,37 @@ public sealed class NRouterError(
                 null
             }
         }
+
+        /**
+         * Computes a bounded jittered exponential backoff duration in milliseconds.
+         *
+         * Honors `retryAfterSeconds` when non-null and > 0, bounded by `maxDelayMs`.
+         * Clamps `attempt` to [0, 30] to prevent arithmetic overflow on 2^N.
+         * Jitter factor distributes delays to avoid thundering herds.
+         */
+        @JvmStatic
+        @JvmOverloads
+        public fun computeJitteredBackoff(
+            attempt: Int,
+            baseDelayMs: Long = 500L,
+            maxDelayMs: Long = 30000L,
+            retryAfterSeconds: Long? = null,
+            jitterFactor: Double = 0.5,
+        ): Long {
+            val safeAttempt = attempt.coerceIn(0, 30)
+            val safeJitter = jitterFactor.coerceIn(0.0, 1.0)
+
+            if (retryAfterSeconds != null && retryAfterSeconds > 0) {
+                val retryMs = (retryAfterSeconds * 1000L).coerceAtMost(maxDelayMs)
+                val mult = (1.0 - safeJitter) + Math.random() * safeJitter
+                return (retryMs * mult).toLong().coerceAtLeast(0L)
+            }
+
+            val exp = 1L shl safeAttempt
+            val rawMs = (baseDelayMs * exp).coerceAtMost(maxDelayMs)
+            val mult = (1.0 - safeJitter) + Math.random() * safeJitter
+            return (rawMs * mult).toLong().coerceAtLeast(0L)
+        }
     }
 }
 
@@ -163,6 +194,8 @@ public sealed class NRouterError(
 public data class NRouterErrorBody(
     val message: String,
     val code: String? = null,
+    val param: String? = null,
+    val type: String? = null,
     val status: Int? = null,
     val requestId: String? = null,
     /**
@@ -176,6 +209,72 @@ public data class NRouterErrorBody(
     /** On a 429: duration in whole seconds to wait before retrying. */
     val retryAfter: Long? = null,
 ) {
-    internal fun describe(): String = if (code != null) "$message ($code)" else message
+    internal fun describe(): String = if (code != null) "${redactKeys(message)} ($code)" else redactKeys(message)
 }
+
+private val NROUTER_KEY_REGEX: Regex = Regex("""\bsk-nrouter-[A-Za-z0-9._-]{4,}""")
+private val GENERIC_KEY_REGEX: Regex = Regex("""\bsk-[A-Za-z0-9._-]{6,}\b""")
+
+/** Redacts nRouter and upstream provider API keys to prevent credential leaks. */
+public fun redactKeys(input: String): String {
+    val masked = input.replace(NROUTER_KEY_REGEX, "sk-nrouter-***")
+    return masked.replace(GENERIC_KEY_REGEX) { m ->
+        if (m.value.startsWith("sk-nrouter")) m.value else "sk-***"
+    }
+}
+
+/** Structured gateway error envelope. */
+public data class NRouterErrorEnvelope(
+    val code: String? = null,
+    val message: String? = null,
+    val param: String? = null,
+    val type: String? = null,
+)
+
+/** Parses a gateway error JSON payload into a structured [NRouterErrorEnvelope]. */
+public fun parseGatewayErrorEnvelope(jsonString: String): NRouterErrorEnvelope {
+    if (jsonString.isBlank()) return NRouterErrorEnvelope()
+    return try {
+        val raw = org.json.JSONObject(jsonString)
+        val node = raw.optJSONObject("error") ?: raw
+        val msg = node.optString("message").ifEmpty { raw.optString("message").ifEmpty { null } }
+        NRouterErrorEnvelope(
+            code = node.optString("code").ifEmpty { raw.optString("code").ifEmpty { null } },
+            message = msg?.let(::redactKeys),
+            param = node.optString("param").ifEmpty { raw.optString("param").ifEmpty { null } },
+            type = node.optString("type").ifEmpty { raw.optString("type").ifEmpty { null } },
+        )
+    } catch (_: Exception) {
+        NRouterErrorEnvelope(message = redactKeys(jsonString))
+    }
+}
+
+/** Formats an [NRouterError] into a human-readable, log-safe diagnostic string. */
+public fun formatError(error: NRouterError): String {
+    val body = error.body
+    val kind = error::class.simpleName?.lowercase(java.util.Locale.ROOT) ?: "error"
+    val parts = mutableListOf<String>()
+    parts.add("[$kind]")
+    if (body?.status != null && body.status > 0) {
+        parts.add("HTTP ${body.status}")
+    }
+    if (!body?.code.isNullOrBlank()) {
+        parts.add("code=${body?.code}")
+    }
+    if (!body?.param.isNullOrBlank()) {
+        parts.add("param=${body?.param}")
+    }
+    if (!body?.type.isNullOrBlank()) {
+        parts.add("type=${body?.type}")
+    }
+    if (!body?.requestId.isNullOrBlank()) {
+        parts.add("req_id=${body?.requestId}")
+    }
+    val msg = error.message
+    if (!msg.isNullOrBlank()) {
+        parts.add(": ${redactKeys(msg)}")
+    }
+    return parts.joinToString(" ")
+}
+
 

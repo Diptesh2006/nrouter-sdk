@@ -146,4 +146,55 @@ public final class NRouterResponseMeta {
             return null;
         }
     }
+
+    /** Extract trace routing headers from response metadata. */
+    public static java.util.Map<String, String> extractTraceHeaders(NRouterResponseMeta meta) {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (meta != null && meta.requestId() != null && !meta.requestId().isEmpty()) {
+            out.put("x-nr-request-id", meta.requestId());
+        }
+        return out;
+    }
+
+    /** Extract trace routing headers from a header map. */
+    public static java.util.Map<String, String> extractTraceHeaders(java.util.Map<String, String> headers) {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (headers == null) {
+            return out;
+        }
+        for (java.util.Map.Entry<String, String> entry : headers.entrySet()) {
+            String kl = entry.getKey().toLowerCase(java.util.Locale.ROOT);
+            if ("x-nr-request-id".equals(kl) || "x-nr-trace-id".equals(kl) || "x-nr-session-id".equals(kl)) {
+                out.put(kl, entry.getValue());
+            }
+        }
+        return out;
+    }
+
+    /** Inject trace context headers, rejecting CRLF characters. */
+    public static java.util.Map<String, String> withTraceContext(
+            java.util.Map<String, String> headers, String traceId, String sessionId) {
+        if (traceId != null && (traceId.contains("\r") || traceId.contains("\n"))) {
+            throw new IllegalArgumentException("traceId must not contain CRLF characters");
+        }
+        if (sessionId != null && (sessionId.contains("\r") || sessionId.contains("\n"))) {
+            throw new IllegalArgumentException("sessionId must not contain CRLF characters");
+        }
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (headers != null) {
+            for (java.util.Map.Entry<String, String> entry : headers.entrySet()) {
+                if (!entry.getValue().contains("\r") && !entry.getValue().contains("\n")) {
+                    out.put(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+        if (traceId != null && !traceId.isEmpty()) {
+            out.put("x-nr-trace-id", traceId);
+        }
+        if (sessionId != null && !sessionId.isEmpty()) {
+            out.put("x-nr-session-id", sessionId);
+        }
+        return out;
+    }
 }
+

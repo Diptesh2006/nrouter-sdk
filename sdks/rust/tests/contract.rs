@@ -329,3 +329,118 @@ fn parse_retry_after_accepts_delta_seconds_and_http_date() {
         Some(0)
     );
 }
+
+#[test]
+fn redact_keys_masks_credentials() {
+    let raw = "Unauthorized using key sk-nrouter-CONFIDENTIAL99 and sk-ANTHROPIC888";
+    let redacted = nrouter::redact_keys(raw);
+    assert!(!redacted.contains("CONFIDENTIAL99"));
+    assert!(!redacted.contains("ANTHROPIC888"));
+    assert!(redacted.contains("sk-nrouter-***"));
+    assert!(redacted.contains("sk-***"));
+
+    // Idempotent
+    let second = nrouter::redact_keys(&redacted);
+    assert_eq!(redacted, second);
+}
+
+#[test]
+fn error_envelope_and_format_error() {
+    use nrouter::{format_error, parse_gateway_error_envelope, ErrorBody, NRouterError};
+    use serde_json::json;
+
+    let json_val = json!({
+        "error": {
+            "message": "Bad request with sk-nrouter-TOPSECRET77",
+            "code": "invalid_request",
+            "param": "messages[0]",
+            "type": "invalid_request_error"
+        }
+    });
+
+    let env = parse_gateway_error_envelope(&json_val);
+    assert_eq!(env.code.as_deref(), Some("invalid_request"));
+    assert_eq!(env.param.as_deref(), Some("messages[0]"));
+    assert_eq!(env.error_type.as_deref(), Some("invalid_request_error"));
+    assert!(!env.message.unwrap().contains("TOPSECRET77"));
+
+    let body = ErrorBody {
+        message: "Refused with sk-nrouter-SECRET_KEY_123".into(),
+        code: Some("rate_limit_exceeded".into()),
+        param: Some("prompt".into()),
+        error_type: Some("rate_limit_error".into()),
+        status: Some(429),
+        request_id: Some("req_xyz".into()),
+        limit_source: Some("rpm".into()),
+        auth_reason: None,
+        retry_after: Some(30),
+    };
+    let err = NRouterError::from_code(body);
+    assert_eq!(err.param(), Some("prompt"));
+    assert_eq!(err.error_type(), Some("rate_limit_error"));
+
+    let formatted = format_error(&err);
+    assert!(formatted.contains("[rate_limit]"));
+    assert!(formatted.contains("HTTP 429"));
+    assert!(formatted.contains("code=rate_limit_exceeded"));
+    assert!(formatted.contains("param=prompt"));
+    assert!(formatted.contains("requestId=req_xyz"));
+    assert!(formatted.contains("limitSource=rpm"));
+    assert!(formatted.contains("retryAfter=30s"));
+    assert!(!formatted.contains("SECRET_KEY_123"));
+    assert!(formatted.contains("sk-nrouter-***"));
+
+    let disp = err.to_string();
+    assert!(!disp.contains("SECRET_KEY_123"));
+    assert!(disp.contains("sk-nrouter-***"));
+}
+
+#[test]
+fn test_trace_routing_and_context() {
+    use nrouter::http::Client;
+    use nrouter::{extract_trace_headers, with_trace_context};
+    use std::collections::HashMap;
+
+    let client = Client::new("sk-nrouter-test-key-1234")
+        .unwrap()
+        .with_trace_id("tr-123")
+        .unwrap()
+        .with_session_id("ses-456")
+        .unwrap();
+
+    assert_eq!(client.trace_id(), Some("tr-123"));
+    assert_eq!(client.session_id(), Some("ses-456"));
+
+    // Rejects CRLF
+    let bad_client = Client::new("sk-nrouter-test-key-1234").unwrap();
+    assert!(bad_client.clone().with_trace_id("tr\r\nbad").is_err());
+    assert!(bad_client.with_session_id("ses\nbad").is_err());
+
+    // extract_trace_headers
+    let meta = ResponseMeta {
+        request_id: Some("req-test-999".into()),
+        ..Default::default()
+    };
+    let th = extract_trace_headers(&meta);
+    assert_eq!(
+        th.get("x-nr-request-id").map(|s| s.as_str()),
+        Some("req-test-999")
+    );
+
+    // with_trace_context
+    let mut orig = HashMap::new();
+    orig.insert("authorization".into(), "Bearer tok".into());
+    let res = with_trace_context(&orig, Some("tr-abc"), Some("ses-xyz")).unwrap();
+    assert_eq!(res.get("x-nr-trace-id").map(|s| s.as_str()), Some("tr-abc"));
+    assert_eq!(
+        res.get("x-nr-session-id").map(|s| s.as_str()),
+        Some("ses-xyz")
+    );
+    assert_eq!(
+        res.get("authorization").map(|s| s.as_str()),
+        Some("Bearer tok")
+    );
+
+    assert!(with_trace_context(&orig, Some("tr\nbad"), None).is_err());
+    assert!(with_trace_context(&orig, None, Some("ses\rbad")).is_err());
+}

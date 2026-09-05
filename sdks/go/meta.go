@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 )
 
 // ResponseMeta is the per-request metadata the gateway reports on `x-nr-*`
@@ -210,3 +211,37 @@ func (m ResponseMeta) CacheAgeSeconds() uint64 {
 func isBillableAmount(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0
 }
+
+// ExtractTraceHeaders extracts trace routing headers (e.g. x-nr-request-id) from response metadata.
+func ExtractTraceHeaders(meta ResponseMeta) map[string]string {
+	out := make(map[string]string)
+	if meta.RequestID != "" {
+		out["x-nr-request-id"] = meta.RequestID
+	}
+	return out
+}
+
+// WithTraceContext returns a copy of headers with traceID and sessionID injected,
+// returning an error if either contains CRLF control characters.
+func WithTraceContext(headers map[string]string, traceID, sessionID string) (map[string]string, error) {
+	if strings.ContainsAny(traceID, "\r\n") {
+		return nil, fmt.Errorf("traceID must not contain CRLF characters")
+	}
+	if strings.ContainsAny(sessionID, "\r\n") {
+		return nil, fmt.Errorf("sessionID must not contain CRLF characters")
+	}
+	out := make(map[string]string, len(headers)+2)
+	for k, v := range headers {
+		if !strings.ContainsAny(v, "\r\n") {
+			out[k] = v
+		}
+	}
+	if traceID != "" {
+		out["x-nr-trace-id"] = traceID
+	}
+	if sessionID != "" {
+		out["x-nr-session-id"] = sessionID
+	}
+	return out, nil
+}
+

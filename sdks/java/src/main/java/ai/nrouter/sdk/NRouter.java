@@ -137,6 +137,41 @@ public final class NRouter {
                 requestTimeout);
     }
 
+    /**
+     * Native Java 11 surface over custom transport, timeouts, and tracing/session context.
+     */
+    public static NRouterHttpClient httpClient(
+            String apiKey,
+            String baseUrl,
+            HttpClient http,
+            Duration requestTimeout,
+            String traceId,
+            String sessionId) {
+        return new NRouterHttpClient(
+                resolveApiKey(apiKey),
+                baseUrl != null ? baseUrl : DEFAULT_BASE_URL,
+                http != null ? http : NRouterHttpClient.defaultHttpClient(),
+                requestTimeout != null ? requestTimeout : NRouterHttpClient.DEFAULT_REQUEST_TIMEOUT,
+                NRouterHttpClient.DEFAULT_BODY_IDLE_TIMEOUT,
+                traceId,
+                sessionId);
+    }
+
+    /** Extracts trace routing headers from response metadata. */
+    public static Map<String, String> extractTraceHeaders(NRouterResponseMeta meta) {
+        return NRouterResponseMeta.extractTraceHeaders(meta);
+    }
+
+    /** Extracts trace routing headers from a headers map. */
+    public static Map<String, String> extractTraceHeaders(Map<String, String> headers) {
+        return NRouterResponseMeta.extractTraceHeaders(headers);
+    }
+
+    /** Injects trace and session context into an existing headers map. */
+    public static Map<String, String> withTraceContext(Map<String, String> headers, String traceId, String sessionId) {
+        return NRouterResponseMeta.withTraceContext(headers, traceId, sessionId);
+    }
+
     public static Map<String, Object> buildExtraBody(
             String promptTemplateId,
             Map<String, String> promptVariables,

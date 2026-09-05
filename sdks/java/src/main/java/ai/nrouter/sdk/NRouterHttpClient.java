@@ -109,14 +109,16 @@ public final class NRouterHttpClient {
     private final HttpClient http;
     private final Duration requestTimeout;
     private final Duration bodyIdleTimeout;
+    private final String traceId;
+    private final String sessionId;
     private final ObjectMapper json = new ObjectMapper();
 
     NRouterHttpClient(String apiKey, String baseUrl) {
-        this(apiKey, baseUrl, defaultHttpClient(), DEFAULT_REQUEST_TIMEOUT, DEFAULT_BODY_IDLE_TIMEOUT);
+        this(apiKey, baseUrl, defaultHttpClient(), DEFAULT_REQUEST_TIMEOUT, DEFAULT_BODY_IDLE_TIMEOUT, null, null);
     }
 
     NRouterHttpClient(String apiKey, String baseUrl, HttpClient http, Duration requestTimeout) {
-        this(apiKey, baseUrl, http, requestTimeout, DEFAULT_BODY_IDLE_TIMEOUT);
+        this(apiKey, baseUrl, http, requestTimeout, DEFAULT_BODY_IDLE_TIMEOUT, null, null);
     }
 
     NRouterHttpClient(
@@ -125,6 +127,17 @@ public final class NRouterHttpClient {
             HttpClient http,
             Duration requestTimeout,
             Duration bodyIdleTimeout) {
+        this(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, null, null);
+    }
+
+    NRouterHttpClient(
+            String apiKey,
+            String baseUrl,
+            HttpClient http,
+            Duration requestTimeout,
+            Duration bodyIdleTimeout,
+            String traceId,
+            String sessionId) {
         if (http == null) {
             throw new IllegalArgumentException("httpClient must not be null");
         }
@@ -136,6 +149,12 @@ public final class NRouterHttpClient {
         }
         if (baseUrl.contains("\r") || baseUrl.contains("\n") || baseUrl.contains("\t")) {
             throw new IllegalArgumentException("baseUrl contains invalid whitespace or control characters");
+        }
+        if (traceId != null && (traceId.contains("\r") || traceId.contains("\n"))) {
+            throw new IllegalArgumentException("traceId must not contain CRLF characters");
+        }
+        if (sessionId != null && (sessionId.contains("\r") || sessionId.contains("\n"))) {
+            throw new IllegalArgumentException("sessionId must not contain CRLF characters");
         }
         java.net.URI parsedUri;
         try {
@@ -168,6 +187,8 @@ public final class NRouterHttpClient {
         this.http = http;
         this.requestTimeout = requestTimeout;
         this.bodyIdleTimeout = bodyIdleTimeout;
+        this.traceId = traceId;
+        this.sessionId = sessionId;
     }
 
     /**
@@ -196,6 +217,30 @@ public final class NRouterHttpClient {
     /** The maximum silence permitted between response body bytes. */
     public Duration bodyIdleTimeout() {
         return bodyIdleTimeout;
+    }
+
+    /** The configured trace identifier propagated as {@code x-nr-trace-id}, or null if none. */
+    public String traceId() {
+        return traceId;
+    }
+
+    /** The configured session identifier propagated as {@code x-nr-session-id}, or null if none. */
+    public String sessionId() {
+        return sessionId;
+    }
+
+    /**
+     * Returns a copy of this client configured with the specified trace identifier.
+     */
+    public NRouterHttpClient withTraceId(String traceId) {
+        return new NRouterHttpClient(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, traceId, sessionId);
+    }
+
+    /**
+     * Returns a copy of this client configured with the specified session identifier.
+     */
+    public NRouterHttpClient withSessionId(String sessionId) {
+        return new NRouterHttpClient(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, traceId, sessionId);
     }
 
     public NRouterHttpResponse chatCompletions(Map<String, ?> body) { return post("/chat/completions", body); }
@@ -394,7 +439,11 @@ public final class NRouterHttpClient {
                         response.statusCode(),
                         meta);
             }
-            throw gatewayFailure(errorBody.getBytes(StandardCharsets.UTF_8), response.statusCode(), meta);
+            throw gatewayFailure(
+                    errorBody.getBytes(StandardCharsets.UTF_8),
+                    response.statusCode(),
+                    meta,
+                    NRouterException.parseRetryAfter(response.headers().firstValue("retry-after").orElse(null)));
         } catch (NRouterException error) {
             throw error;
         } catch (InterruptedException error) {
@@ -411,7 +460,11 @@ public final class NRouterHttpClient {
         NRouterResponseMeta meta = NRouterResponseMeta.fromHeaders(response.headers());
         byte[] body = readBody(pending, meta);
         if (!isSuccess(response.statusCode())) {
-            throw gatewayFailure(body, response.statusCode(), meta);
+            throw gatewayFailure(
+                    body,
+                    response.statusCode(),
+                    meta,
+                    NRouterException.parseRetryAfter(response.headers().firstValue("retry-after").orElse(null)));
         }
         try {
             JsonNode parsed = json.readTree(body);
@@ -432,7 +485,11 @@ public final class NRouterHttpClient {
         NRouterResponseMeta meta = NRouterResponseMeta.fromHeaders(response.headers());
         byte[] body = readBody(pending, meta);
         if (!isSuccess(response.statusCode())) {
-            throw gatewayFailure(body, response.statusCode(), meta);
+            throw gatewayFailure(
+                    body,
+                    response.statusCode(),
+                    meta,
+                    NRouterException.parseRetryAfter(response.headers().firstValue("retry-after").orElse(null)));
         }
         String contentType = response.headers().firstValue("content-type").orElse(null);
         return new NRouterBinaryResponse(body, meta, response.statusCode(), contentType);
@@ -604,20 +661,28 @@ public final class NRouterHttpClient {
     }
 
     private NRouterException gatewayFailure(byte[] body, int status, NRouterResponseMeta meta) {
+        return gatewayFailure(body, status, meta, null);
+    }
+
+    private NRouterException gatewayFailure(byte[] body, int status, NRouterResponseMeta meta, Long retryAfter) {
         // A non-JSON proxy page is untrusted and can contain upstream URLs,
         // internal hostnames or stack traces. Only the gateway JSON envelope is
         // customer-safe enough to surface; status and x-nr metadata still make
         // a generic failure diagnosable.
         String message = "nRouter request failed with HTTP " + status;
         String code = null;
+        String param = null;
+        String type = null;
         try {
             JsonNode parsed = json.readTree(body);
             JsonNode node = parsed != null && parsed.has("error") ? parsed.get("error") : parsed;
             if (node != null) {
                 message = node.hasNonNull("message") ? node.get("message").asText() : message;
                 code = node.hasNonNull("code") ? node.get("code").asText() : null;
-                if (code == null && node.hasNonNull("type") && ERROR_CODES.contains(node.get("type").asText())) {
-                    code = node.get("type").asText();
+                param = node.hasNonNull("param") ? node.get("param").asText() : null;
+                type = node.hasNonNull("type") ? node.get("type").asText() : null;
+                if (code == null && type != null && ERROR_CODES.contains(type)) {
+                    code = type;
                 }
             }
         } catch (IOException ignored) {
@@ -626,7 +691,7 @@ public final class NRouterHttpClient {
         if (message == null || message.isBlank()) {
             message = "nRouter request failed";
         }
-        return NRouterException.gateway(redact(message), code, status, meta);
+        return NRouterException.gateway(redact(message), code, param, type, status, meta, retryAfter);
     }
 
     private Stream<String> guardSse(Stream<String> raw, int status, NRouterResponseMeta meta) {
@@ -703,8 +768,16 @@ public final class NRouterHttpClient {
     }
 
     private HttpRequest.Builder request(String path) {
-        return HttpRequest.newBuilder(URI.create(baseUrl + "/" + path.replaceFirst("^/+", "")))
-                .header("Authorization", "Bearer " + apiKey);
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + "/" + path.replaceFirst("^/+", "")))
+                .header("Authorization", "Bearer " + apiKey)
+                .header("x-nr-client-language", "java");
+        if (traceId != null && !traceId.isEmpty()) {
+            builder.header("x-nr-trace-id", traceId);
+        }
+        if (sessionId != null && !sessionId.isEmpty()) {
+            builder.header("x-nr-session-id", sessionId);
+        }
+        return builder;
     }
 
     /**
@@ -810,6 +883,6 @@ public final class NRouterHttpClient {
     }
 
     private static String redact(String value) {
-        return value == null ? "nRouter transport failed" : KEY.matcher(value).replaceAll("sk-nrouter-...[REDACTED]");
+        return value == null ? "nRouter transport failed" : NRouterException.redactKeys(value);
     }
 }

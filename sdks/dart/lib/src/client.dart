@@ -180,14 +180,29 @@ class NRouter {
     this.timeout = defaultTimeout,
     this.streamTimeout = defaultStreamTimeout,
     this.bodyIdleTimeout = defaultBodyIdleTimeout,
+    this.traceId,
+    this.sessionId,
   })  : _apiKey = validateApiKey(apiKey),
         baseUrl = _normalizeBaseUrl(baseUrl),
         _http = httpClient ?? http.Client(),
-        _ownsClient = httpClient == null;
+        _ownsClient = httpClient == null {
+    if (traceId != null && (traceId!.contains('\r') || traceId!.contains('\n'))) {
+      throw NRouterConfigurationError('traceId must not contain CRLF characters');
+    }
+    if (sessionId != null && (sessionId!.contains('\r') || sessionId!.contains('\n'))) {
+      throw NRouterConfigurationError('sessionId must not contain CRLF characters');
+    }
+  }
 
   final String _apiKey;
   final http.Client _http;
   final bool _ownsClient;
+
+  /// Optional distributed trace ID forwarding to gateway.
+  final String? traceId;
+
+  /// Optional multi-turn session ID forwarding to gateway.
+  final String? sessionId;
 
   /// Whole-request ceiling applied to buffered JSON and multipart calls.
   final Duration timeout;
@@ -197,6 +212,16 @@ class NRouter {
 
   /// Gap-between-body-chunks ceiling for streamed response bodies.
   final Duration bodyIdleTimeout;
+
+  Map<String, String> _buildHeaders([Map<String, String>? extra]) {
+    return <String, String>{
+      'Authorization': 'Bearer $_apiKey',
+      'x-nr-client-language': 'dart',
+      if (traceId != null) 'x-nr-trace-id': traceId!,
+      if (sessionId != null) 'x-nr-session-id': sessionId!,
+      if (extra != null) ...extra,
+    };
+  }
 
   /// The one place a deadline turns into an error, so every path says the same
   /// thing — including that the request may already have been BILLED. The
@@ -374,9 +399,10 @@ class NRouter {
       '$baseUrl/${path.startsWith('/') ? path.substring(1) : path}',
     );
     final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_apiKey'
-      ..headers['Content-Type'] = 'application/json'
-      ..headers['Accept'] = 'text/event-stream'
+      ..headers.addAll(_buildHeaders({
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      }))
       ..body = jsonEncode(<String, dynamic>{...body, 'stream': true});
 
     final http.StreamedResponse response;
@@ -408,7 +434,12 @@ class NRouter {
         // Preserve the typed status fallback for non-JSON intermediary errors.
       }
       throw NRouterError.fromCode(
-        errorBodyFrom(response.statusCode, parsed, meta),
+        errorBodyFrom(
+          response.statusCode,
+          parsed,
+          meta,
+          parseRetryAfter(response.headers['retry-after']),
+        ),
       );
     }
 
@@ -505,7 +536,7 @@ class NRouter {
       '$baseUrl/${path.startsWith('/') ? path.substring(1) : path}',
     );
     final request = http.MultipartRequest('POST', uri)
-      ..headers['Authorization'] = 'Bearer $_apiKey'
+      ..headers.addAll(_buildHeaders())
       ..fields.addAll(fields)
       ..files.add(
         http.MultipartFile.fromBytes(filePartName, file, filename: fileName),
@@ -565,7 +596,12 @@ class NRouter {
       parsed = <String, dynamic>{};
     }
     throw NRouterError.fromCode(
-      errorBodyFrom(response.statusCode, parsed, meta),
+      errorBodyFrom(
+        response.statusCode,
+        parsed,
+        meta,
+        parseRetryAfter(response.headers['retry-after']),
+      ),
     );
   }
 
@@ -608,10 +644,9 @@ class NRouter {
     final uri = Uri.parse(
       '$baseUrl/${path.startsWith('/') ? path.substring(1) : path}',
     );
-    final headers = <String, String>{
-      'Authorization': 'Bearer $_apiKey',
-      if (body != null) 'Content-Type': 'application/json',
-    };
+    final headers = _buildHeaders(
+      body != null ? {'Content-Type': 'application/json'} : null,
+    );
 
     // Sent through `send` rather than `get`/`post` so the header wait and the
     // body read are two separate waits. Generated audio and video are large:
@@ -653,7 +688,12 @@ class NRouter {
       parsed = <String, dynamic>{};
     }
     throw NRouterError.fromCode(
-      errorBodyFrom(response.statusCode, parsed, meta),
+      errorBodyFrom(
+        response.statusCode,
+        parsed,
+        meta,
+        parseRetryAfter(response.headers['retry-after']),
+      ),
     );
   }
 
@@ -670,10 +710,9 @@ class NRouter {
     final uri = Uri.parse(
       '$baseUrl/${path.startsWith('/') ? path.substring(1) : path}',
     );
-    final headers = <String, String>{
-      'Authorization': 'Bearer $_apiKey',
-      if (body != null) 'Content-Type': 'application/json',
-    };
+    final headers = _buildHeaders(
+      body != null ? {'Content-Type': 'application/json'} : null,
+    );
 
     http.Response response;
     try {
@@ -740,7 +779,12 @@ class NRouter {
       parsed = <String, dynamic>{};
     }
     throw NRouterError.fromCode(
-      errorBodyFrom(response.statusCode, parsed, meta),
+      errorBodyFrom(
+        response.statusCode,
+        parsed,
+        meta,
+        parseRetryAfter(response.headers['retry-after']),
+      ),
     );
   }
 
@@ -752,19 +796,25 @@ class NRouter {
   static NRouterErrorBody errorBodyFrom(
     int status,
     Map<String, dynamic> payload,
-    NRouterResponseMeta meta,
-  ) {
+    NRouterResponseMeta meta, [
+    int? retryAfter,
+  ]) {
     final nested = payload['error'];
     final node = nested is Map<String, dynamic> ? nested : payload;
     final message = node['message'];
     final code = node['code'];
+    final param = node['param'];
+    final type = node['type'];
     return NRouterErrorBody(
       message: message is String ? message : 'nRouter request failed',
       code: code is String ? code : null,
+      param: param is String ? param : null,
+      type: type is String ? type : null,
       status: status,
       requestId: meta.requestId,
       limitSource: meta.limitSource,
       authReason: meta.authReason,
+      retryAfter: retryAfter,
     );
   }
 }
@@ -829,6 +879,8 @@ _SseResult _parseSseFrame(
           ? node['message'] as String
           : 'nRouter stream failed',
       code: promoted,
+      param: node['param'] is String ? node['param'] as String : null,
+      type: type is String ? type : null,
       status: status,
       requestId: meta.requestId,
       limitSource: meta.limitSource,

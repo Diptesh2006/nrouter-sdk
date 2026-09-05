@@ -98,3 +98,48 @@ def test_repr_and_str_never_print_full_api_key(cls):
     assert "sk-nrouter-...3456" in rep
     assert "sk-nrouter-...3456" in st
 
+
+@pytest.mark.parametrize("cls", [nRouter, AsyncnRouter])
+def test_client_accepts_and_injects_trace_headers(cls):
+    from nroutersdk import extract_trace_headers, with_trace_context
+    from nroutersdk._response import nRouterResponseMeta
+
+    c = cls(api_key=KEY, trace_id="tr-abc-123", session_id="ses-xyz-789")
+    assert c.trace_id == "tr-abc-123"
+    assert c.session_id == "ses-xyz-789"
+    headers = c.default_headers
+    assert headers.get("x-nr-trace-id") == "tr-abc-123"
+    assert headers.get("x-nr-session-id") == "ses-xyz-789"
+    assert headers.get("x-nr-client-language") == "python"
+
+    # CRLF injection guard
+    with pytest.raises(ValueError, match="CRLF"):
+        cls(api_key=KEY, trace_id="tr-bad\r\ninjection")
+    with pytest.raises(ValueError, match="CRLF"):
+        cls(api_key=KEY, session_id="ses-bad\ninjection")
+
+    # with_trace_context
+    extra = with_trace_context(trace_id="tr-child", session_id="ses-child")
+    assert extra["x-nr-trace-id"] == "tr-child"
+    assert extra["x-nr-session-id"] == "ses-child"
+
+    # extract_trace_headers from meta
+    meta = nRouterResponseMeta(
+        request_id="req-999",
+        cost_status="exact",
+        cost=0.001,
+    )
+    th = extract_trace_headers(meta)
+    assert th.get("x-nr-request-id") == "req-999"
+
+    # extract_trace_headers from headers dict
+    th_dict = extract_trace_headers({
+        "x-nr-trace-id": "tr-srv-1",
+        "x-nr-session-id": "ses-srv-2",
+        "x-nr-request-id": "req-888",
+    })
+    assert th_dict.get("x-nr-trace-id") == "tr-srv-1"
+    assert th_dict.get("x-nr-session-id") == "ses-srv-2"
+    assert th_dict.get("x-nr-request-id") == "req-888"
+
+

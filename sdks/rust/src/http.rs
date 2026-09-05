@@ -92,6 +92,8 @@ pub struct Client {
     api_key: String,
     base_url: String,
     http: reqwest::Client,
+    trace_id: Option<String>,
+    session_id: Option<String>,
 }
 
 impl std::fmt::Debug for Client {
@@ -101,6 +103,8 @@ impl std::fmt::Debug for Client {
             // keys apart in a log — the same shape the dashboard shows.
             .field("api_key", &redacted(&self.api_key))
             .field("base_url", &self.base_url)
+            .field("trace_id", &self.trace_id)
+            .field("session_id", &self.session_id)
             .finish_non_exhaustive()
     }
 }
@@ -245,6 +249,8 @@ impl Client {
             api_key: resolve_api_key(Some(&api_key.into()))?,
             base_url: DEFAULT_BASE_URL.to_string(),
             http: Self::default_http_client()?,
+            trace_id: None,
+            session_id: None,
         })
     }
 
@@ -261,6 +267,38 @@ impl Client {
         validate_gateway_base_url(&b)?;
         self.base_url = b.trim_end_matches('/').to_string();
         Ok(self)
+    }
+
+    /// Configure a distributed trace ID to forward on outgoing requests.
+    pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Result<Self, NRouterError> {
+        let tid = trace_id.into();
+        if tid.contains('\r') || tid.contains('\n') {
+            return Err(NRouterError::Configuration(
+                "trace_id must not contain CRLF characters".into(),
+            ));
+        }
+        self.trace_id = Some(tid);
+        Ok(self)
+    }
+
+    /// Configure an upstream session ID to forward on outgoing requests.
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Result<Self, NRouterError> {
+        let sid = session_id.into();
+        if sid.contains('\r') || sid.contains('\n') {
+            return Err(NRouterError::Configuration(
+                "session_id must not contain CRLF characters".into(),
+            ));
+        }
+        self.session_id = Some(sid);
+        Ok(self)
+    }
+
+    pub fn trace_id(&self) -> Option<&str> {
+        self.trace_id.as_deref()
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
     }
 
     /// Override the underlying HTTP client — proxy, timeout, connection pool.
@@ -541,12 +579,14 @@ impl Client {
             NRouterError::Configuration("streaming request body must be a JSON object".into())
         })?;
         object.insert("stream".into(), Value::Bool(true));
-        let response = self
+        let mut req = self
             .http
             .post(self.url(path)?)
             .bearer_auth(&self.api_key)
             .header(reqwest::header::ACCEPT, "text/event-stream")
-            .json(&streamed)
+            .json(&streamed);
+        req = self.apply_custom_headers(req);
+        let response = req
             .send()
             .await
             .map_err(|e| NRouterError::Transport(e.to_string()))?;
@@ -614,6 +654,7 @@ impl Client {
         if let Some(json) = body {
             req = req.json(json);
         }
+        req = self.apply_custom_headers(req);
 
         let response = req
             .send()
@@ -645,6 +686,17 @@ impl Client {
         )))
     }
 
+    fn apply_custom_headers(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        req = req.header("x-nr-client-language", "rust");
+        if let Some(ref tid) = self.trace_id {
+            req = req.header("x-nr-trace-id", tid);
+        }
+        if let Some(ref sid) = self.session_id {
+            req = req.header("x-nr-session-id", sid);
+        }
+        req
+    }
+
     fn url(&self, path: &str) -> Result<reqwest::Url, NRouterError> {
         let base = validate_gateway_base_url(&self.base_url)?;
         base.join(path.trim_start_matches('/')).map_err(|error| {
@@ -653,6 +705,7 @@ impl Client {
     }
 
     async fn send(&self, req: reqwest::RequestBuilder) -> Result<Response<Value>, NRouterError> {
+        let req = self.apply_custom_headers(req);
         let response = req
             .send()
             .await
@@ -798,6 +851,8 @@ fn parse_sse_frame(frame: &[u8], meta: &ResponseMeta) -> Result<ParsedFrame, NRo
                 .unwrap_or(trimmed)
                 .to_string(),
             code: explicit.or(type_code).map(str::to_string),
+            param: node.get("param").and_then(Value::as_str).map(str::to_owned),
+            error_type: node.get("type").and_then(Value::as_str).map(str::to_owned),
             status: Some(200),
             request_id: meta.request_id.clone(),
             limit_source: meta.limit_source.clone(),
@@ -884,6 +939,8 @@ fn error_body(
             .unwrap_or("nRouter request failed")
             .to_string(),
         code: node.get("code").and_then(Value::as_str).map(str::to_owned),
+        param: node.get("param").and_then(Value::as_str).map(str::to_owned),
+        error_type: node.get("type").and_then(Value::as_str).map(str::to_owned),
         status: Some(status),
         request_id: meta.request_id.clone(),
         limit_source: meta.limit_source.clone(),

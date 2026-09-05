@@ -133,3 +133,50 @@ public data class BudgetWarningInfo(
     val ceiling: Double,
 )
 
+/** Extracts trace routing headers from response metadata into a map. */
+public fun extractTraceHeaders(meta: NRouterResponseMeta?): Map<String, String> {
+    val out = LinkedHashMap<String, String>()
+    if (!meta?.requestId.isNullOrEmpty()) {
+        out["x-nr-request-id"] = meta!!.requestId!!
+    }
+    return out
+}
+
+/** Extracts trace routing headers from an existing header map. */
+public fun extractTraceHeaders(headers: Map<String, String>?): Map<String, String> {
+    val out = LinkedHashMap<String, String>()
+    if (headers == null) return out
+    for ((k, v) in headers) {
+        val kl = k.lowercase(java.util.Locale.ROOT)
+        if (kl == "x-nr-request-id" || kl == "x-nr-trace-id" || kl == "x-nr-session-id") {
+            out[kl] = v
+        }
+    }
+    return out
+}
+
+/** Injects trace and session context into an existing headers map, rejecting CRLF characters. */
+public fun withTraceContext(headers: Map<String, String>?, traceId: String?, sessionId: String?): Map<String, String> {
+    if (traceId != null && (traceId.contains('\r') || traceId.contains('\n'))) {
+        throw IllegalArgumentException("traceId must not contain CRLF characters")
+    }
+    if (sessionId != null && (sessionId.contains('\r') || sessionId.contains('\n'))) {
+        throw IllegalArgumentException("sessionId must not contain CRLF characters")
+    }
+    val out = LinkedHashMap<String, String>()
+    if (headers != null) {
+        for ((k, v) in headers) {
+            if (!v.contains('\r') && !v.contains('\n')) {
+                out[k] = v
+            }
+        }
+    }
+    if (!traceId.isNullOrEmpty()) {
+        out["x-nr-trace-id"] = traceId
+    }
+    if (!sessionId.isNullOrEmpty()) {
+        out["x-nr-session-id"] = sessionId
+    }
+    return out
+}
+

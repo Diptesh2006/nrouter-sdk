@@ -50,6 +50,8 @@ impl Client {
                     return Err(NRouterError::Service(Box::new(ErrorBody {
                         message: format!("video job {} ended with status: {}", trimmed, status),
                         code: Some("video_failed".to_string()),
+                        param: None,
+                        error_type: None,
                         status: Some(500),
                         request_id: resp.meta.request_id.clone(),
                         limit_source: None,

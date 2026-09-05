@@ -55,6 +55,8 @@ pub enum NRouterError {
 pub struct ErrorBody {
     pub message: String,
     pub code: Option<String>,
+    pub param: Option<String>,
+    pub error_type: Option<String>,
     pub status: Option<u16>,
     pub request_id: Option<String>,
     /// Present on a 429: which limit measured the refusal. Never guessed —
@@ -154,6 +156,16 @@ impl NRouterError {
         }
     }
 
+    /// Parameter name in error when reported by gateway.
+    pub fn param(&self) -> Option<&str> {
+        self.body().and_then(|b| b.param.as_deref())
+    }
+
+    /// Error family/type when reported by gateway.
+    pub fn error_type(&self) -> Option<&str> {
+        self.body().and_then(|b| b.error_type.as_deref())
+    }
+
     /// Whether retrying the identical request could plausibly succeed.
     ///
     /// Deliberately false for every 4xx that names a permanent condition: a
@@ -171,16 +183,130 @@ impl NRouterError {
     }
 }
 
+/// Redacts nRouter and upstream API keys from arbitrary strings.
+pub fn redact_keys(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut remaining = s;
+
+    while let Some(pos) = remaining.find("sk-") {
+        out.push_str(&remaining[..pos]);
+        let slice = &remaining[pos..];
+        if let Some(stripped) = slice.strip_prefix("sk-nrouter-***") {
+            out.push_str("sk-nrouter-***");
+            remaining = stripped;
+        } else if let Some(rest) = slice.strip_prefix("sk-nrouter-") {
+            out.push_str("sk-nrouter-***");
+            let skip = rest
+                .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-' && c != '.')
+                .unwrap_or(rest.len());
+            remaining = &rest[skip..];
+        } else if let Some(stripped) = slice.strip_prefix("sk-***") {
+            out.push_str("sk-***");
+            remaining = stripped;
+        } else {
+            let rest = &slice["sk-".len()..];
+            let key_len = rest
+                .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-' && c != '.')
+                .unwrap_or(rest.len());
+            if key_len >= 4 {
+                out.push_str("sk-***");
+                remaining = &rest[key_len..];
+            } else {
+                out.push_str("sk-");
+                remaining = rest;
+            }
+        }
+    }
+    out.push_str(remaining);
+    out
+}
+
+/// Formats any NRouterError into a human-readable, log-safe diagnostic string,
+/// masking all API keys.
+pub fn format_error(err: &NRouterError) -> String {
+    let mut parts = vec![match err {
+        NRouterError::Request(_) => "[request]".to_string(),
+        NRouterError::GuardrailBlocked(_) => "[guardrail_blocked]".to_string(),
+        NRouterError::Authentication(_) => "[authentication]".to_string(),
+        NRouterError::Credit(_) => "[credit]".to_string(),
+        NRouterError::BudgetExceeded(_) => "[budget_exceeded]".to_string(),
+        NRouterError::NotFound(_) => "[not_found]".to_string(),
+        NRouterError::RateLimit(_) => "[rate_limit]".to_string(),
+        NRouterError::Service(_) => "[service]".to_string(),
+        NRouterError::Other(_) => "[other]".to_string(),
+        NRouterError::Transport(_) => "[transport]".to_string(),
+        NRouterError::Configuration(_) => "[configuration]".to_string(),
+    }];
+
+    if let Some(b) = err.body() {
+        if let Some(status) = b.status {
+            parts.push(format!("HTTP {status}"));
+        }
+        if let Some(code) = &b.code {
+            parts.push(format!("code={code}"));
+        }
+        if let Some(param) = &b.param {
+            parts.push(format!("param={param}"));
+        }
+        if let Some(req_id) = &b.request_id {
+            parts.push(format!("requestId={req_id}"));
+        }
+        if let Some(src) = &b.limit_source {
+            parts.push(format!("limitSource={src}"));
+        }
+        if let Some(ra) = b.retry_after {
+            parts.push(format!("retryAfter={ra}s"));
+        }
+        parts.push(format!(": {}", redact_keys(&b.message)));
+    } else {
+        parts.push(format!(": {}", redact_keys(&err.to_string())));
+    }
+    parts.join(" ")
+}
+
+/// Structured gateway error envelope.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ErrorEnvelope {
+    pub code: Option<String>,
+    pub message: Option<String>,
+    pub param: Option<String>,
+    pub error_type: Option<String>,
+}
+
+/// Parse a gateway JSON error body into a structured ErrorEnvelope with secret redaction.
+pub fn parse_gateway_error_envelope(body: &serde_json::Value) -> ErrorEnvelope {
+    let node = body.get("error").unwrap_or(body);
+    ErrorEnvelope {
+        code: node
+            .get("code")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        message: node
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .map(redact_keys),
+        param: node
+            .get("param")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        error_type: node
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+    }
+}
+
 impl fmt::Display for NRouterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Transport(m) => write!(f, "nRouter transport error: {m}"),
-            Self::Configuration(m) => write!(f, "nRouter configuration error: {m}"),
+            Self::Transport(m) => write!(f, "nRouter transport error: {}", redact_keys(m)),
+            Self::Configuration(m) => write!(f, "nRouter configuration error: {}", redact_keys(m)),
             other => {
                 let b = other.body().expect("non-transport variants carry a body");
+                let msg = redact_keys(&b.message);
                 match &b.code {
-                    Some(code) => write!(f, "{} ({code})", b.message),
-                    None => write!(f, "{}", b.message),
+                    Some(code) => write!(f, "{} ({code})", msg),
+                    None => write!(f, "{}", msg),
                 }
             }
         }

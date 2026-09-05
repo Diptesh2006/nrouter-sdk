@@ -26,6 +26,8 @@ export {
   ENV_KEY,
   KEY_PREFIX,
   validateGatewayBaseUrl,
+  extractTraceHeaders,
+  withTraceContext,
 } from './client';
 
 // The contract: metadata, options and the wire shapes.
@@ -74,10 +76,15 @@ export {
   transportError,
   isRetryable,
   parseErrorBody,
+  parseGatewayErrorEnvelope,
+  type ParsedErrorEnvelope,
+  type ParsedErrorBody,
   parseRetryAfter,
   MAX_RETRY_AFTER_SECONDS,
   computeJitteredBackoff,
   type BackoffOptions,
+  safeJsonParse,
+  formatNRouterError,
   withResponse,
   ERROR_CLASS_BY_CODE,
   ERROR_STATUS_BY_CODE,

@@ -45,7 +45,8 @@ nrouter_meta <- function(headers = list()) {
       budget_warning     = get_chr("x-nr-budget-warning"),
       auth_reason        = get_chr("x-nr-auth-reason"),
       response_cache     = get_chr("x-nr-response-cache"),
-      response_cache_age = get_num("x-nr-response-cache-age")
+      response_cache_age = get_num("x-nr-response-cache-age"),
+      retry_after        = nrouter_parse_retry_after(get_chr("retry-after"))
     )
   )
 }
@@ -124,6 +125,68 @@ nrouter_is_cache_miss <- function(meta) {
 #' @export
 nrouter_cache_age_seconds <- function(meta) {
   if (!is.null(meta$response_cache_age)) meta$response_cache_age else 0
+}
+
+#' Extract trace routing headers from metadata or a headers list
+#'
+#' @param source An \code{nrouter_meta} object, a response list, or a named list/vector of headers.
+#' @return A named character vector of trace headers.
+#' @export
+nrouter_extract_trace_headers <- function(source) {
+  out <- character(0)
+  if (is.null(source)) return(out)
+  if (inherits(source, "nrouter_meta")) {
+    if (!is.null(source$request_id) && nzchar(as.character(source$request_id))) {
+      out["x-nr-request-id"] <- as.character(source$request_id)
+    }
+    return(out)
+  }
+  if (is.list(source) && !is.null(source$meta) && inherits(source$meta, "nrouter_meta")) {
+    return(nrouter_extract_trace_headers(source$meta))
+  }
+  headers <- as.list(source)
+  names(headers) <- tolower(names(headers))
+  for (h in c("x-nr-request-id", "x-nr-trace-id", "x-nr-session-id")) {
+    if (!is.null(headers[[h]]) && nzchar(as.character(headers[[h]]))) {
+      out[h] <- as.character(headers[[h]])
+    }
+  }
+  out
+}
+
+#' Inject trace and session context into an existing headers list or vector
+#'
+#' Rejects CRLF characters to prevent header injection.
+#'
+#' @param headers Named list or character vector of headers, or NULL.
+#' @param trace_id Optional trace identifier string.
+#' @param session_id Optional session identifier string.
+#' @return A named list of headers with trace context injected.
+#' @export
+nrouter_with_trace_context <- function(headers = list(), trace_id = NULL, session_id = NULL) {
+  if (!is.null(trace_id) && grepl("[\r\n]", as.character(trace_id))) {
+    stop(nrouter_configuration_condition("trace_id must not contain CRLF characters"))
+  }
+  if (!is.null(session_id) && grepl("[\r\n]", as.character(session_id))) {
+    stop(nrouter_configuration_condition("session_id must not contain CRLF characters"))
+  }
+  out <- list()
+  if (!is.null(headers) && length(headers) > 0) {
+    nms <- names(headers)
+    for (i in seq_along(headers)) {
+      v <- as.character(headers[[i]])
+      if (!grepl("[\r\n]", v)) {
+        out[[nms[i]]] <- v
+      }
+    }
+  }
+  if (!is.null(trace_id) && nzchar(as.character(trace_id))) {
+    out[["x-nr-trace-id"]] <- as.character(trace_id)
+  }
+  if (!is.null(session_id) && nzchar(as.character(session_id))) {
+    out[["x-nr-session-id"]] <- as.character(session_id)
+  }
+  out
 }
 
 

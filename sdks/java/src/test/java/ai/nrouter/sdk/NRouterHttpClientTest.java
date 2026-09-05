@@ -745,5 +745,145 @@ class NRouterHttpClientTest {
             assertThrows(IllegalArgumentException.class, () -> NRouter.httpClient("sk-nrouter-test", refused));
         }
     }
+
+    @Test
+    void retryAfterParsingAndJitteredBackoffBounds() {
+        java.time.Instant now = java.time.Instant.ofEpochSecond(1770000000);
+
+        // Delta-seconds
+        assertEquals(45L, NRouterException.parseRetryAfter("45", now));
+        assertEquals(120L, NRouterException.parseRetryAfter("  120  ", now));
+        assertEquals(NRouterException.MAX_RETRY_AFTER_SECONDS, NRouterException.parseRetryAfter("999999", now));
+
+        // Invalid
+        assertNull(NRouterException.parseRetryAfter("-10", now));
+        assertNull(NRouterException.parseRetryAfter("12.5", now));
+        assertNull(NRouterException.parseRetryAfter("invalid", now));
+        assertNull(NRouterException.parseRetryAfter(null, now));
+        assertNull(NRouterException.parseRetryAfter("", now));
+
+        // HTTP-date future (60s)
+        assertEquals(60L, NRouterException.parseRetryAfter("Mon, 02 Feb 2026 02:41:00 GMT", now));
+
+        // HTTP-date past (clamps to 0)
+        assertEquals(0L, NRouterException.parseRetryAfter("Mon, 02 Feb 2026 02:39:00 GMT", now));
+
+        // computeJitteredBackoff
+        Duration d0 = NRouterException.computeJitteredBackoff(0, Duration.ofSeconds(1), Duration.ofSeconds(10), null);
+        assertTrue(d0.toMillis() >= 500 && d0.toMillis() <= 1000);
+
+        Duration d2 = NRouterException.computeJitteredBackoff(2, Duration.ofSeconds(1), Duration.ofSeconds(10), null);
+        assertTrue(d2.toMillis() >= 2000 && d2.toMillis() <= 4000);
+
+        Duration dHuge = NRouterException.computeJitteredBackoff(100, Duration.ofSeconds(1), Duration.ofSeconds(8), null);
+        assertTrue(dHuge.toMillis() >= 4000 && dHuge.toMillis() <= 8000);
+
+        Duration dRetry = NRouterException.computeJitteredBackoff(0, Duration.ofSeconds(1), Duration.ofSeconds(10), 5L);
+        assertTrue(dRetry.toMillis() >= 2500 && dRetry.toMillis() <= 5000);
+
+        Duration dRetryCapped = NRouterException.computeJitteredBackoff(0, Duration.ofSeconds(1), Duration.ofSeconds(10), 50L);
+        assertTrue(dRetryCapped.toMillis() >= 5000 && dRetryCapped.toMillis() <= 10000);
+    }
+
+    @Test
+    void redactsKeysAndFormatsGatewayErrorEnvelopes() {
+        String msg = "Invalid key sk-nrouter-live-12345678 or sk-ant-api03-abcdef123";
+        String redacted = NRouterException.redactKeys(msg);
+        assertTrue(redacted.contains("sk-nrouter-***"));
+        assertTrue(redacted.contains("sk-***"));
+        assertEquals(redacted, NRouterException.redactKeys(redacted)); // idempotent
+
+        String json = "{\"error\":{\"message\":\"Failed with sk-nrouter-test-abcdef\",\"code\":\"invalid_request_error\",\"param\":\"model\",\"type\":\"invalid_request_error\"}}";
+        NRouterException.NRouterErrorEnvelope envelope = NRouterException.parseGatewayErrorEnvelope(json);
+        assertEquals("invalid_request_error", envelope.code());
+        assertEquals("model", envelope.param());
+        assertEquals("invalid_request_error", envelope.type());
+        assertTrue(envelope.message().contains("sk-nrouter-***"));
+
+        java.net.http.HttpHeaders headers = java.net.http.HttpHeaders.of(java.util.Map.of("x-nr-request-id", java.util.List.of("req_123")), (a, b) -> true);
+        NRouterResponseMeta meta = NRouterResponseMeta.fromHeaders(headers);
+        NRouterException ex = NRouterException.gateway("model secret-key sk-nrouter-live-999 not found", "model_not_found", "model", "invalid_request_error", 404, meta, null);
+        assertEquals("model", ex.param());
+        assertEquals("invalid_request_error", ex.type());
+        String formatted = NRouterException.formatError(ex);
+        assertTrue(formatted.contains("[not_found]"));
+        assertTrue(formatted.contains("HTTP 404"));
+        assertTrue(formatted.contains("code=model_not_found"));
+        assertTrue(formatted.contains("param=model"));
+        assertTrue(formatted.contains("req_id=req_123"));
+        assertTrue(formatted.contains("sk-nrouter-***"));
+        assertTrue(ex.toString().contains("sk-nrouter-***"));
+    }
+
+    @Test
+    void propagatesTraceContextAndRejectsCrlf() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] body = "{\"id\":\"chatcmpl-test\",\"choices\":[]}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.getResponseHeaders().set("x-nr-request-id", "req_trace_999");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/v1";
+            RecordingHttpClient recorder = new RecordingHttpClient(NRouterHttpClient.defaultHttpClient());
+            NRouterHttpClient client = NRouter.httpClient("sk-nrouter-test", base, recorder, Duration.ofSeconds(10), "trace-abc-123", "sess-xyz-789");
+
+            assertEquals("trace-abc-123", client.traceId());
+            assertEquals("sess-xyz-789", client.sessionId());
+
+            NRouterHttpResponse resp = client.chatCompletions(Map.of("model", "test"));
+            assertNotNull(resp);
+
+            assertFalse(recorder.sent.isEmpty());
+            HttpRequest sentReq = recorder.sent.get(0);
+            assertEquals("java", sentReq.headers().firstValue("x-nr-client-language").orElse(null));
+            assertEquals("trace-abc-123", sentReq.headers().firstValue("x-nr-trace-id").orElse(null));
+            assertEquals("sess-xyz-789", sentReq.headers().firstValue("x-nr-session-id").orElse(null));
+
+            // Test withTraceId / withSessionId immutability
+            NRouterHttpClient modified = client.withTraceId("trace-new").withSessionId("sess-new");
+            assertEquals("trace-new", modified.traceId());
+            assertEquals("sess-new", modified.sessionId());
+            assertEquals("trace-abc-123", client.traceId()); // original unchanged
+
+            // CRLF rejection
+            assertThrows(IllegalArgumentException.class, () ->
+                    NRouter.httpClient("sk-nrouter-test", base, recorder, Duration.ofSeconds(10), "trace\r\ninjected", "sess"));
+            assertThrows(IllegalArgumentException.class, () ->
+                    NRouter.httpClient("sk-nrouter-test", base, recorder, Duration.ofSeconds(10), "trace", "sess\ninjected"));
+
+            // Trace headers extraction
+            Map<String, String> extracted = NRouter.extractTraceHeaders(resp.meta());
+            assertEquals("req_trace_999", extracted.get("x-nr-request-id"));
+
+            Map<String, String> headerMap = Map.of(
+                    "x-nr-request-id", "req_1",
+                    "x-nr-trace-id", "tr_1",
+                    "x-nr-session-id", "sess_1",
+                    "other-header", "value"
+            );
+            Map<String, String> extractedMap = NRouter.extractTraceHeaders(headerMap);
+            assertEquals(3, extractedMap.size());
+            assertEquals("req_1", extractedMap.get("x-nr-request-id"));
+            assertEquals("tr_1", extractedMap.get("x-nr-trace-id"));
+            assertEquals("sess_1", extractedMap.get("x-nr-session-id"));
+
+            // Trace context injection
+            Map<String, String> injected = NRouter.withTraceContext(Map.of("existing", "val"), "tr_2", "sess_2");
+            assertEquals("val", injected.get("existing"));
+            assertEquals("tr_2", injected.get("x-nr-trace-id"));
+            assertEquals("sess_2", injected.get("x-nr-session-id"));
+
+            assertThrows(IllegalArgumentException.class, () ->
+                    NRouter.withTraceContext(Map.of(), "bad\r\ntrace", "sess"));
+        } finally {
+            server.stop(0);
+        }
+    }
 }
+
 

@@ -951,6 +951,27 @@ class ContractTest {
     }
 
     @Test
+    fun `computeJitteredBackoff bounds and Retry-After priority`() {
+        val d0 = NRouterError.computeJitteredBackoff(0, baseDelayMs = 1000L, maxDelayMs = 10000L, jitterFactor = 0.0)
+        assertEquals(1000L, d0)
+
+        val d2 = NRouterError.computeJitteredBackoff(2, baseDelayMs = 1000L, maxDelayMs = 10000L, jitterFactor = 0.0)
+        assertEquals(4000L, d2)
+
+        val dHuge = NRouterError.computeJitteredBackoff(100, baseDelayMs = 1000L, maxDelayMs = 8000L, jitterFactor = 0.0)
+        assertEquals(8000L, dHuge)
+
+        val dRetry = NRouterError.computeJitteredBackoff(0, maxDelayMs = 10000L, retryAfterSeconds = 5L, jitterFactor = 0.0)
+        assertEquals(5000L, dRetry)
+
+        val dRetryCapped = NRouterError.computeJitteredBackoff(0, maxDelayMs = 10000L, retryAfterSeconds = 50L, jitterFactor = 0.0)
+        assertEquals(10000L, dRetryCapped)
+
+        val dJitter = NRouterError.computeJitteredBackoff(1, baseDelayMs = 1000L, jitterFactor = 0.4)
+        assertTrue(dJitter in 1200L..2000L)
+    }
+
+    @Test
     fun `media audio validation and video polling`() = runBlocking {
         for (fmt in VALID_AUDIO_FORMATS) {
             validateAudioFormat(fmt)
@@ -994,6 +1015,104 @@ class ContractTest {
             assertFailsWith<NRouterError.Configuration> {
                 NRouter(apiKey = "sk-nrouter-abc", baseURL = refused)
             }
+        }
+    }
+
+    @Test
+    fun `redacts keys and formats gateway error envelopes`() {
+        val msg = "Invalid key sk-nrouter-live-12345678 or sk-ant-api03-abcdef123"
+        val redacted = redactKeys(msg)
+        assertTrue(redacted.contains("sk-nrouter-***"))
+        assertTrue(redacted.contains("sk-***"))
+        assertEquals(redacted, redactKeys(redacted)) // idempotent
+
+        val json = """{"error":{"message":"Failed with sk-nrouter-test-abcdef","code":"invalid_request_error","param":"model","type":"invalid_request_error"}}"""
+        val envelope = parseGatewayErrorEnvelope(json)
+        assertEquals("invalid_request_error", envelope.code)
+        assertEquals("model", envelope.param)
+        assertEquals("invalid_request_error", envelope.type)
+        assertTrue(envelope.message?.contains("sk-nrouter-***") == true)
+
+        val err = NRouterError.fromCode(NRouterErrorBody(
+            message = "model secret-key sk-nrouter-live-999 not found",
+            code = "model_not_found",
+            param = "model",
+            type = "invalid_request_error",
+            status = 404,
+            requestId = "req_123",
+        ))
+        assertEquals("model", err.body?.param)
+        assertEquals("invalid_request_error", err.body?.type)
+        val formatted = formatError(err)
+        assertTrue(formatted.contains("[notfound]"))
+        assertTrue(formatted.contains("HTTP 404"))
+        assertTrue(formatted.contains("code=model_not_found"))
+        assertTrue(formatted.contains("param=model"))
+        assertTrue(formatted.contains("req_id=req_123"))
+        assertTrue(formatted.contains("sk-nrouter-***"))
+        assertTrue(err.message?.contains("sk-nrouter-***") == true)
+    }
+
+    @Test
+    fun `propagates trace context and rejects crlf`() = runBlocking {
+        server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(200).setBody("""{"id":"chatcmpl-test","choices":[]}""").addHeader("x-nr-request-id", "req_trace_123"))
+
+        val client = NRouter(
+            apiKey = "sk-nrouter-test",
+            baseURL = server.url("/v1").toString(),
+            traceId = "tr_abc",
+            sessionId = "sess_xyz",
+            clientPlatform = "test-platform",
+        )
+        assertEquals("tr_abc", client.traceId)
+        assertEquals("sess_xyz", client.sessionId)
+        assertEquals("test-platform", client.clientPlatform)
+
+        val resp = client.chatCompletions(JSONObject().put("model", "gpt-4o"))
+        val req = server.takeRequest()
+        assertEquals("kotlin", req.getHeader("x-nr-client-language"))
+        assertEquals("test-platform", req.getHeader("x-nr-client-platform"))
+        assertEquals("tr_abc", req.getHeader("x-nr-trace-id"))
+        assertEquals("sess_xyz", req.getHeader("x-nr-session-id"))
+
+        // withTraceId / withSessionId immutability
+        val modified = client.withTraceId("tr_new").withSessionId("sess_new")
+        assertEquals("tr_new", modified.traceId)
+        assertEquals("sess_new", modified.sessionId)
+        assertEquals("tr_abc", client.traceId)
+
+        // CRLF rejection
+        assertFailsWith<IllegalArgumentException> {
+            NRouter(apiKey = "sk-nrouter-test", traceId = "tr\r\ninjected")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            NRouter(apiKey = "sk-nrouter-test", sessionId = "sess\ninjected")
+        }
+
+        // extractTraceHeaders
+        val extracted = NRouter.extractTraceHeaders(resp.meta)
+        assertEquals("req_trace_123", extracted["x-nr-request-id"])
+
+        val headerMap = mapOf(
+            "x-nr-request-id" to "req_1",
+            "x-nr-trace-id" to "tr_1",
+            "x-nr-session-id" to "sess_1",
+            "other" to "val"
+        )
+        val extractedMap = NRouter.extractTraceHeaders(headerMap)
+        assertEquals(3, extractedMap.size)
+        assertEquals("req_1", extractedMap["x-nr-request-id"])
+        assertEquals("tr_1", extractedMap["x-nr-trace-id"])
+        assertEquals("sess_1", extractedMap["x-nr-session-id"])
+
+        // withTraceContext
+        val injected = NRouter.withTraceContext(mapOf("keep" to "yes"), "tr_2", "sess_2")
+        assertEquals("yes", injected["keep"])
+        assertEquals("tr_2", injected["x-nr-trace-id"])
+        assertEquals("sess_2", injected["x-nr-session-id"])
+
+        assertFailsWith<IllegalArgumentException> {
+            NRouter.withTraceContext(emptyMap(), "bad\r\ntrace", "sess")
         }
     }
 }

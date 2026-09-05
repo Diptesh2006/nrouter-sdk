@@ -27,10 +27,11 @@ package nrouter
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
+	"math/big"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -216,6 +217,8 @@ type Client struct {
 	baseURL         string
 	http            *http.Client
 	bodyIdleTimeout time.Duration
+	traceID         string
+	sessionID       string
 }
 
 // Option configures a Client at construction.
@@ -224,6 +227,16 @@ type Option func(*Client)
 // WithBaseURL points the client at a different gateway.
 func WithBaseURL(baseURL string) Option {
 	return func(c *Client) { c.baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/") }
+}
+
+// WithTraceID configures an end-to-end distributed trace ID on outgoing requests.
+func WithTraceID(traceID string) Option {
+	return func(c *Client) { c.traceID = traceID }
+}
+
+// WithSessionID configures a multi-turn upstream session ID on outgoing requests.
+func WithSessionID(sessionID string) Option {
+	return func(c *Client) { c.sessionID = sessionID }
 }
 
 // WithHTTPClient overrides the transport — proxy, timeout, connection pool.
@@ -271,6 +284,12 @@ func New(apiKey string, opts ...Option) (*Client, error) {
 	if strings.ContainsAny(c.baseURL, "\r\n\t") {
 		return nil, configErr("baseURL contains invalid whitespace or control characters")
 	}
+	if strings.ContainsAny(c.traceID, "\r\n") {
+		return nil, configErr("traceID must not contain CRLF characters")
+	}
+	if strings.ContainsAny(c.sessionID, "\r\n") {
+		return nil, configErr("sessionID must not contain CRLF characters")
+	}
 	parsedURL, err := url.Parse(c.baseURL)
 	if err != nil {
 		return nil, configErr(fmt.Sprintf("invalid nRouter gateway URL: %v", err))
@@ -300,6 +319,12 @@ func NewFromEnv(opts ...Option) (*Client, error) { return New("", opts...) }
 
 // BaseURL reports where this client sends requests.
 func (c *Client) BaseURL() string { return c.baseURL }
+
+// TraceID reports the configured trace ID, if any.
+func (c *Client) TraceID() string { return c.traceID }
+
+// SessionID reports the configured session ID, if any.
+func (c *Client) SessionID() string { return c.sessionID }
 
 // String redacts the key: enough to tell two keys apart in a log, never
 // enough to use — the same shape the dashboard shows.
@@ -618,6 +643,13 @@ func (c *Client) request(ctx context.Context, method, path string, body io.Reade
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("x-nr-client-language", "go")
+	if c.traceID != "" {
+		req.Header.Set("x-nr-trace-id", c.traceID)
+	}
+	if c.sessionID != "" {
+		req.Header.Set("x-nr-session-id", c.sessionID)
+	}
 	return req, nil
 }
 
@@ -782,11 +814,15 @@ func gatewayError(res *http.Response, meta ResponseMeta, raw []byte) *Error {
 		message = "nRouter request failed"
 	}
 	code, _ := node["code"].(string)
+	param, _ := node["param"].(string)
+	errType, _ := node["type"].(string)
 
 	err := &Error{
 		Kind:        classify(code, message, res.StatusCode),
-		Message:     message,
+		Message:     RedactKeys(message),
 		Code:        code,
+		Param:       param,
+		Type:        errType,
 		Status:      res.StatusCode,
 		RequestID:   meta.RequestID,
 		LimitSource: meta.LimitSource,
@@ -837,10 +873,17 @@ func parseRetryAfter(raw string, now time.Time) *uint64 {
 	return ParseRetryAfter(raw, now)
 }
 
-// ComputeJitteredBackoff calculates a bounded jittered exponential backoff.
-//
-// Honors retryAfterSeconds when non-nil and > 0, bounded by maxDelay.
-// Attempt is clamped to [0, 30] to prevent arithmetic bitshift overflow.
+func cryptoJitterFloat() float64 {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return 0.5
+	}
+	return float64(n.Int64()) / 1000000.0
+}
+
+// ComputeJitteredBackoff calculates exponential backoff with full jitter.
+// Honors retryAfterSeconds if provided and non-zero, bounding to maxDelay.
+// Clamps attempt between 0 and 30 to prevent integer overflow.
 // Full jitter spreads backoff between 50% and 100% of the computed window.
 func ComputeJitteredBackoff(attempt int, baseDelay, maxDelay time.Duration, retryAfterSeconds *uint64) time.Duration {
 	if attempt < 0 {
@@ -860,7 +903,7 @@ func ComputeJitteredBackoff(attempt int, baseDelay, maxDelay time.Duration, retr
 		if retryDur > maxDelay {
 			retryDur = maxDelay
 		}
-		factor := 0.5 + 0.5*rand.Float64()
+		factor := 0.5 + 0.5*cryptoJitterFloat()
 		return time.Duration(float64(retryDur) * factor)
 	}
 
@@ -869,7 +912,7 @@ func ComputeJitteredBackoff(attempt int, baseDelay, maxDelay time.Duration, retr
 	if delay > maxDelay || delay < 0 {
 		delay = maxDelay
 	}
-	factor := 0.5 + 0.5*rand.Float64()
+	factor := 0.5 + 0.5*cryptoJitterFloat()
 	return time.Duration(float64(delay) * factor)
 }
 

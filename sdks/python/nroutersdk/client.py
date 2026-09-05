@@ -7,7 +7,7 @@ import os
 import re
 import time
 import ipaddress
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Mapping, cast
 from urllib.parse import quote, urlparse
 
 try:
@@ -238,6 +238,73 @@ def _resolve_base_url(base_url: str | None) -> str:
     return raw.rstrip("/")
 
 
+def _prepare_default_headers(
+    default_headers: Mapping[str, str] | None = None,
+    trace_id: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, str]:
+    if trace_id is not None and any(c in trace_id for c in "\r\n"):
+        raise ValueError("trace_id must not contain CRLF characters")
+    if session_id is not None and any(c in session_id for c in "\r\n"):
+        raise ValueError("session_id must not contain CRLF characters")
+    headers = dict(default_headers or {})
+    headers.setdefault("x-nr-client-language", "python")
+    if trace_id:
+        headers["x-nr-trace-id"] = trace_id
+    if session_id:
+        headers["x-nr-session-id"] = session_id
+    return headers
+
+
+def extract_trace_headers(meta: Any) -> dict[str, str]:
+    """Extract trace routing headers from response metadata, headers mapping, or dict."""
+    out: dict[str, str] = {}
+    if meta is None:
+        return out
+    if isinstance(meta, Mapping):
+        for k, v in meta.items():
+            kl = str(k).lower()
+            if kl in ("x-nr-request-id", "x-nr-trace-id", "x-nr-session-id"):
+                out[kl] = str(v)
+    elif hasattr(meta, "headers") and isinstance(getattr(meta, "headers"), Mapping):
+        for k, v in getattr(meta, "headers").items():
+            kl = str(k).lower()
+            if kl in ("x-nr-request-id", "x-nr-trace-id", "x-nr-session-id"):
+                out[kl] = str(v)
+    req_id = getattr(meta, "request_id", None)
+    if req_id and isinstance(req_id, str):
+        out["x-nr-request-id"] = req_id
+    trace_id = getattr(meta, "trace_id", None)
+    if trace_id and isinstance(trace_id, str):
+        out["x-nr-trace-id"] = trace_id
+    session_id = getattr(meta, "session_id", None)
+    if session_id and isinstance(session_id, str):
+        out["x-nr-session-id"] = session_id
+    return out
+
+
+def with_trace_context(
+    headers: Mapping[str, str] | None = None,
+    trace_id: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, str]:
+    """Return a new dict with trace headers injected, sanitizing any CRLF characters."""
+    if trace_id is not None and any(c in trace_id for c in "\r\n"):
+        raise ValueError("trace_id must not contain CRLF characters")
+    if session_id is not None and any(c in session_id for c in "\r\n"):
+        raise ValueError("session_id must not contain CRLF characters")
+    out: dict[str, str] = {}
+    if headers:
+        for k, v in headers.items():
+            if isinstance(v, str) and not any(c in v for c in "\r\n"):
+                out[k] = v
+    if trace_id:
+        out["x-nr-trace-id"] = trace_id
+    if session_id:
+        out["x-nr-session-id"] = session_id
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Helper: convert OpenAI APIStatusError into typed nRouter errors
 # ---------------------------------------------------------------------------
@@ -276,12 +343,16 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
         return
 
     error = body.get("error")
+    param = None
+    error_type = None
     if isinstance(error, dict):
         message = error.get("message") or str(err)
         # The gateway names a stable code inside the error object when it can.
         # It is not the classifier — status is, per the note above — but where
         # two codes share one status it is the only thing that separates them.
         gateway_code = error.get("code") if isinstance(error.get("code"), str) else None
+        param = error.get("param") if isinstance(error.get("param"), str) else None
+        error_type = error.get("type") if isinstance(error.get("type"), str) else None
     elif isinstance(error, str):
         message = error
         gateway_code = None
@@ -314,13 +385,15 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
                 message,
                 request_id=request_id,
                 auth_reason=headers.get("x-nr-auth-reason"),
+                param=param,
+                type=error_type,
             ) from err
         if cls is nRouterServiceError:
             # `credit_check_failed` and `service_unavailable` share this class.
             # Without the code the exception reports the class default, so a
             # caller branching on the stable code gets the wrong one.
-            raise cls(message, request_id=request_id, code=gateway_code) from err
-        raise cls(message, request_id=request_id) from err
+            raise cls(message, request_id=request_id, code=gateway_code, param=param, type=error_type) from err
+        raise cls(message, request_id=request_id, param=param, type=error_type) from err
     if gateway_code in ("rate_limit_exceeded", "tpm_limit_exceeded"):
         retry_after_hdr = headers.get("retry-after")
         raise nRouterRateLimitError(
@@ -329,6 +402,8 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             limit_source=headers.get("x-nr-limit-source"),
             retry_after=parse_retry_after(retry_after_hdr),
             code=gateway_code,
+            param=param,
+            type=error_type,
         ) from err
     if gateway_code:
         # A code we do NOT know must not fall through to status classification.
@@ -337,19 +412,21 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
         # answer. Keep the base class and the code the gateway actually sent,
         # which is what the other SDKs' `Other` variant does.
         raise nRouterError(
-            message, request_id=request_id, code=gateway_code, status_code=status
+            message, request_id=request_id, code=gateway_code, status_code=status, param=param, type=error_type
         ) from err
 
     if status == 400:
         if "guardrail" in message.lower():
-            raise nRouterGuardrailBlockedError(message, request_id=request_id) from err
-        raise nRouterRequestError(message, request_id=request_id) from err
+            raise nRouterGuardrailBlockedError(message, request_id=request_id, param=param, type=error_type) from err
+        raise nRouterRequestError(message, request_id=request_id, param=param, type=error_type) from err
 
     if status == 401:
         raise nRouterAuthenticationError(
             message,
             request_id=request_id,
             auth_reason=headers.get("x-nr-auth-reason"),
+            param=param,
+            type=error_type,
         ) from err
 
     if status == 402:
@@ -359,8 +436,8 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
         # and it is stable — `GatewayError::{BudgetExceeded, ScopedBudgetExceeded}`
         # both start their Display with "budget".
         if message.lstrip().lower().startswith("budget"):
-            raise nRouterBudgetExceededError(message, request_id=request_id) from err
-        raise nRouterCreditError(message, request_id=request_id) from err
+            raise nRouterBudgetExceededError(message, request_id=request_id, param=param, type=error_type) from err
+        raise nRouterCreditError(message, request_id=request_id, param=param, type=error_type) from err
 
     if status == 404:
         # Scoped to MODELS. A 404 is also a missing video job, an unknown MCP
@@ -368,8 +445,8 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
         # wrong answer with a confident stable code on it. Anything we cannot
         # identify keeps the base class rather than a fabricated one.
         if "model" in message.lower():
-            raise nRouterNotFoundError(message, request_id=request_id) from err
-        raise nRouterError(message, request_id=request_id, status_code=404) from err
+            raise nRouterNotFoundError(message, request_id=request_id, param=param, type=error_type) from err
+        raise nRouterError(message, request_id=request_id, status_code=404, param=param, type=error_type) from err
 
     if status == 429:
         retry_after = headers.get("retry-after")
@@ -383,10 +460,18 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             # `tpm_limit_exceeded` and `rate_limit_exceeded` share this status;
             # keep whichever the gateway named rather than the class default.
             code=gateway_code,
+            param=param,
+            type=error_type,
         ) from err
 
     if status == 500 or status == 503:
-        raise nRouterServiceError(message, request_id=request_id, status_code=status) from err
+        raise nRouterServiceError(
+            message,
+            request_id=request_id,
+            status_code=status,
+            param=param,
+            type=error_type,
+        ) from err
 
 
 # ---------------------------------------------------------------------------
@@ -860,6 +945,9 @@ class nRouter(_OpenAI):
         self,
         api_key: str | None = None,
         base_url: str | None = None,
+        *,
+        trace_id: str | None = None,
+        session_id: str | None = None,
         **kwargs,
     ) -> None:
         """Initialize the nRouter client.
@@ -869,6 +957,8 @@ class nRouter(_OpenAI):
                 the NROUTER_API_KEY environment variable.
             base_url: Optional gateway base URL. Defaults to the NROUTER_BASE_URL
                 environment variable or 'https://api.nrouter.ai/v1'.
+            trace_id: Optional distributed trace ID.
+            session_id: Optional multi-turn session ID.
             **kwargs: Extra arguments passed directly to OpenAI client constructor
                 (e.g. timeout, max_retries, http_client). `max_retries` defaults
                 to `DEFAULT_MAX_RETRIES` (0 — see the note there: a retry of a
@@ -878,14 +968,27 @@ class nRouter(_OpenAI):
         resolved_key = _resolve_api_key(api_key)
         resolved_base = _resolve_base_url(base_url)
         _apply_transport_defaults(kwargs)
+        default_headers = _prepare_default_headers(
+            kwargs.pop("default_headers", None),
+            trace_id=trace_id,
+            session_id=session_id,
+        )
 
-        super().__init__(api_key=resolved_key, base_url=resolved_base, **kwargs)
+        super().__init__(
+            api_key=resolved_key,
+            base_url=resolved_base,
+            default_headers=default_headers,
+            **kwargs,
+        )
 
         self._nrouter_base = resolved_base.rstrip("/").removesuffix("/v1")
         self._nrouter_headers = {
             "Authorization": f"Bearer {resolved_key}",
             "Content-Type": "application/json",
+            **default_headers,
         }
+        self.trace_id = trace_id
+        self.session_id = session_id
 
         # Attach nRouter namespaces
         self.nrouter_models = _nRouterModels(self)
@@ -1029,6 +1132,9 @@ class AsyncnRouter(_AsyncOpenAI):
         self,
         api_key: str | None = None,
         base_url: str | None = None,
+        *,
+        trace_id: str | None = None,
+        session_id: str | None = None,
         **kwargs,
     ) -> None:
         """Initialize the AsyncnRouter client.
@@ -1038,6 +1144,8 @@ class AsyncnRouter(_AsyncOpenAI):
                 the NROUTER_API_KEY environment variable.
             base_url: Optional gateway base URL. Defaults to the NROUTER_BASE_URL
                 environment variable or 'https://api.nrouter.ai/v1'.
+            trace_id: Optional distributed trace ID.
+            session_id: Optional multi-turn session ID.
             **kwargs: Extra arguments passed directly to AsyncOpenAI client constructor
                 (e.g. timeout, max_retries, http_client). `max_retries` defaults
                 to `DEFAULT_MAX_RETRIES` (0 — see the note there: a retry of a
@@ -1047,14 +1155,27 @@ class AsyncnRouter(_AsyncOpenAI):
         resolved_key = _resolve_api_key(api_key)
         resolved_base = _resolve_base_url(base_url)
         _apply_transport_defaults(kwargs)
+        default_headers = _prepare_default_headers(
+            kwargs.pop("default_headers", None),
+            trace_id=trace_id,
+            session_id=session_id,
+        )
 
-        super().__init__(api_key=resolved_key, base_url=resolved_base, **kwargs)
+        super().__init__(
+            api_key=resolved_key,
+            base_url=resolved_base,
+            default_headers=default_headers,
+            **kwargs,
+        )
 
         self._nrouter_base = resolved_base.rstrip("/").removesuffix("/v1")
         self._nrouter_headers = {
             "Authorization": f"Bearer {resolved_key}",
             "Content-Type": "application/json",
+            **default_headers,
         }
+        self.trace_id = trace_id
+        self.session_id = session_id
 
         self.nrouter_models = _nRouterModels(self)
         self.messages = _AsyncMessages(self)

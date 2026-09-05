@@ -356,3 +356,76 @@ def test_redact_keys_in_error_messages():
     assert "CONFIDENTIAL99" not in err.message
     assert "sk-nrouter-***" in str(err)
 
+
+def test_error_envelope_parsing():
+    from nroutersdk import NRouterErrorEnvelope, parse_gateway_error_envelope
+
+    raw_dict = {
+        "error": {
+            "message": "Model not available with key sk-nrouter-TOPSECRET123",
+            "code": "model_not_found",
+            "type": "invalid_request_error",
+            "param": "model",
+        }
+    }
+    env = parse_gateway_error_envelope(raw_dict)
+    assert isinstance(env, NRouterErrorEnvelope)
+    assert env.code == "model_not_found"
+    assert env.param == "model"
+    assert env.type == "invalid_request_error"
+    assert "TOPSECRET123" not in (env.message or "")
+    assert "sk-nrouter-***" in (env.message or "")
+
+    str_env = parse_gateway_error_envelope("plain text error with sk-OPENAI99999")
+    assert "OPENAI99999" not in (str_env.message or "")
+    assert str_env.code is None
+
+
+def test_safe_json_parse():
+    from nroutersdk import safe_json_parse
+
+    valid = safe_json_parse('{"status": "ok", "count": 42}')
+    assert valid == {"status": "ok", "count": 42}
+
+    assert safe_json_parse("") is None
+    assert safe_json_parse("   ") is None
+    assert safe_json_parse("invalid json") is None
+    # NaN and Infinity non-standard tokens should be refused
+    assert safe_json_parse('{"val": NaN}') is None
+    assert safe_json_parse('{"val": Infinity}') is None
+
+
+def test_format_error_redaction_and_structure():
+    from nroutersdk import format_error, nRouterRateLimitError
+
+    err = nRouterRateLimitError(
+        "Rate limit hit using key sk-nrouter-SECRET999",
+        code="rate_limit_exceeded",
+        request_id="req_987",
+        limit_source="rpm",
+        retry_after=60,
+        param="model",
+        type="rate_limit_error",
+    )
+    formatted = format_error(err)
+    assert "[nRouterRateLimitError]" in formatted
+    assert "HTTP 429" in formatted
+    assert "code=rate_limit_exceeded" in formatted
+    assert "param=model" in formatted
+    assert "requestId=req_987" in formatted
+    assert "limitSource=rpm" in formatted
+    assert "retryAfter=60s" in formatted
+    assert "SECRET999" not in formatted
+    assert "sk-nrouter-***" in formatted
+
+    # Representation never reveals secret
+    rep = repr(err)
+    assert "SECRET999" not in rep
+    assert "sk-nrouter-***" in rep
+
+    generic_err = ValueError("Invalid operation on sk-KEY123456789")
+    generic_formatted = format_error(generic_err)
+    assert "KEY123456789" not in generic_formatted
+    assert "sk-***" in generic_formatted
+
+

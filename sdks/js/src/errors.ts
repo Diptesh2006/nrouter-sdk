@@ -51,6 +51,10 @@ export interface nRouterErrorOptions {
   authReason?: string | null;
   /** `Retry-After` in whole seconds, already parsed. See `parseRetryAfter`. */
   retryAfter?: number | null;
+  /** The error parameter name when reported by the gateway. */
+  param?: string | null;
+  /** The error type/family when reported by the gateway. */
+  type?: string | null;
   /**
    * The underlying failure when one exists — an `AbortError`, a DNS or TLS
    * error, a parse error. Kept for diagnosis and NEVER serialized: a fetch
@@ -111,6 +115,8 @@ export class nRouterError extends Error {
 
   readonly kind: nRouterErrorKind;
   readonly code: string | null;
+  readonly param: string | null;
+  readonly type: string | null;
   status: number | null;
   requestId: string | null;
   limitSource: string | null;
@@ -147,6 +153,8 @@ export class nRouterError extends Error {
 
     const meta = options.meta ?? null;
     this.code = options.code ?? null;
+    this.param = options.param ?? null;
+    this.type = options.type ?? null;
     this.status = options.status ?? null;
     this.requestId = options.requestId ?? meta?.requestId ?? null;
     this.limitSource = options.limitSource ?? meta?.limitSource ?? null;
@@ -204,6 +212,8 @@ export class nRouterError extends Error {
       limitSource: this.limitSource,
       authReason: this.authReason,
       retryAfter: this.retryAfter,
+      param: this.param,
+      type: this.type,
     };
   }
 }
@@ -533,6 +543,47 @@ export function parseErrorBody(body: unknown): { code: string | null; message: s
   };
 }
 
+/** Structured gateway error envelope with code, message, param, and type. */
+export interface ParsedErrorEnvelope {
+  code: string | null;
+  message: string | null;
+  param: string | null;
+  type: string | null;
+}
+
+export type ParsedErrorBody = ParsedErrorEnvelope;
+
+/**
+ * Parses a gateway error body into a structured error envelope.
+ */
+export function parseGatewayErrorEnvelope(body: unknown): ParsedErrorEnvelope {
+  if (typeof body !== 'object' || body === null) {
+    return {
+      code: null,
+      message: typeof body === 'string' && body ? redactKeys(body) : null,
+      param: null,
+      type: null,
+    };
+  }
+
+  const top = body as { error?: unknown; code?: unknown; message?: unknown; param?: unknown; type?: unknown };
+  const inner =
+    typeof top.error === 'object' && top.error !== null
+      ? (top.error as { code?: unknown; message?: unknown; type?: unknown; param?: unknown })
+      : {};
+
+  const base = parseErrorBody(body);
+  const rawParam = [inner.param, top.param].find((v) => typeof v === 'string' && v) as string | undefined;
+  const rawType = typeof inner.type === 'string' ? inner.type : typeof top.type === 'string' ? top.type : undefined;
+
+  return {
+    code: base.code,
+    message: base.message,
+    param: rawParam ?? null,
+    type: rawType ?? null,
+  };
+}
+
 /**
  * The largest `Retry-After` this SDK will report: 24 hours.
  *
@@ -778,3 +829,44 @@ function sanitizeCause(cause: unknown, depth = 0, seen: Set<unknown> = new Set()
   }
   return safe;
 }
+
+/**
+ * Parse JSON safely with prototype pollution defense.
+ * Revokes `__proto__`, `constructor`, and `prototype` keys from polluting object prototypes.
+ */
+export function safeJsonParse<T = unknown>(raw: string): T | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    return JSON.parse(raw, (key, value) => {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+        return undefined;
+      }
+      return value;
+    }) as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Format any caught error into a human-readable, log-safe diagnostic string.
+ * Completely redacts API keys and formats requestId, limitSource, retryAfter if present.
+ */
+export function formatNRouterError(err: unknown): string {
+  if (err instanceof nRouterError) {
+    const parts = [`[${err.name}]`];
+    if (err.status) parts.push(`HTTP ${err.status}`);
+    if (err.code) parts.push(`code=${err.code}`);
+    if (err.param) parts.push(`param=${err.param}`);
+    if (err.requestId) parts.push(`requestId=${err.requestId}`);
+    if (err.limitSource) parts.push(`limitSource=${err.limitSource}`);
+    if (err.retryAfter != null) parts.push(`retryAfter=${err.retryAfter}s`);
+    parts.push(`: ${err.message}`);
+    return redactKeys(parts.join(' '));
+  }
+  if (err instanceof Error) {
+    return redactKeys(`[${err.name}] ${err.message}`);
+  }
+  return redactKeys(String(err));
+}
+

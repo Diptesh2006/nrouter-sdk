@@ -1,3 +1,5 @@
+import 'errors.dart';
+
 /// Per-request metadata carried on the `x-nr-*` response headers.
 ///
 /// Every field is nullable on purpose. The gateway omits a header rather than
@@ -160,3 +162,52 @@ class BudgetWarningInfo {
   @override
   int get hashCode => scope.hashCode ^ spend.hashCode ^ ceiling.hashCode;
 }
+
+/// Extract trace routing headers (e.g. `x-nr-request-id`) from response metadata.
+Map<String, String> extractTraceHeaders(NRouterResponseMeta meta) {
+  final out = <String, String>{};
+  if (meta.requestId != null && meta.requestId!.isNotEmpty) {
+    out['x-nr-request-id'] = meta.requestId!;
+  }
+  return out;
+}
+
+/// Extract trace routing headers from an arbitrary map of HTTP headers.
+Map<String, String> extractTraceHeadersFromMap(Map<String, String> headers) {
+  final out = <String, String>{};
+  for (final entry in headers.entries) {
+    final kl = entry.key.toLowerCase();
+    if (kl == 'x-nr-request-id' || kl == 'x-nr-trace-id' || kl == 'x-nr-session-id') {
+      out[kl] = entry.value;
+    }
+  }
+  return out;
+}
+
+/// Inject trace context headers, validating that traceId and sessionId do not contain CRLF characters.
+Map<String, String> withTraceContext(
+  Map<String, String> headers, {
+  String? traceId,
+  String? sessionId,
+}) {
+  if (traceId != null && (traceId.contains('\r') || traceId.contains('\n'))) {
+    throw NRouterConfigurationError('traceId must not contain CRLF characters');
+  }
+  if (sessionId != null && (sessionId.contains('\r') || sessionId.contains('\n'))) {
+    throw NRouterConfigurationError('sessionId must not contain CRLF characters');
+  }
+  final out = <String, String>{};
+  for (final entry in headers.entries) {
+    if (!entry.value.contains('\r') && !entry.value.contains('\n')) {
+      out[entry.key] = entry.value;
+    }
+  }
+  if (traceId != null && traceId.isNotEmpty) {
+    out['x-nr-trace-id'] = traceId;
+  }
+  if (sessionId != null && sessionId.isNotEmpty) {
+    out['x-nr-session-id'] = sessionId;
+  }
+  return out;
+}
+

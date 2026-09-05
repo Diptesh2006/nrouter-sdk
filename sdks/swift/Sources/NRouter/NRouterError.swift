@@ -125,13 +125,14 @@ public enum NRouterError: Error, Equatable {
 public struct NRouterErrorBody: Equatable, Sendable {
     public var message: String
     public var code: String?
+    public var param: String?
+    public var type: String?
     public var status: Int?
     public var requestID: String?
     /// On a 429: which limit measured the refusal. Never guessed — absent means
     /// the gateway did not say, and a guess sends a customer to raise the
     /// wrong limit.
     public var limitSource: String?
-    /// On a 401: the gateway's stable reason, e.g. `key_route_not_allowed`.
     /// On a 401: the gateway's stable reason, e.g. `key_route_not_allowed`.
     public var authReason: String?
     /// On a 429: wait duration in seconds from Retry-After header.
@@ -140,6 +141,8 @@ public struct NRouterErrorBody: Equatable, Sendable {
     public init(
         message: String,
         code: String? = nil,
+        param: String? = nil,
+        type: String? = nil,
         status: Int? = nil,
         requestID: String? = nil,
         limitSource: String? = nil,
@@ -148,6 +151,8 @@ public struct NRouterErrorBody: Equatable, Sendable {
     ) {
         self.message = message
         self.code = code
+        self.param = param
+        self.type = type
         self.status = status
         self.requestID = requestID
         self.limitSource = limitSource
@@ -209,18 +214,113 @@ public func computeJitteredBackoff(
     return max(0.0, rawDelay * multiplier)
 }
 
-extension NRouterError: LocalizedError {
+extension NRouterError: LocalizedError, CustomStringConvertible {
     public var errorDescription: String? {
         switch self {
         case let .transport(message):
-            return "nRouter transport error: \(message)"
+            return "nRouter transport error: \(redactKeys(message))"
         case let .configuration(message):
-            return "nRouter configuration error: \(message)"
+            return "nRouter configuration error: \(redactKeys(message))"
         default:
             guard let body else { return "nRouter request failed" }
-            guard let code = body.code else { return body.message }
-            return "\(body.message) (\(code))"
+            let msg = redactKeys(body.message)
+            guard let code = body.code else { return msg }
+            return "\(msg) (\(code))"
         }
     }
+
+    public var description: String {
+        errorDescription ?? "nRouter error"
+    }
+}
+
+/// Redacts nRouter and provider API keys from arbitrary strings.
+public func redactKeys(_ string: String) -> String {
+    guard let nrouterRegex = try? NSRegularExpression(pattern: "sk-nrouter-[A-Za-z0-9._-]{4,}") else {
+        return string
+    }
+    let range = NSRange(string.startIndex..<string.endIndex, in: string)
+    var masked = nrouterRegex.stringByReplacingMatches(in: string, range: range, withTemplate: "sk-nrouter-***")
+
+    guard let genericRegex = try? NSRegularExpression(pattern: "\\bsk-[A-Za-z0-9._-]{6,}\\b") else {
+        return masked
+    }
+    let genericRange = NSRange(masked.startIndex..<masked.endIndex, in: masked)
+    let matches = genericRegex.matches(in: masked, range: genericRange)
+    for match in matches.reversed() {
+        if let r = Range(match.range, in: masked) {
+            let token = String(masked[r])
+            if !token.starts(with: "sk-nrouter") {
+                masked.replaceSubrange(r, with: "sk-***")
+            }
+        }
+    }
+    return masked
+}
+
+/// Structured gateway error envelope.
+public struct NRouterErrorEnvelope: Equatable, Sendable {
+    public var code: String?
+    public var message: String?
+    public var param: String?
+    public var type: String?
+
+    public init(code: String? = nil, message: String? = nil, param: String? = nil, type: String? = nil) {
+        self.code = code
+        self.message = message
+        self.param = param
+        self.type = type
+    }
+}
+
+/// Parses a gateway error JSON payload into a structured NRouterErrorEnvelope.
+public func parseGatewayErrorEnvelope(data: Data) -> NRouterErrorEnvelope {
+    guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+        let text = String(data: data, encoding: .utf8)
+        return NRouterErrorEnvelope(message: text.map(redactKeys))
+    }
+    let node = (json["error"] as? [String: Any]) ?? json
+    let msg = (node["message"] as? String) ?? (json["message"] as? String)
+    let code = (node["code"] as? String) ?? (json["code"] as? String)
+    let param = (node["param"] as? String) ?? (json["param"] as? String)
+    let type = (node["type"] as? String) ?? (json["type"] as? String)
+    return NRouterErrorEnvelope(
+        code: code,
+        message: msg.map(redactKeys),
+        param: param,
+        type: type
+    )
+}
+
+/// Formats an NRouterError into a human-readable, log-safe diagnostic string,
+/// masking all API keys.
+public func formatError(_ error: NRouterError) -> String {
+    var parts: [String] = []
+    switch error {
+    case .request: parts.append("[request]")
+    case .guardrailBlocked: parts.append("[guardrail_blocked]")
+    case .authentication: parts.append("[authentication]")
+    case .credit: parts.append("[credit]")
+    case .budgetExceeded: parts.append("[budget_exceeded]")
+    case .notFound: parts.append("[not_found]")
+    case .rateLimit: parts.append("[rate_limit]")
+    case .service: parts.append("[service]")
+    case .other: parts.append("[other]")
+    case .transport: parts.append("[transport]")
+    case .configuration: parts.append("[configuration]")
+    }
+
+    if let b = error.body {
+        if let status = b.status { parts.append("HTTP \(status)") }
+        if let code = b.code { parts.append("code=\(code)") }
+        if let param = b.param { parts.append("param=\(param)") }
+        if let reqId = b.requestID { parts.append("requestId=\(reqId)") }
+        if let src = b.limitSource { parts.append("limitSource=\(src)") }
+        if let ra = b.retryAfter { parts.append("retryAfter=\(ra)s") }
+        parts.append(": \(redactKeys(b.message))")
+    } else {
+        parts.append(": \(redactKeys(error.localizedDescription))")
+    }
+    return parts.joined(separator: " ")
 }
 

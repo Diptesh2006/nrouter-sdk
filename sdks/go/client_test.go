@@ -1390,3 +1390,143 @@ func TestCleartextIsLimitedToLoopbackAndRejectsCredentials(t *testing.T) {
 	}
 }
 
+func TestRedactKeysAndFormatError(t *testing.T) {
+	raw := "Call failed with sk-nrouter-SUPERSECRETKEY123 and sk-OPENAI987654321"
+	redacted := RedactKeys(raw)
+	if strings.Contains(redacted, "SUPERSECRETKEY123") || strings.Contains(redacted, "987654321") {
+		t.Fatalf("RedactKeys leaked secret: %s", redacted)
+	}
+	if !strings.Contains(redacted, "sk-nrouter-***") || !strings.Contains(redacted, "sk-***") {
+		t.Fatalf("RedactKeys did not mask expected prefix: %s", redacted)
+	}
+
+	sec := uint64(45)
+	err := &Error{
+		Kind:        KindRateLimit,
+		Status:      429,
+		Code:        "rate_limit_exceeded",
+		Param:       "model",
+		Type:        "rate_limit_error",
+		Message:     "Rate limited using key sk-nrouter-MYSECRET999",
+		RequestID:   "req_12345",
+		LimitSource: "rpm",
+		RetryAfter:  &sec,
+	}
+
+	formatted := FormatError(err)
+	if strings.Contains(formatted, "MYSECRET999") {
+		t.Fatalf("FormatError leaked secret: %s", formatted)
+	}
+	if !strings.Contains(formatted, "[rate_limit]") ||
+		!strings.Contains(formatted, "HTTP 429") ||
+		!strings.Contains(formatted, "code=rate_limit_exceeded") ||
+		!strings.Contains(formatted, "param=model") ||
+		!strings.Contains(formatted, "requestId=req_12345") ||
+		!strings.Contains(formatted, "limitSource=rpm") ||
+		!strings.Contains(formatted, "retryAfter=45s") ||
+		!strings.Contains(formatted, "sk-nrouter-***") {
+		t.Fatalf("FormatError missing expected fields: %s", formatted)
+	}
+
+	if strings.Contains(err.Error(), "MYSECRET999") {
+		t.Fatalf("Error() leaked secret: %s", err.Error())
+	}
+}
+
+func TestParseGatewayErrorEnvelopeAndSafeUnmarshal(t *testing.T) {
+	rawJSON := []byte(`{
+		"error": {
+			"message": "Model not available for key sk-nrouter-SECRET777",
+			"code": "model_not_found",
+			"param": "model",
+			"type": "invalid_request_error"
+		}
+	}`)
+
+	env := ParseGatewayErrorEnvelope(rawJSON)
+	if env.Code != "model_not_found" || env.Param != "model" || env.Type != "invalid_request_error" {
+		t.Fatalf("ParseGatewayErrorEnvelope unexpected fields: %+v", env)
+	}
+	if strings.Contains(env.Message, "SECRET777") || !strings.Contains(env.Message, "sk-nrouter-***") {
+		t.Fatalf("ParseGatewayErrorEnvelope leaked secret: %s", env.Message)
+	}
+
+	var m map[string]any
+	if err := SafeJSONUnmarshal([]byte(`{"count": 100}`), &m); err != nil || m["count"] == nil {
+		t.Fatalf("SafeJSONUnmarshal failed on valid JSON: %v", err)
+	}
+	if err := SafeJSONUnmarshal([]byte(``), &m); err == nil {
+		t.Fatal("SafeJSONUnmarshal expected error on empty input")
+	}
+}
+
+func TestTraceRoutingAndContext(t *testing.T) {
+	// 1. CRLF rejection
+	if _, err := New(testKey, WithTraceID("trace\r\nbad")); err == nil {
+		t.Fatal("expected error on traceID with CRLF, got nil")
+	}
+	if _, err := New(testKey, WithSessionID("sess\nbad")); err == nil {
+		t.Fatal("expected error on sessionID with newline, got nil")
+	}
+
+	// 2. HTTP header transmission
+	var receivedLang, receivedTrace, receivedSess string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedLang = r.Header.Get("x-nr-client-language")
+		receivedTrace = r.Header.Get("x-nr-trace-id")
+		receivedSess = r.Header.Get("x-nr-session-id")
+		w.Header().Set("x-nr-request-id", "req-test-trace-999")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data": []}`))
+	}))
+	defer srv.Close()
+
+	client, err := New(testKey,
+		WithBaseURL(srv.URL),
+		WithTraceID("tr-custom-abc"),
+		WithSessionID("ses-custom-xyz"),
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	if client.TraceID() != "tr-custom-abc" || client.SessionID() != "ses-custom-xyz" {
+		t.Fatalf("unexpected trace/session getters: %s, %s", client.TraceID(), client.SessionID())
+	}
+
+	res, err := client.Models(context.Background())
+	if err != nil {
+		t.Fatalf("Models request failed: %v", err)
+	}
+
+	if receivedLang != "go" {
+		t.Errorf("expected x-nr-client-language 'go', got %q", receivedLang)
+	}
+	if receivedTrace != "tr-custom-abc" {
+		t.Errorf("expected x-nr-trace-id 'tr-custom-abc', got %q", receivedTrace)
+	}
+	if receivedSess != "ses-custom-xyz" {
+		t.Errorf("expected x-nr-session-id 'ses-custom-xyz', got %q", receivedSess)
+	}
+
+	// 3. ExtractTraceHeaders
+	th := ExtractTraceHeaders(res.Meta)
+	if th["x-nr-request-id"] != "req-test-trace-999" {
+		t.Errorf("expected x-nr-request-id 'req-test-trace-999', got %q", th["x-nr-request-id"])
+	}
+
+	// 4. WithTraceContext
+	orig := map[string]string{"authorization": "Bearer token"}
+	ctxHeaders, err := WithTraceContext(orig, "tr-sub", "ses-sub")
+	if err != nil {
+		t.Fatalf("WithTraceContext failed: %v", err)
+	}
+	if ctxHeaders["x-nr-trace-id"] != "tr-sub" || ctxHeaders["x-nr-session-id"] != "ses-sub" || ctxHeaders["authorization"] != "Bearer token" {
+		t.Fatalf("WithTraceContext unexpected output: %+v", ctxHeaders)
+	}
+
+	if _, err := WithTraceContext(orig, "tr\nbad", "ses"); err == nil {
+		t.Fatal("expected WithTraceContext to reject CRLF in traceID")
+	}
+}

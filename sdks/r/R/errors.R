@@ -56,11 +56,15 @@ NROUTER_RETRYABLE <- c(
 #' @param request_id Value of \code{x-nr-request-id}, or \code{NULL}.
 #' @param limit_source Value of \code{x-nr-limit-source}, or \code{NULL}.
 #' @param auth_reason Value of \code{x-nr-auth-reason}, or \code{NULL}.
+#' @param retry_after Value of \code{Retry-After} in seconds, or \code{NULL}.
+#' @param param Offending request parameter name, or \code{NULL}.
+#' @param type Error category type, or \code{NULL}.
 #' @return A condition object.
 #' @export
 nrouter_condition <- function(message, code = NULL, status = NULL,
                               request_id = NULL, limit_source = NULL,
-                              auth_reason = NULL) {
+                              auth_reason = NULL, retry_after = NULL,
+                              param = NULL, type = NULL) {
   specific <- NULL
   if (!is.null(code) && nzchar(code)) {
     specific <- unname(NROUTER_ERROR_CLASSES[code])
@@ -94,20 +98,24 @@ nrouter_condition <- function(message, code = NULL, status = NULL,
     specific <- "nrouter_other_error"
   }
 
+  redacted_msg <- nrouter_redact_keys(message)
   structure(
     class = c(specific, "nrouter_error", "error", "condition"),
     list(
       message = if (!is.null(code) && nzchar(code)) {
-        paste0(message, " (", code, ")")
+        paste0(redacted_msg, " (", code, ")")
       } else {
-        message
+        redacted_msg
       },
       call = NULL,
       code = code,
+      param = param,
+      type = type,
       status = status,
       request_id = request_id,
       limit_source = limit_source,
-      auth_reason = auth_reason
+      auth_reason = auth_reason,
+      retry_after = retry_after
     )
   )
 }
@@ -153,3 +161,180 @@ nrouter_is_retryable <- function(cond) {
   }
   any(class(cond) %in% NROUTER_RETRYABLE)
 }
+
+#' Maximum Retry-After delay in seconds (24 hours).
+#' @export
+NROUTER_MAX_RETRY_AFTER_SECONDS <- 86400L
+
+#' Parse an RFC 9110 / RFC 7231 Retry-After header
+#'
+#' Supports delta-seconds or HTTP-date format.
+#' Clamps return value between 0 and 86400 (24 hours).
+#'
+#' @param raw Character string from the Retry-After header, or NULL.
+#' @param now Current time as POSIXct, defaulting to Sys.time().
+#' @return Integer seconds to wait, or NULL if absent/unparseable.
+#' @export
+nrouter_parse_retry_after <- function(raw, now = Sys.time()) {
+  if (is.null(raw) || !is.character(raw) || length(raw) == 0 || is.na(raw[[1]])) {
+    return(NULL)
+  }
+  trimmed <- trimws(raw[[1]])
+  if (!nzchar(trimmed)) {
+    return(NULL)
+  }
+  if (grepl("^[0-9]+$", trimmed)) {
+    val <- suppressWarnings(as.numeric(trimmed))
+    if (is.na(val)) return(NROUTER_MAX_RETRY_AFTER_SECONDS)
+    val <- max(0, min(val, NROUTER_MAX_RETRY_AFTER_SECONDS))
+    return(as.integer(val))
+  }
+  parsed_date <- tryCatch(
+    as.POSIXct(trimmed, format = "%a, %d %b %Y %H:%M:%S GMT", tz = "GMT"),
+    error = function(e) NA
+  )
+  if (is.na(parsed_date)) {
+    parsed_date <- tryCatch(
+      as.POSIXct(trimmed, tz = "GMT"),
+      error = function(e) NA
+    )
+  }
+  if (is.na(parsed_date)) {
+    return(NULL)
+  }
+  diff_secs <- as.numeric(difftime(parsed_date, now, units = "secs"))
+  if (diff_secs <= 0) {
+    return(0L)
+  }
+  diff_secs <- min(diff_secs, NROUTER_MAX_RETRY_AFTER_SECONDS)
+  as.integer(ceiling(diff_secs))
+}
+
+#' Compute jittered exponential backoff
+#'
+#' Computes backoff delay in seconds with full jitter.
+#' Clamps attempt to [0, 30] to prevent integer overflow.
+#' Honors retry_after_seconds if provided and > 0.
+#'
+#' @param attempt Zero-based retry attempt number.
+#' @param base_delay_seconds Base delay in seconds (default 0.5s).
+#' @param max_delay_seconds Maximum delay ceiling in seconds (default 30s).
+#' @param retry_after_seconds Optional Retry-After delay in seconds.
+#' @param jitter_factor Floating point between 0.0 and 1.0 (default 0.5).
+#' @return Delay in seconds (numeric).
+#' @export
+nrouter_compute_jittered_backoff <- function(attempt,
+                                             base_delay_seconds = 0.5,
+                                             max_delay_seconds = 30.0,
+                                             retry_after_seconds = NULL,
+                                             jitter_factor = 0.5) {
+  safe_attempt <- max(0L, min(as.integer(attempt), 30L))
+  safe_jitter <- max(0.0, min(as.numeric(jitter_factor), 1.0))
+
+  if (!is.null(retry_after_seconds) && !is.na(retry_after_seconds) && retry_after_seconds > 0) {
+    retry_secs <- min(as.numeric(retry_after_seconds), max_delay_seconds)
+    mult <- (1.0 - safe_jitter) + stats::runif(1, 0, safe_jitter)
+    return(max(0.0, retry_secs * mult))
+  }
+
+  raw_secs <- min(base_delay_seconds * (2^safe_attempt), max_delay_seconds)
+  mult <- (1.0 - safe_jitter) + stats::runif(1, 0, safe_jitter)
+  max(0.0, raw_secs * mult)
+}
+
+#' Redact API keys and credentials from strings
+#'
+#' Replaces nRouter and upstream provider API keys to prevent credential leaks.
+#'
+#' @param s Character vector or string.
+#' @return Sanitized character vector.
+#' @export
+nrouter_redact_keys <- function(s) {
+  if (is.null(s)) return(NULL)
+  if (!is.character(s)) return(s)
+  masked <- gsub("\\bsk-nrouter-[A-Za-z0-9._-]{4,}", "sk-nrouter-***", s)
+  gsub("\\bsk-(?!nrouter)[A-Za-z0-9._-]{5,}\\b", "sk-***", masked, perl = TRUE)
+}
+
+#' Format an nRouter condition into a log-safe diagnostic string
+#'
+#' @param cond A condition raised by this package.
+#' @return A single formatted diagnostic string.
+#' @export
+nrouter_format_error <- function(cond) {
+  if (is.null(cond)) return("")
+  cls <- class(cond)
+  kind <- if (length(cls) > 0) cls[[1L]] else "error"
+  kind_clean <- sub("^nrouter_", "", sub("_error$", "", kind))
+
+  parts <- c(sprintf("[%s]", kind_clean))
+  if (!is.null(cond$status) && !is.na(cond$status) && cond$status > 0) {
+    parts <- c(parts, sprintf("HTTP %s", cond$status))
+  }
+  if (!is.null(cond$code) && nzchar(cond$code)) {
+    parts <- c(parts, sprintf("code=%s", cond$code))
+  }
+  if (!is.null(cond$param) && nzchar(cond$param)) {
+    parts <- c(parts, sprintf("param=%s", cond$param))
+  }
+  if (!is.null(cond$type) && nzchar(cond$type)) {
+    parts <- c(parts, sprintf("type=%s", cond$type))
+  }
+  if (!is.null(cond$request_id) && nzchar(cond$request_id)) {
+    parts <- c(parts, sprintf("req_id=%s", cond$request_id))
+  }
+  if (!is.null(cond$message) && nzchar(cond$message)) {
+    parts <- c(parts, sprintf(": %s", nrouter_redact_keys(cond$message)))
+  }
+  paste(parts, collapse = " ")
+}
+
+#' @export
+format.nrouter_error <- function(x, ...) {
+  nrouter_format_error(x)
+}
+
+#' @export
+print.nrouter_error <- function(x, ...) {
+  cat(nrouter_format_error(x), "\n")
+  invisible(x)
+}
+
+#' Parse a gateway error JSON payload into a structured envelope
+#'
+#' @param payload A list or JSON character string.
+#' @return A named list with elements code, message, param, type.
+#' @export
+nrouter_parse_gateway_error_envelope <- function(payload) {
+  if (is.null(payload)) {
+    return(list(code = NULL, message = NULL, param = NULL, type = NULL))
+  }
+  data <- if (is.character(payload) && length(payload) == 1L) {
+    tryCatch(
+      jsonlite::fromJSON(payload, simplifyVector = FALSE),
+      error = function(e) list(message = payload)
+    )
+  } else {
+    payload
+  }
+  if (!is.list(data)) {
+    return(list(code = NULL, message = nrouter_redact_keys(as.character(data)), param = NULL, type = NULL))
+  }
+  node <- if (!is.null(data$error) && is.list(data$error)) data$error else data
+
+  get_val <- function(field) {
+    v <- node[[field]]
+    if (is.null(v)) v <- data[[field]]
+    if (is.character(v) && length(v) >= 1L && nzchar(v[[1L]])) v[[1L]] else NULL
+  }
+
+  msg <- get_val("message")
+  list(
+    code    = get_val("code"),
+    message = if (!is.null(msg)) nrouter_redact_keys(msg) else NULL,
+    param   = get_val("param"),
+    type    = get_val("type")
+  )
+}
+
+

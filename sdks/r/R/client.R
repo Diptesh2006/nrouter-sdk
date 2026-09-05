@@ -223,14 +223,41 @@ nrouter_validate_gateway_base_url <- function(base_url) {
   sub("/+$", "", cleaned_base)
 }
 
+nrouter_request_headers <- function(client, extra = list()) {
+  hdr <- list(
+    Authorization = paste("Bearer", client$api_key),
+    "x-nr-client-language" = "r"
+  )
+  if (!is.null(client$trace_id) && nzchar(as.character(client$trace_id))) {
+    hdr[["x-nr-trace-id"]] <- as.character(client$trace_id)
+  }
+  if (!is.null(client$session_id) && nzchar(as.character(client$session_id))) {
+    hdr[["x-nr-session-id"]] <- as.character(client$session_id)
+  }
+  if (length(extra) > 0) {
+    for (nm in names(extra)) {
+      hdr[[nm]] <- extra[[nm]]
+    }
+  }
+  hdr
+}
+
 #' @export
 nrouter_client <- function(api_key = NULL, base_url = nrouter_default_base_url(),
                            timeout_seconds = nrouter_default_timeout_seconds(),
                            connect_timeout_seconds =
                              nrouter_default_connect_timeout_seconds(),
                            stream_idle_seconds =
-                             nrouter_default_stream_idle_seconds()) {
+                             nrouter_default_stream_idle_seconds(),
+                           trace_id = NULL,
+                           session_id = NULL) {
   valid_base <- nrouter_validate_gateway_base_url(base_url)
+  if (!is.null(trace_id) && grepl("[\r\n]", as.character(trace_id))) {
+    stop(nrouter_configuration_condition("trace_id must not contain CRLF characters"))
+  }
+  if (!is.null(session_id) && grepl("[\r\n]", as.character(session_id))) {
+    stop(nrouter_configuration_condition("session_id must not contain CRLF characters"))
+  }
   structure(
     class = "nrouter_client",
     list(
@@ -238,7 +265,9 @@ nrouter_client <- function(api_key = NULL, base_url = nrouter_default_base_url()
       base_url                = valid_base,
       timeout_seconds         = timeout_seconds,
       connect_timeout_seconds = connect_timeout_seconds,
-      stream_idle_seconds     = stream_idle_seconds
+      stream_idle_seconds     = stream_idle_seconds,
+      trace_id                = trace_id,
+      session_id              = session_id
     )
   )
 }
@@ -286,6 +315,8 @@ nrouter_error_from_payload <- function(status, payload, meta) {
     "nRouter request failed"
   }
   code <- if (is.list(node) && is.character(node$code)) node$code else NULL
+  param <- if (is.list(node) && is.character(node$param)) node$param else NULL
+  type <- if (is.list(node) && is.character(node$type)) node$type else NULL
 
   nrouter_condition(
     message      = message,
@@ -293,7 +324,10 @@ nrouter_error_from_payload <- function(status, payload, meta) {
     status       = status,
     request_id   = meta$request_id,
     limit_source = meta$limit_source,
-    auth_reason  = meta$auth_reason
+    auth_reason  = meta$auth_reason,
+    retry_after  = meta$retry_after,
+    param        = param,
+    type         = type
   )
 }
 
@@ -308,7 +342,7 @@ nrouter_error_from_payload <- function(status, payload, meta) {
 nrouter_request <- function(client, path, body = NULL,
                             method = if (is.null(body)) "GET" else "POST") {
   url <- paste0(client$base_url, "/", sub("^/+", "", path))
-  auth <- httr::add_headers(Authorization = paste("Bearer", client$api_key))
+  auth <- do.call(httr::add_headers, nrouter_request_headers(client))
 
   deadlines <- nrouter_request_config(client)
 
@@ -378,7 +412,7 @@ nrouter_request <- function(client, path, body = NULL,
 #' @export
 nrouter_bytes <- function(client, path, body = NULL) {
   url <- paste0(client$base_url, "/", sub("^/+", "", path))
-  auth <- httr::add_headers(Authorization = paste("Bearer", client$api_key))
+  auth <- do.call(httr::add_headers, nrouter_request_headers(client))
 
   # A STALL ceiling, not a whole-request one: generated audio and video are
   # large, and a whole-request timeout truncates a download already billed.
@@ -593,7 +627,7 @@ nrouter_count_tokens <- function(client, body) {
 #' @export
 nrouter_multipart <- function(client, path, file_path, fields = list()) {
   url <- paste0(client$base_url, "/", sub("^/+", "", path))
-  auth <- httr::add_headers(Authorization = paste("Bearer", client$api_key))
+  auth <- do.call(httr::add_headers, nrouter_request_headers(client))
   body <- c(fields, list(file = httr::upload_file(file_path)))
 
   response <- tryCatch(
@@ -807,7 +841,8 @@ nrouter_sse_parser <- function(on_chunk) {
         code <- type
       }
       message <- if (is.character(node$message)) node$message[[1L]] else "nRouter stream failed"
-      stop(nrouter_condition(message, code = code, status = 200L))
+      param <- if (is.character(node$param)) node$param[[1L]] else NULL
+      stop(nrouter_condition(message, code = code, status = 200L, param = param, type = type))
     }
     type <- if (is.character(data$type)) data$type[[1L]] else NULL
     if (!is.null(type) && type %in% c("message_stop", "response.completed")) {
@@ -868,11 +903,12 @@ nrouter_stream <- function(client, path, body, on_chunk) {
   payload <- body
   payload$stream <- TRUE
   handle <- curl::new_handle()
-  curl::handle_setheaders(
-    handle,
-    Authorization = paste("Bearer", client$api_key),
-    Accept = "text/event-stream",
-    "Content-Type" = "application/json"
+  do.call(
+    curl::handle_setheaders,
+    c(list(handle), nrouter_request_headers(client, list(
+      Accept = "text/event-stream",
+      "Content-Type" = "application/json"
+    )))
   )
   # Same deadlines as the httr paths, set on the raw handle because this one
   # bypasses httr. No `timeout`: an SSE stream that is producing tokens is a

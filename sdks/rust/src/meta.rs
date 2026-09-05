@@ -153,3 +153,48 @@ pub struct BudgetWarningInfo {
     pub spend: f64,
     pub ceiling: f64,
 }
+
+/// Extract trace routing headers (e.g. `x-nr-request-id`) from response metadata.
+pub fn extract_trace_headers(meta: &ResponseMeta) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    if let Some(ref req_id) = meta.request_id {
+        out.insert("x-nr-request-id".to_string(), req_id.clone());
+    }
+    out
+}
+
+/// Inject trace context headers, returning an error if trace_id or session_id contains CRLF characters.
+pub fn with_trace_context(
+    headers: &std::collections::HashMap<String, String>,
+    trace_id: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<std::collections::HashMap<String, String>, crate::errors::NRouterError> {
+    if let Some(tid) = trace_id {
+        if tid.contains('\r') || tid.contains('\n') {
+            return Err(crate::errors::NRouterError::Configuration(
+                "trace_id must not contain CRLF characters".into(),
+            ));
+        }
+    }
+    if let Some(sid) = session_id {
+        if sid.contains('\r') || sid.contains('\n') {
+            return Err(crate::errors::NRouterError::Configuration(
+                "session_id must not contain CRLF characters".into(),
+            ));
+        }
+    }
+
+    let mut out = std::collections::HashMap::with_capacity(headers.len() + 2);
+    for (k, v) in headers {
+        if !v.contains('\r') && !v.contains('\n') {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    if let Some(tid) = trace_id {
+        out.insert("x-nr-trace-id".to_string(), tid.to_string());
+    }
+    if let Some(sid) = session_id {
+        out.insert("x-nr-session-id".to_string(), sid.to_string());
+    }
+    Ok(out)
+}

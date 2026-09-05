@@ -554,3 +554,60 @@ test('an absurd Retry-After is capped, because setTimeout turns it into a HOT re
   assert.equal(parseRetryAfter('0', now), 0);
   assert.equal(parseRetryAfter(String(MAX_RETRY_AFTER_SECONDS), now), MAX_RETRY_AFTER_SECONDS);
 });
+
+test('safeJsonParse defends against prototype pollution', () => {
+  const { safeJsonParse } = errors;
+  const payload = '{"__proto__":{"polluted":"yes"},"name":"valid"}';
+  const parsed = safeJsonParse<{ name: string; polluted?: string }>(payload);
+  assert.ok(parsed);
+  assert.equal(parsed.name, 'valid');
+  assert.equal((({} as any).polluted), undefined);
+
+  assert.equal(safeJsonParse(''), null);
+  assert.equal(safeJsonParse('not-json'), null);
+});
+
+test('formatNRouterError renders sanitized diagnostic summary', () => {
+  const { formatNRouterError, nRouterRateLimitError } = errors;
+  const err = new nRouterRateLimitError('Too many requests with sk-nrouter-secretkey123', {
+    status: 429,
+    code: 'rate_limit_exceeded',
+    requestId: 'req_123',
+    limitSource: 'tpm',
+    retryAfter: 30,
+    param: 'model',
+  });
+  const formatted = formatNRouterError(err);
+  assert.ok(formatted.includes('nRouterRateLimitError'));
+  assert.ok(formatted.includes('HTTP 429'));
+  assert.ok(formatted.includes('code=rate_limit_exceeded'));
+  assert.ok(formatted.includes('param=model'));
+  assert.ok(formatted.includes('requestId=req_123'));
+  assert.ok(formatted.includes('limitSource=tpm'));
+  assert.ok(formatted.includes('retryAfter=30s'));
+  assert.ok(!formatted.includes('secretkey123'));
+  assert.ok(formatted.includes('sk-nrouter-***'));
+
+  const plainErr = new Error('Database timeout on sk-test-9999999');
+  const plainFormatted = formatNRouterError(plainErr);
+  assert.ok(!plainFormatted.includes('9999999'));
+});
+
+test('parseGatewayErrorEnvelope extracts param and type fields', () => {
+  const { parseGatewayErrorEnvelope } = errors;
+  const body = {
+    error: {
+      message: 'Invalid parameter',
+      code: 'invalid_request',
+      type: 'invalid_request_error',
+      param: 'messages[0].content',
+    },
+  };
+  const parsed = parseGatewayErrorEnvelope(body);
+  assert.equal(parsed.code, 'invalid_request');
+  assert.equal(parsed.message, 'Invalid parameter');
+  assert.equal(parsed.param, 'messages[0].content');
+  assert.equal(parsed.type, 'invalid_request_error');
+});
+
+

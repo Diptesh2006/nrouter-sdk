@@ -40,6 +40,7 @@ test_that("SSE parser refuses EOF without a terminal event", {
 
 test_that("messages stream sends the real path, auth, and stream flag", {
   skip_if_not_installed("webfakes")
+  skip_if_not(webfakes_available(), "webfakes background process not available")
   app <- webfakes::new_app()
   app$use(webfakes::mw_json())
   app$post("/v1/messages", function(req, res) {

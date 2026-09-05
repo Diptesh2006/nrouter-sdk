@@ -56,6 +56,9 @@ public class NRouter @JvmOverloads constructor(
     baseURL: String = DEFAULT_BASE_URL,
     http: OkHttpClient = defaultHttpClient(),
     bufferedCallTimeoutMillis: Long = BUFFERED_CALL_TIMEOUT_MILLIS,
+    traceId: String? = null,
+    sessionId: String? = null,
+    clientPlatform: String? = null,
 ) {
     private val apiKey: String = resolveApiKey(apiKey)
 
@@ -116,6 +119,31 @@ public class NRouter @JvmOverloads constructor(
         }
         trimmed.trimEnd('/')
     }
+
+    /** Configured trace identifier propagated as x-nr-trace-id, or null. */
+    public val traceId: String? = traceId?.also {
+        if (it.contains('\r') || it.contains('\n')) {
+            throw IllegalArgumentException("traceId must not contain CRLF characters")
+        }
+    }
+
+    /** Configured session identifier propagated as x-nr-session-id, or null. */
+    public val sessionId: String? = sessionId?.also {
+        if (it.contains('\r') || it.contains('\n')) {
+            throw IllegalArgumentException("sessionId must not contain CRLF characters")
+        }
+    }
+
+    /** Client platform identifier propagated as x-nr-client-platform, or null. */
+    public val clientPlatform: String? = clientPlatform
+
+    /** Returns a copy of this client with the specified trace identifier. */
+    public fun withTraceId(traceId: String?): NRouter =
+        NRouter(apiKey, baseURL, httpClient, bufferedHttpClient.callTimeoutMillis.toLong(), traceId, sessionId, clientPlatform)
+
+    /** Returns a copy of this client with the specified session identifier. */
+    public fun withSessionId(sessionId: String?): NRouter =
+        NRouter(apiKey, baseURL, httpClient, bufferedHttpClient.callTimeoutMillis.toLong(), traceId, sessionId, clientPlatform)
 
     /**
      * Never the key. A plain `class` already has an identity `toString`, but
@@ -257,10 +285,21 @@ public class NRouter @JvmOverloads constructor(
      */
     public fun stream(path: String, body: JSONObject): Flow<StreamChunk> = callbackFlow {
         val streamed = normalizedObject(body).put("stream", true)
-        val request = Request.Builder()
+        val reqBuilder = Request.Builder()
             .url(url(path))
             .header("Authorization", "Bearer $apiKey")
             .header("Accept", "text/event-stream")
+            .header("x-nr-client-language", "kotlin")
+        if (!clientPlatform.isNullOrEmpty()) {
+            reqBuilder.header("x-nr-client-platform", clientPlatform)
+        }
+        if (!traceId.isNullOrEmpty()) {
+            reqBuilder.header("x-nr-trace-id", traceId)
+        }
+        if (!sessionId.isNullOrEmpty()) {
+            reqBuilder.header("x-nr-session-id", sessionId)
+        }
+        val request = reqBuilder
             .post(streamed.toString().toRequestBody(JSON))
             .build()
         // httpClient, never bufferedHttpClient: an SSE stream is long BY
@@ -450,9 +489,19 @@ public class NRouter @JvmOverloads constructor(
         request: Request,
         read: (okhttp3.Response) -> T,
     ): T {
-        val authed = request.newBuilder()
+        val reqBuilder = request.newBuilder()
             .header("Authorization", "Bearer $apiKey")
-            .build()
+            .header("x-nr-client-language", "kotlin")
+        if (!clientPlatform.isNullOrEmpty()) {
+            reqBuilder.header("x-nr-client-platform", clientPlatform)
+        }
+        if (!traceId.isNullOrEmpty()) {
+            reqBuilder.header("x-nr-trace-id", traceId)
+        }
+        if (!sessionId.isNullOrEmpty()) {
+            reqBuilder.header("x-nr-session-id", sessionId)
+        }
+        val authed = reqBuilder.build()
 
         return suspendCancellableCoroutine { continuation ->
             val call = client.newCall(authed)
@@ -540,6 +589,21 @@ public class NRouter @JvmOverloads constructor(
 
         /** Every customer key carries this prefix. */
         public const val KEY_PREFIX: String = "sk-nrouter-"
+
+        /** Extracts trace routing headers from response metadata. */
+        @JvmStatic
+        public fun extractTraceHeaders(meta: NRouterResponseMeta?): Map<String, String> =
+            ai.nrouter.sdk.extractTraceHeaders(meta)
+
+        /** Extracts trace routing headers from a headers map. */
+        @JvmStatic
+        public fun extractTraceHeaders(headers: Map<String, String>?): Map<String, String> =
+            ai.nrouter.sdk.extractTraceHeaders(headers)
+
+        /** Injects trace and session context into an existing headers map. */
+        @JvmStatic
+        public fun withTraceContext(headers: Map<String, String>?, traceId: String?, sessionId: String?): Map<String, String> =
+            ai.nrouter.sdk.withTraceContext(headers, traceId, sessionId)
 
         /** True when a model family is served on /v1/messages rather than /v1/chat/completions. */
         @JvmStatic
@@ -748,6 +812,8 @@ public class NRouter @JvmOverloads constructor(
             return NRouterErrorBody(
                 message = node.optString("message").ifEmpty { "nRouter request failed" },
                 code = node.optString("code").ifEmpty { null },
+                param = node.optString("param").ifEmpty { null },
+                type = node.optString("type").ifEmpty { null },
                 status = status,
                 requestId = meta.requestId,
                 limitSource = meta.limitSource,
@@ -799,6 +865,8 @@ private fun parseStreamFrame(
         val body = NRouterErrorBody(
             message = node.optString("message").ifEmpty { trimmed },
             code = type.ifEmpty { null },
+            param = node.optString("param").ifEmpty { null },
+            type = node.optString("type").ifEmpty { null },
             status = 200,
             requestId = meta.requestId,
             limitSource = meta.limitSource,

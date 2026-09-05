@@ -113,6 +113,8 @@ public struct NRouter: Sendable {
     private static let sharedStreamingSession = makeDefaultStreamingSession()
 
     public let baseURL: String
+    public let traceId: String?
+    public let sessionId: String?
     private let apiKey: String
     private let session: URLSession
     private let streamingSession: URLSession
@@ -178,16 +180,28 @@ public struct NRouter: Sendable {
     ///     given, so one injected session bounds every call the same way.
     ///   - streamingSession: Inject one separately to give SSE and binary
     ///     downloads different deadlines from buffered calls.
+    ///   - traceId: Optional distributed trace ID.
+    ///   - sessionId: Optional multi-turn session ID.
     public init(
         apiKey: String? = nil,
         baseURL: String = NRouter.defaultBaseURL,
         session: URLSession? = nil,
-        streamingSession: URLSession? = nil
+        streamingSession: URLSession? = nil,
+        traceId: String? = nil,
+        sessionId: String? = nil
     ) throws {
+        if let traceId, traceId.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) {
+            throw NRouterError.configuration("traceId must not contain CRLF characters")
+        }
+        if let sessionId, sessionId.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) {
+            throw NRouterError.configuration("sessionId must not contain CRLF characters")
+        }
         self.apiKey = try NRouter.resolveAPIKey(apiKey)
         self.baseURL = try NRouter.validateGatewayBaseURL(baseURL)
         self.session = session ?? NRouter.sharedSession
         self.streamingSession = streamingSession ?? session ?? NRouter.sharedStreamingSession
+        self.traceId = traceId
+        self.sessionId = sessionId
     }
 
     /// Parse and enforce transport boundary on gateway base URL.
@@ -494,6 +508,7 @@ public struct NRouter: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        applyCustomHeaders(&request)
         request.httpBody = try JSONSerialization.data(withJSONObject: streamed)
         NRouter.applyDeadline(&request, from: streamingSession)
 
@@ -644,6 +659,7 @@ public struct NRouter: Sendable {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        applyCustomHeaders(&request)
         NRouter.applyDeadline(&request, from: streamingSession)
 
         let data: Data
@@ -668,6 +684,16 @@ public struct NRouter: Sendable {
     }
 
     // MARK: - Internals
+
+    private func applyCustomHeaders(_ request: inout URLRequest) {
+        request.setValue("swift", forHTTPHeaderField: "x-nr-client-language")
+        if let traceId {
+            request.setValue(traceId, forHTTPHeaderField: "x-nr-trace-id")
+        }
+        if let sessionId {
+            request.setValue(sessionId, forHTTPHeaderField: "x-nr-session-id")
+        }
+    }
 
     /// Copy a session's between-bytes bound onto the request about to use it.
     ///
@@ -710,6 +736,7 @@ public struct NRouter: Sendable {
     private func send(_ request: URLRequest) async throws -> Response {
         var request = request
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        applyCustomHeaders(&request)
         NRouter.applyDeadline(&request, from: session)
 
         let data: Data
@@ -779,6 +806,8 @@ public struct NRouter: Sendable {
         return NRouterErrorBody(
             message: node["message"] as? String ?? "nRouter request failed",
             code: node["code"] as? String,
+            param: node["param"] as? String,
+            type: node["type"] as? String,
             status: status,
             requestID: meta.requestID,
             limitSource: meta.limitSource,
@@ -827,6 +856,8 @@ public struct NRouter: Sendable {
                 NRouterErrorBody(
                     message: node["message"] as? String ?? trimmed,
                     code: code,
+                    param: node["param"] as? String,
+                    type: type,
                     status: 200,
                     requestID: meta.requestID,
                     limitSource: meta.limitSource,

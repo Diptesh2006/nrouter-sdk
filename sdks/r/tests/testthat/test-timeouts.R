@@ -62,6 +62,7 @@ test_that("a client list built before these fields existed still gets the defaul
 
 test_that("a gateway that goes silent fails the buffered call but not a download", {
   skip_if_not_installed("webfakes")
+  skip_if_not(webfakes_available(), "webfakes background process not available")
   app <- webfakes::new_app()
   app$get("/v1/models", function(req, res) {
     Sys.sleep(3)

@@ -903,5 +903,183 @@ void main() {
       expect(normalized['max_tokens'], 1024);
       expect(normalized['stop_sequences'], ['Human:']);
     });
+
+    test('over the wire retry-after parsing and jittered backoff bounds', () {
+      final now = DateTime.utc(2026, 8, 27, 12, 0, 0);
+
+      // Delta-seconds
+      expect(parseRetryAfter('45', now), 45);
+      expect(parseRetryAfter('  120  ', now), 120);
+      expect(parseRetryAfter('999999', now), maxRetryAfterSeconds);
+
+      // Invalid delta
+      expect(parseRetryAfter('-10', now), isNull);
+      expect(parseRetryAfter('12.5', now), isNull);
+      expect(parseRetryAfter('not-a-number', now), isNull);
+      expect(parseRetryAfter(null, now), isNull);
+      expect(parseRetryAfter('', now), isNull);
+
+      // HTTP-date
+      expect(
+        parseRetryAfter('Thu, 27 Aug 2026 12:01:00 GMT', now),
+        60,
+      );
+      expect(
+        parseRetryAfter('Thu, 27 Aug 2026 11:59:00 GMT', now),
+        0,
+      );
+
+      // computeJitteredBackoff
+      final d0 = computeJitteredBackoff(
+        attempt: 0,
+        baseDelay: const Duration(seconds: 1),
+        maxDelay: const Duration(seconds: 10),
+        jitterFactor: 0.0,
+      );
+      expect(d0.inMilliseconds, 1000);
+
+      final d2 = computeJitteredBackoff(
+        attempt: 2,
+        baseDelay: const Duration(seconds: 1),
+        maxDelay: const Duration(seconds: 10),
+        jitterFactor: 0.0,
+      );
+      expect(d2.inMilliseconds, 4000);
+
+      final dHuge = computeJitteredBackoff(
+        attempt: 100,
+        baseDelay: const Duration(seconds: 1),
+        maxDelay: const Duration(seconds: 8),
+        jitterFactor: 0.0,
+      );
+      expect(dHuge.inMilliseconds, 8000);
+
+      final dRetry = computeJitteredBackoff(
+        attempt: 0,
+        retryAfterSeconds: 5,
+        maxDelay: const Duration(seconds: 10),
+        jitterFactor: 0.0,
+      );
+      expect(dRetry.inMilliseconds, 5000);
+
+      final dRetryCapped = computeJitteredBackoff(
+        attempt: 0,
+        retryAfterSeconds: 50,
+        maxDelay: const Duration(seconds: 10),
+        jitterFactor: 0.0,
+      );
+      expect(dRetryCapped.inMilliseconds, 10000);
+    });
+
+    test('redacts keys and formats gateway error envelopes', () {
+      const msg = 'Invalid key sk-nrouter-live-12345678 or sk-ant-api03-abcdef123';
+      final redacted = redactKeys(msg);
+      expect(redacted, contains('sk-nrouter-***'));
+      expect(redacted, contains('sk-***'));
+      expect(redactKeys(redacted), redacted); // idempotent
+
+      final parsed = parseGatewayErrorEnvelope({
+        'error': {
+          'message': 'Failed with sk-nrouter-test-abcdef',
+          'code': 'invalid_request_error',
+          'param': 'model',
+          'type': 'invalid_request_error',
+        }
+      });
+      expect(parsed.code, 'invalid_request_error');
+      expect(parsed.param, 'model');
+      expect(parsed.type, 'invalid_request_error');
+      expect(parsed.message, contains('sk-nrouter-***'));
+
+      final err = NRouterError.fromCode(const NRouterErrorBody(
+        message: 'model secret-key sk-nrouter-live-999 not found',
+        code: 'model_not_found',
+        param: 'model',
+        type: 'invalid_request_error',
+        status: 404,
+        requestId: 'req_123',
+      ));
+      expect(err.body!.param, 'model');
+      expect(err.body!.type, 'invalid_request_error');
+      final formatted = formatNRouterError(err);
+      expect(formatted, contains('HTTP 404'));
+      expect(formatted, contains('code=model_not_found'));
+      expect(formatted, contains('param=model'));
+      expect(formatted, contains('requestId=req_123'));
+      expect(formatted, contains('sk-nrouter-***'));
+      expect(err.toString(), contains('sk-nrouter-***'));
+    });
+
+    test('trace routing and context injection', () async {
+      // 1. CRLF rejection
+      expect(
+        () => NRouter(apiKey: 'sk-nrouter-test', traceId: 'tr\r\nbad'),
+        throwsA(isA<NRouterConfigurationError>()),
+      );
+      expect(
+        () => NRouter(apiKey: 'sk-nrouter-test', sessionId: 'ses\nbad'),
+        throwsA(isA<NRouterConfigurationError>()),
+      );
+
+      // 2. HTTP header transmission
+      String? receivedLang;
+      String? receivedTrace;
+      String? receivedSess;
+
+      final mockClient = MockClient((request) async {
+        receivedLang = request.headers['x-nr-client-language'];
+        receivedTrace = request.headers['x-nr-trace-id'];
+        receivedSess = request.headers['x-nr-session-id'];
+        return http.Response(
+          '{"data": []}',
+          200,
+          headers: {'content-type': 'application/json', 'x-nr-request-id': 'req-dart-999'},
+        );
+      });
+
+      final client = NRouter(
+        apiKey: 'sk-nrouter-test',
+        httpClient: mockClient,
+        traceId: 'tr-dart-123',
+        sessionId: 'ses-dart-456',
+      );
+
+      expect(client.traceId, 'tr-dart-123');
+      expect(client.sessionId, 'ses-dart-456');
+
+      final res = await client.models();
+      expect(receivedLang, 'dart');
+      expect(receivedTrace, 'tr-dart-123');
+      expect(receivedSess, 'ses-dart-456');
+
+      // 3. extractTraceHeaders
+      final th = extractTraceHeaders(res.meta);
+      expect(th['x-nr-request-id'], 'req-dart-999');
+
+      final thMap = extractTraceHeadersFromMap({
+        'x-nr-trace-id': 'tr-srv-1',
+        'x-nr-session-id': 'ses-srv-2',
+      });
+      expect(thMap['x-nr-trace-id'], 'tr-srv-1');
+      expect(thMap['x-nr-session-id'], 'ses-srv-2');
+
+      // 4. withTraceContext
+      final orig = {'authorization': 'Bearer token'};
+      final ctx = withTraceContext(orig, traceId: 'tr-sub', sessionId: 'ses-sub');
+      expect(ctx['x-nr-trace-id'], 'tr-sub');
+      expect(ctx['x-nr-session-id'], 'ses-sub');
+      expect(ctx['authorization'], 'Bearer token');
+
+      expect(
+        () => withTraceContext(orig, traceId: 'tr\rbad'),
+        throwsA(isA<NRouterConfigurationError>()),
+      );
+      expect(
+        () => withTraceContext(orig, sessionId: 'ses\nbad'),
+        throwsA(isA<NRouterConfigurationError>()),
+      );
+    });
   });
 }
+
+

@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const util = require('node:util');
 
-const { nRouter, isRetryable, nRouterError, validateGatewayBaseUrl } = require('../dist/index');
+const { nRouter, isRetryable, nRouterError, validateGatewayBaseUrl, extractTraceHeaders, withTraceContext } = require('../dist/index');
 
 const KEY_PREFIX = 'sk-nrouter-';
 const ENV_KEY = 'NROUTER_API_KEY';
@@ -1064,3 +1064,36 @@ test('cleartext is limited to loopback development gateways and rejects credenti
     );
   }
 });
+
+test('extractTraceHeaders and withTraceContext handle trace headers and sanitization', () => {
+  const meta = { requestId: 'req_test_123' };
+  const trace = extractTraceHeaders(meta);
+  assert.equal(trace['x-nr-request-id'], 'req_test_123');
+
+  const headers = withTraceContext({ 'Custom-Header': 'ok\r\ninjected' }, { traceId: 'trace-123', sessionId: 'sess-456' });
+  assert.equal(headers['x-nr-trace-id'], 'trace-123');
+  assert.equal(headers['x-nr-session-id'], 'sess-456');
+  assert.equal(headers['Custom-Header'], undefined); // sanitized CRLF
+});
+
+test('traceId and sessionId are forwarded in pinnedFetch', async () => {
+  let seenHeaders: Headers | undefined;
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    traceId: 'tr_client_999',
+    sessionId: 'sess_client_888',
+    fetch: async (_url: unknown, init: any) => {
+      seenHeaders = new Headers(init.headers);
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  await client.nr.chat({ model: 'm', prompt: 'hi' });
+  assert.equal(seenHeaders?.get('x-nr-trace-id'), 'tr_client_999');
+  assert.equal(seenHeaders?.get('x-nr-session-id'), 'sess_client_888');
+  assert.equal(seenHeaders?.get('x-nr-client-language'), 'js');
+});
+

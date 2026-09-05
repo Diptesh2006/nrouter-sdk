@@ -49,3 +49,52 @@ public func diagnoseReasoningExhaustion(
         outputTokens: outputTokens
     )
 }
+
+/// Extract trace routing headers (e.g. `x-nr-request-id`) from response metadata.
+public func extractTraceHeaders(_ meta: NRouterResponseMeta) -> [String: String] {
+    var out: [String: String] = [:]
+    if let reqId = meta.requestID {
+        out["x-nr-request-id"] = reqId
+    }
+    return out
+}
+
+/// Extract trace routing headers from an arbitrary dictionary of HTTP headers.
+public func extractTraceHeaders(_ headers: [String: String]) -> [String: String] {
+    var out: [String: String] = [:]
+    for (k, v) in headers {
+        let kl = k.lowercased()
+        if kl == "x-nr-request-id" || kl == "x-nr-trace-id" || kl == "x-nr-session-id" {
+            out[kl] = v
+        }
+    }
+    return out
+}
+
+/// Inject trace context headers, validating that traceId and sessionId do not contain CRLF characters.
+public func withTraceContext(
+    headers: [String: String] = [:],
+    traceId: String? = nil,
+    sessionId: String? = nil
+) throws -> [String: String] {
+    if let traceId, traceId.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) {
+        throw NRouterError.configuration("traceId must not contain CRLF characters")
+    }
+    if let sessionId, sessionId.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) {
+        throw NRouterError.configuration("sessionId must not contain CRLF characters")
+    }
+    var out: [String: String] = [:]
+    for (k, v) in headers {
+        if !v.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) {
+            out[k] = v
+        }
+    }
+    if let traceId {
+        out["x-nr-trace-id"] = traceId
+    }
+    if let sessionId {
+        out["x-nr-session-id"] = sessionId
+    }
+    return out
+}
+

@@ -95,6 +95,9 @@ public object NRouterAndroid {
         apiKey: String? = null,
         baseURL: String = NRouter.DEFAULT_BASE_URL,
         http: OkHttpClient = defaultHttpClient(),
+        bufferedCallTimeoutMillis: Long = NRouter.BUFFERED_CALL_TIMEOUT_MILLIS,
+        traceId: String? = null,
+        sessionId: String? = null,
     ): NRouter {
         val resolved = apiKey?.takeIf { it.isNotEmpty() } ?: manifestKey(context)
         if (resolved.isNullOrEmpty()) {
@@ -105,7 +108,15 @@ public object NRouterAndroid {
                     "android:value=\"sk-nrouter-...\"/> for an internal build."
             )
         }
-        return NRouter(apiKey = resolved, baseURL = baseURL, http = http)
+        return NRouter(
+            apiKey = resolved,
+            baseURL = baseURL,
+            http = http,
+            bufferedCallTimeoutMillis = bufferedCallTimeoutMillis,
+            traceId = traceId,
+            sessionId = sessionId,
+            clientPlatform = "android",
+        )
     }
 
     /**
@@ -127,4 +138,90 @@ public object NRouterAndroid {
     } catch (_: PackageManager.NameNotFoundException) {
         null
     }
+
+    /** Maximum acceptable Retry-After value in seconds (24 hours). */
+    public const val MAX_RETRY_AFTER_SECONDS: Long = NRouterError.MAX_RETRY_AFTER_SECONDS
+
+    /**
+     * Parse an RFC 9110 / RFC 7231 Retry-After header.
+     * Delegates to [NRouterError.parseRetryAfter].
+     */
+    @JvmStatic
+    @JvmOverloads
+    public fun parseRetryAfter(
+        header: String?,
+        nowEpochSeconds: Long = System.currentTimeMillis() / 1000,
+    ): Long? = NRouterError.parseRetryAfter(header, nowEpochSeconds)
+
+    /**
+     * Compute full-jitter exponential backoff with ceiling and optional Retry-After override.
+     * Delegates to [NRouterError.computeJitteredBackoff].
+     */
+    @JvmStatic
+    @JvmOverloads
+    public fun computeJitteredBackoff(
+        attempt: Int,
+        baseDelayMs: Long = 500L,
+        maxDelayMs: Long = 30000L,
+        retryAfterSeconds: Long? = null,
+        jitterFactor: Double = 0.5,
+    ): Long = NRouterError.computeJitteredBackoff(
+        attempt = attempt,
+        baseDelayMs = baseDelayMs,
+        maxDelayMs = maxDelayMs,
+        retryAfterSeconds = retryAfterSeconds,
+        jitterFactor = jitterFactor,
+    )
+
+    /**
+     * Format a user-friendly, UI-safe message for mobile presentation.
+     * Never exposes API keys, tokens, or internal tracebacks.
+     */
+    @JvmStatic
+    public fun formatUserMessage(error: NRouterError): String = when (error) {
+        is NRouterError.Authentication -> "Authentication failed. Please verify your API key."
+        is NRouterError.RateLimit -> "Rate limit reached. Please wait and try again."
+        is NRouterError.Credit, is NRouterError.BudgetExceeded -> "Credit balance or budget limit reached."
+        is NRouterError.GuardrailBlocked -> "Request blocked by safety guardrails."
+        is NRouterError.Service -> "Service temporarily unavailable. Please retry shortly."
+        is NRouterError.Transport -> "Network connection error. Please check your connection."
+        is NRouterError.NotFound -> "Requested resource or model was not found."
+        else -> "Request failed. Please try again."
+    }
+
+    /**
+     * Format a diagnostic message suitable for developer logging, with sanitized tokens.
+     */
+    @JvmStatic
+    public fun formatDiagnosticMessage(error: NRouterError): String =
+        ai.nrouter.sdk.formatError(error)
+
+    /**
+     * Redact API keys and sensitive tokens from strings.
+     */
+    @JvmStatic
+    public fun redactKeys(input: String): String =
+        ai.nrouter.sdk.redactKeys(input)
+
+    /**
+     * Parses a gateway error JSON payload into an error envelope.
+     */
+    @JvmStatic
+    public fun parseGatewayErrorEnvelope(jsonString: String): ai.nrouter.sdk.NRouterErrorEnvelope =
+        ai.nrouter.sdk.parseGatewayErrorEnvelope(jsonString)
+
+    /** Extracts trace routing headers from response metadata into a map. */
+    @JvmStatic
+    public fun extractTraceHeaders(meta: ai.nrouter.sdk.NRouterResponseMeta?): Map<String, String> =
+        ai.nrouter.sdk.extractTraceHeaders(meta)
+
+    /** Extracts trace routing headers from an existing headers map. */
+    @JvmStatic
+    public fun extractTraceHeaders(headers: Map<String, String>?): Map<String, String> =
+        ai.nrouter.sdk.extractTraceHeaders(headers)
+
+    /** Injects trace and session context into an existing headers map, rejecting CRLF characters. */
+    @JvmStatic
+    public fun withTraceContext(headers: Map<String, String>?, traceId: String?, sessionId: String?): Map<String, String> =
+        ai.nrouter.sdk.withTraceContext(headers, traceId, sessionId)
 }

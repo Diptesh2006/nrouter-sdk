@@ -1,11 +1,30 @@
 package nrouter
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+var (
+	nrouterKeyRe = regexp.MustCompile(`\bsk-nrouter-[A-Za-z0-9._-]{4,}`)
+	genericKeyRe = regexp.MustCompile(`\bsk-[A-Za-z0-9._-]{6,}`)
+)
+
+// RedactKeys masks nRouter and upstream provider API keys in strings to prevent credential leaks.
+func RedactKeys(s string) string {
+	masked := nrouterKeyRe.ReplaceAllString(s, "sk-nrouter-***")
+	return genericKeyRe.ReplaceAllStringFunc(masked, func(m string) string {
+		if strings.HasPrefix(m, "sk-nrouter") {
+			return m
+		}
+		return "sk-***"
+	})
+}
 
 // Kind classifies why a request failed, one value per entry in the `errors`
 // block of spec/nrouter-sdk-spec.json plus the two conditions that never
@@ -88,6 +107,10 @@ type Error struct {
 	// main error path sends {"error":{"type","message"}} with NO code, so an
 	// empty Code is the ordinary case rather than an anomaly.
 	Code string
+	// Param indicates the specific parameter in error when reported by gateway.
+	Param string
+	// Type represents the family or category of error from the gateway.
+	Type string
 	// Status is the HTTP status, 0 when the request never reached the gateway.
 	Status int
 	// RequestID joins this failure to a gateway spend row or log line.
@@ -108,11 +131,87 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
+	msg := RedactKeys(e.Message)
 	if e.Code != "" {
-		return fmt.Sprintf("nrouter: %s (%s)", e.Message, e.Code)
+		return fmt.Sprintf("nrouter: %s (%s)", msg, e.Code)
 	}
-	return "nrouter: " + e.Message
+	return "nrouter: " + msg
 }
+
+// ErrorEnvelope represents a structured error returned by the gateway.
+type ErrorEnvelope struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+	Param   string `json:"param,omitempty"`
+	Type    string `json:"type,omitempty"`
+}
+
+// ParseGatewayErrorEnvelope safely extracts an ErrorEnvelope from JSON bytes.
+func ParseGatewayErrorEnvelope(raw []byte) ErrorEnvelope {
+	var envelope map[string]any
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return ErrorEnvelope{Message: RedactKeys(string(raw))}
+	}
+	node := envelope
+	if nested, ok := envelope["error"].(map[string]any); ok {
+		node = nested
+	}
+	msg, _ := node["message"].(string)
+	code, _ := node["code"].(string)
+	param, _ := node["param"].(string)
+	errType, _ := node["type"].(string)
+
+	return ErrorEnvelope{
+		Code:    code,
+		Message: RedactKeys(msg),
+		Param:   param,
+		Type:    errType,
+	}
+}
+
+// SafeJSONUnmarshal unmarshals raw JSON bytes with number preservation and syntax validation.
+func SafeJSONUnmarshal(raw []byte, v any) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return errors.New("empty JSON payload")
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	return dec.Decode(v)
+}
+
+// FormatError formats any error into a human-readable, log-safe diagnostic string,
+// masking all API keys.
+func FormatError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var nrErr *Error
+	if errors.As(err, &nrErr) {
+		parts := []string{fmt.Sprintf("[%s]", nrErr.Kind)}
+		if nrErr.Status > 0 {
+			parts = append(parts, fmt.Sprintf("HTTP %d", nrErr.Status))
+		}
+		if nrErr.Code != "" {
+			parts = append(parts, "code="+nrErr.Code)
+		}
+		if nrErr.Param != "" {
+			parts = append(parts, "param="+nrErr.Param)
+		}
+		if nrErr.RequestID != "" {
+			parts = append(parts, "requestId="+nrErr.RequestID)
+		}
+		if nrErr.LimitSource != "" {
+			parts = append(parts, "limitSource="+nrErr.LimitSource)
+		}
+		if nrErr.RetryAfter != nil {
+			parts = append(parts, fmt.Sprintf("retryAfter=%ds", *nrErr.RetryAfter))
+		}
+		parts = append(parts, ": "+RedactKeys(nrErr.Message))
+		return RedactKeys(strings.Join(parts, " "))
+	}
+	return RedactKeys(err.Error())
+}
+
 
 // Unwrap exposes the sentinel so errors.Is matches on the condition, AND the
 // underlying cause so errors.Is(err, context.Canceled) still matches through

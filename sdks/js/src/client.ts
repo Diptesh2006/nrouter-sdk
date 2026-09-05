@@ -374,6 +374,10 @@ type NRouterOptions = Omit<
   apiKey?: string;
   /** Maximum silence between response body chunks, in milliseconds. */
   bodyIdleTimeoutMs?: number;
+  /** Distributed trace ID forwarded to the gateway via `x-nr-trace-id`. */
+  traceId?: string;
+  /** Multi-turn session ID forwarded to the gateway via `x-nr-session-id`. */
+  sessionId?: string;
   /**
    * `headers` is omitted deliberately. The constructor discards it — the
    * vendor spreads `fetchOptions` onto the request after the headers this SDK
@@ -382,6 +386,39 @@ type NRouterOptions = Omit<
    */
   fetchOptions?: Omit<RequestInit, 'headers'>;
 };
+
+/**
+ * Extracts trace headers (`x-nr-request-id`) from ResponseMeta.
+ */
+export function extractTraceHeaders(meta: { requestId?: string | null }): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (meta?.requestId) {
+    out['x-nr-request-id'] = meta.requestId;
+  }
+  return out;
+}
+
+/**
+ * Returns a new headers record with trace context injected, sanitizing any newline characters.
+ */
+export function withTraceContext(
+  headers: Record<string, string | null | undefined> = {},
+  context: { traceId?: string; sessionId?: string } = {},
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (v != null && !/[\r\n]/.test(v)) {
+      out[k] = String(v);
+    }
+  }
+  if (context.traceId && !/[\r\n]/.test(context.traceId)) {
+    out['x-nr-trace-id'] = context.traceId;
+  }
+  if (context.sessionId && !/[\r\n]/.test(context.sessionId)) {
+    out['x-nr-session-id'] = context.sessionId;
+  }
+  return out;
+}
 
 /** The caller's own `fetch`, kept on our wrapper so a nested construction can
  * unwrap instead of stacking another closure over a stale key. */
@@ -706,6 +743,15 @@ export class nRouter extends OpenAI {
       headers.set('Authorization', `Bearer ${current}`);
       headers.delete('OpenAI-Organization');
       headers.delete('OpenAI-Project');
+      if (options.traceId && !headers.has('x-nr-trace-id') && !/[\r\n]/.test(options.traceId)) {
+        headers.set('x-nr-trace-id', options.traceId);
+      }
+      if (options.sessionId && !headers.has('x-nr-session-id') && !/[\r\n]/.test(options.sessionId)) {
+        headers.set('x-nr-session-id', options.sessionId);
+      }
+      if (!headers.has('x-nr-client-language')) {
+        headers.set('x-nr-client-language', 'js');
+      }
       const response = await callerFetch(url as never, { ...(init ?? {}), headers });
       return withBodyIdleTimeout(response, bodyIdleTimeoutMs);
     }) as typeof fetch;

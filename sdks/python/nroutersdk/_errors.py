@@ -11,8 +11,10 @@ the pairing in both directions.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import datetime
 import email.utils
+import json
 import math
 import random
 import re
@@ -46,6 +48,8 @@ class nRouterError(Exception):
         code: str | None = None,
         request_id: str | None = None,
         status_code: int | None = None,
+        param: str | None = None,
+        type: str | None = None,
     ) -> None:
         sanitized = redact_keys(message)
         super().__init__(sanitized)
@@ -55,9 +59,26 @@ class nRouterError(Exception):
         if status_code is not None:
             self.status_code = status_code
         self.request_id = request_id
+        self.param = param
+        self.type = type
 
-    def __str__(self) -> str:  # pragma: no cover - trivial
-        return self.message
+    def __str__(self) -> str:
+        return redact_keys(self.message)
+
+    def __repr__(self) -> str:
+        cls_name = self.__class__.__name__
+        parts = [f"message={redact_keys(self.message)!r}"]
+        if self.code is not None:
+            parts.append(f"code={self.code!r}")
+        if self.status_code is not None:
+            parts.append(f"status_code={self.status_code}")
+        if self.param is not None:
+            parts.append(f"param={self.param!r}")
+        if self.type is not None:
+            parts.append(f"type={self.type!r}")
+        if self.request_id is not None:
+            parts.append(f"request_id={self.request_id!r}")
+        return f"{cls_name}({', '.join(parts)})"
 
 
 
@@ -66,6 +87,24 @@ class nRouterRequestError(nRouterError):
 
     code = "invalid_request"
     status_code = 400
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_id: str | None = None,
+        code: str | None = None,
+        param: str | None = None,
+        type: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            request_id=request_id,
+            code=code or self.code,
+            status_code=400,
+            param=param,
+            type=type,
+        )
 
 
 class nRouterGuardrailBlockedError(nRouterError):
@@ -84,8 +123,18 @@ class nRouterGuardrailBlockedError(nRouterError):
         *,
         request_id: str | None = None,
         guardrail_name: str | None = None,
+        code: str | None = None,
+        param: str | None = None,
+        type: str | None = None,
     ) -> None:
-        super().__init__(message, request_id=request_id)
+        super().__init__(
+            message,
+            request_id=request_id,
+            code=code or self.code,
+            status_code=400,
+            param=param,
+            type=type,
+        )
         self.guardrail_name = guardrail_name
 
 
@@ -108,8 +157,18 @@ class nRouterAuthenticationError(nRouterError):
         *,
         request_id: str | None = None,
         auth_reason: str | None = None,
+        code: str | None = None,
+        param: str | None = None,
+        type: str | None = None,
     ) -> None:
-        super().__init__(message, request_id=request_id)
+        super().__init__(
+            message,
+            request_id=request_id,
+            code=code or self.code,
+            status_code=401,
+            param=param,
+            type=type,
+        )
         self.auth_reason = auth_reason
 
 
@@ -128,8 +187,18 @@ class nRouterCreditError(nRouterError):
         message: str = "Insufficient credits. Please top up your balance.",
         *,
         request_id: str | None = None,
+        code: str | None = None,
+        param: str | None = None,
+        type: str | None = None,
     ) -> None:
-        super().__init__(message, request_id=request_id)
+        super().__init__(
+            message,
+            request_id=request_id,
+            code=code or self.code,
+            status_code=402,
+            param=param,
+            type=type,
+        )
 
 
 class nRouterBudgetExceededError(nRouterError):
@@ -152,6 +221,24 @@ class nRouterBudgetExceededError(nRouterError):
     code = "budget_exceeded"
     status_code = 402
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_id: str | None = None,
+        code: str | None = None,
+        param: str | None = None,
+        type: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            request_id=request_id,
+            code=code or self.code,
+            status_code=402,
+            param=param,
+            type=type,
+        )
+
 
 class nRouterNotFoundError(nRouterError):
     """The MODEL alias does not exist, or is not visible to this key.
@@ -168,6 +255,24 @@ class nRouterNotFoundError(nRouterError):
 
     code = "model_not_found"
     status_code = 404
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_id: str | None = None,
+        code: str | None = None,
+        param: str | None = None,
+        type: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            request_id=request_id,
+            code=code or self.code,
+            status_code=404,
+            param=param,
+            type=type,
+        )
 
 
 class nRouterRateLimitError(nRouterError):
@@ -194,13 +299,22 @@ class nRouterRateLimitError(nRouterError):
         limit_source: str | None = None,
         retry_after: int | None = None,
         code: str | None = None,
+        param: str | None = None,
+        type: str | None = None,
     ) -> None:
         # Both `rate_limit_exceeded` and `tpm_limit_exceeded` are 429 and both
         # raise this class, so dispatching on status is correct. But the class
         # default would then report `rate_limit_exceeded` for a TPM refusal,
         # which is a wrong stable code on a right exception — pass through what
         # the gateway actually said when it said anything.
-        super().__init__(message, request_id=request_id, code=code)
+        super().__init__(
+            message,
+            request_id=request_id,
+            code=code,
+            status_code=429,
+            param=param,
+            type=type,
+        )
         self.limit_source = limit_source
         self.retry_after = retry_after
 
@@ -214,6 +328,26 @@ class nRouterServiceError(nRouterError):
 
     code = "service_unavailable"
     status_code = None
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_id: str | None = None,
+        code: str | None = None,
+        status_code: int | None = None,
+        param: str | None = None,
+        type: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            request_id=request_id,
+            code=code or self.code,
+            status_code=status_code,
+            param=param,
+            type=type,
+        )
+
 
 
 def is_retryable(err: Exception | Any) -> bool:
@@ -293,7 +427,97 @@ def compute_jittered_backoff(
     return max(0.0, raw_delay * multiplier)
 
 
+@dataclass(frozen=True)
+class NRouterErrorEnvelope:
+    """Structured gateway error envelope."""
+
+    code: str | None = None
+    message: str | None = None
+    param: str | None = None
+    type: str | None = None
+
+
+def parse_gateway_error_envelope(body: Any) -> NRouterErrorEnvelope:
+    """Parse a gateway response body into a structured NRouterErrorEnvelope."""
+    if not isinstance(body, dict):
+        msg = redact_keys(str(body)) if body is not None else None
+        return NRouterErrorEnvelope(message=msg)
+
+    error = body.get("error")
+    if isinstance(error, dict):
+        raw_code = error.get("code") or body.get("code")
+        raw_msg = error.get("message") or body.get("message")
+        raw_param = error.get("param") or body.get("param")
+        raw_type = error.get("type") or body.get("type")
+    elif isinstance(error, str):
+        raw_code = body.get("code")
+        raw_msg = error
+        raw_param = body.get("param")
+        raw_type = body.get("type")
+    else:
+        raw_code = body.get("code")
+        raw_msg = body.get("message")
+        raw_param = body.get("param")
+        raw_type = body.get("type")
+
+    return NRouterErrorEnvelope(
+        code=str(raw_code) if raw_code is not None else None,
+        message=redact_keys(str(raw_msg)) if raw_msg is not None else None,
+        param=str(raw_param) if raw_param is not None else None,
+        type=str(raw_type) if raw_type is not None else None,
+    )
+
+
+def safe_json_parse(raw: str) -> Any | None:
+    """Safely parse a JSON string into a Python object.
+
+    Enforces standard JSON compliance (refusing non-standard NaN and Infinity tokens).
+    Returns None on parse failure or empty input.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+
+    def _reject_constant(val: str) -> None:
+        raise ValueError(f"Non-standard JSON constant not allowed: {val}")
+
+    try:
+        return json.loads(raw, parse_constant=_reject_constant)
+    except (ValueError, TypeError):
+        return None
+
+
+def format_error(err: Exception | Any) -> str:
+    """Format an exception into a human-readable, log-safe diagnostic string.
+
+    Guarantees that all API keys and bearer tokens are masked.
+    """
+    if isinstance(err, nRouterError):
+        parts = [f"[{err.__class__.__name__}]"]
+        if err.status_code is not None:
+            parts.append(f"HTTP {err.status_code}")
+        if getattr(err, "code", None):
+            parts.append(f"code={err.code}")
+        if getattr(err, "param", None):
+            parts.append(f"param={err.param}")
+        if getattr(err, "request_id", None):
+            parts.append(f"requestId={err.request_id}")
+        limit_src = getattr(err, "limit_source", None)
+        if limit_src:
+            parts.append(f"limitSource={limit_src}")
+        retry = getattr(err, "retry_after", None)
+        if retry is not None:
+            parts.append(f"retryAfter={retry}s")
+        parts.append(f": {err.message}")
+        return redact_keys(" ".join(parts))
+    if isinstance(err, Exception):
+        return redact_keys(f"[{err.__class__.__name__}] {err}")
+    return redact_keys(str(err))
+
+
 __all__ = [
+    "NRouterErrorEnvelope",
+    "format_error",
+    "is_retryable",
     "nRouterAuthenticationError",
     "nRouterBudgetExceededError",
     "nRouterCreditError",
@@ -303,11 +527,13 @@ __all__ = [
     "nRouterRateLimitError",
     "nRouterRequestError",
     "nRouterServiceError",
-    "is_retryable",
-    "redact_keys",
+    "parse_gateway_error_envelope",
     "parse_retry_after",
+    "redact_keys",
+    "safe_json_parse",
     "compute_jittered_backoff",
     "MAX_RETRY_AFTER_SECONDS",
 ]
+
 
 

@@ -961,16 +961,123 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(dHuge, 8.0)
 
         // Retry-After priority
-        let dRetry = computeJitteredBackoff(attempt: 0, retryAfterSeconds: 5, maxDelay: 10.0, jitterFactor: 0.0)
+        let dRetry = computeJitteredBackoff(attempt: 0, maxDelay: 10.0, retryAfterSeconds: 5, jitterFactor: 0.0)
         XCTAssertEqual(dRetry, 5.0)
 
         // Retry-After capped by maxDelay
-        let dRetryCapped = computeJitteredBackoff(attempt: 0, retryAfterSeconds: 50, maxDelay: 10.0, jitterFactor: 0.0)
+        let dRetryCapped = computeJitteredBackoff(attempt: 0, maxDelay: 10.0, retryAfterSeconds: 50, jitterFactor: 0.0)
         XCTAssertEqual(dRetryCapped, 10.0)
 
         // Jitter bounds
         let dJitter = computeJitteredBackoff(attempt: 1, baseDelay: 1.0, jitterFactor: 0.4)
         XCTAssertTrue(dJitter >= 1.2 && dJitter <= 2.0, "dJitter \(dJitter) out of range [1.2, 2.0]")
+    }
+
+    func testRedactKeysMasksTokens() {
+        let raw = "Unauthorized using sk-nrouter-CONFIDENTIAL_KEY_99 and sk-ANTHROPIC_SECRET_123"
+        let masked = redactKeys(raw)
+        XCTAssertFalse(masked.contains("CONFIDENTIAL_KEY_99"))
+        XCTAssertFalse(masked.contains("ANTHROPIC_SECRET_123"))
+        XCTAssertTrue(masked.contains("sk-nrouter-***"))
+        XCTAssertTrue(masked.contains("sk-***"))
+
+        let second = redactKeys(masked)
+        XCTAssertEqual(masked, second)
+    }
+
+    func testErrorEnvelopeAndFormatError() {
+        let jsonStr = """
+        {
+            "error": {
+                "message": "Model not available with key sk-nrouter-MYSECRETKEY123",
+                "code": "model_not_found",
+                "param": "model",
+                "type": "invalid_request_error"
+            }
+        }
+        """
+        let data = Data(jsonStr.utf8)
+        let env = parseGatewayErrorEnvelope(data: data)
+        XCTAssertEqual(env.code, "model_not_found")
+        XCTAssertEqual(env.param, "model")
+        XCTAssertEqual(env.type, "invalid_request_error")
+        XCTAssertFalse(env.message?.contains("MYSECRETKEY123") ?? true)
+        XCTAssertTrue(env.message?.contains("sk-nrouter-***") ?? false)
+
+        let body = NRouterErrorBody(
+            message: "Rate limit reached using sk-nrouter-LEAKEDSECRET1",
+            code: "rate_limit_exceeded",
+            param: "messages[0]",
+            type: "rate_limit_error",
+            status: 429,
+            requestID: "req_12345",
+            limitSource: "rpm",
+            retryAfter: 60
+        )
+        let err = NRouterError.fromCode(body)
+        let formatted = formatError(err)
+        XCTAssertTrue(formatted.contains("[rate_limit]"))
+        XCTAssertTrue(formatted.contains("HTTP 429"))
+        XCTAssertTrue(formatted.contains("code=rate_limit_exceeded"))
+        XCTAssertTrue(formatted.contains("param=messages[0]"))
+        XCTAssertTrue(formatted.contains("requestId=req_12345"))
+        XCTAssertTrue(formatted.contains("limitSource=rpm"))
+        XCTAssertTrue(formatted.contains("retryAfter=60s"))
+        XCTAssertFalse(formatted.contains("LEAKEDSECRET1"))
+        XCTAssertTrue(formatted.contains("sk-nrouter-***"))
+
+        let desc = err.description
+        XCTAssertFalse(desc.contains("LEAKEDSECRET1"))
+        XCTAssertTrue(desc.contains("sk-nrouter-***"))
+    }
+
+    func testTraceRoutingAndContext() async throws {
+        // 1. CRLF rejection
+        XCTAssertThrowsError(try NRouter(apiKey: "sk-nrouter-test", traceId: "tr\r\nbad"))
+        XCTAssertThrowsError(try NRouter(apiKey: "sk-nrouter-test", sessionId: "ses\nbad"))
+
+        // 2. HTTP header transmission
+        StubProtocol.captured = nil
+        StubProtocol.response = (
+            200,
+            ["content-type": "application/json", "x-nr-request-id": "req-trace-999"],
+            Data(#"{"data":[]}"#.utf8)
+        )
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(
+            apiKey: "sk-nrouter-test",
+            session: URLSession(configuration: config),
+            traceId: "tr-client-123",
+            sessionId: "ses-client-456"
+        )
+
+        XCTAssertEqual(client.traceId, "tr-client-123")
+        XCTAssertEqual(client.sessionId, "ses-client-456")
+
+        let res = try await client.models()
+        let request = try XCTUnwrap(StubProtocol.captured)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "x-nr-client-language"), "swift")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "x-nr-trace-id"), "tr-client-123")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "x-nr-session-id"), "ses-client-456")
+
+        // 3. extractTraceHeaders
+        let th = extractTraceHeaders(res.meta)
+        XCTAssertEqual(th["x-nr-request-id"], "req-trace-999")
+
+        let thDict = extractTraceHeaders(["x-nr-trace-id": "tr-srv-1", "x-nr-session-id": "ses-srv-2"])
+        XCTAssertEqual(thDict["x-nr-trace-id"], "tr-srv-1")
+        XCTAssertEqual(thDict["x-nr-session-id"], "ses-srv-2")
+
+        // 4. withTraceContext
+        let orig = ["authorization": "Bearer token"]
+        let ctx = try withTraceContext(headers: orig, traceId: "tr-child", sessionId: "ses-child")
+        XCTAssertEqual(ctx["x-nr-trace-id"], "tr-child")
+        XCTAssertEqual(ctx["x-nr-session-id"], "ses-child")
+        XCTAssertEqual(ctx["authorization"], "Bearer token")
+
+        XCTAssertThrowsError(try withTraceContext(headers: orig, traceId: "tr\nbad"))
+        XCTAssertThrowsError(try withTraceContext(headers: orig, sessionId: "ses\rbad"))
     }
 }
 

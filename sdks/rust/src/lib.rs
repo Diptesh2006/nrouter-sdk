@@ -63,12 +63,15 @@ pub mod prompts;
 pub mod sampling;
 
 pub use errors::{
-    compute_jittered_backoff, parse_retry_after, parse_retry_after_at, ErrorBody, NRouterError,
+    compute_jittered_backoff, format_error, parse_gateway_error_envelope, parse_retry_after,
+    parse_retry_after_at, redact_keys, ErrorBody, ErrorEnvelope, NRouterError,
     MAX_RETRY_AFTER_SECONDS,
 };
 pub use media::{validate_audio_format, VALID_AUDIO_FORMATS};
 pub use memory::{sliding_window, ArrayStore, ChatMessage, Memory, MemoryStore};
-pub use meta::{BudgetWarningInfo, ResponseMeta, HEADER_NAMES};
+pub use meta::{
+    extract_trace_headers, with_trace_context, BudgetWarningInfo, ResponseMeta, HEADER_NAMES,
+};
 pub use prompts::{render_prompt, RenderPromptOptions};
 
 /// True when a model family is served on /v1/messages rather than /v1/chat/completions.

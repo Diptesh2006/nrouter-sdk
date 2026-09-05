@@ -438,3 +438,123 @@ test_that("cleartext is limited to loopback development gateways and rejects cre
   }
 })
 
+test_that("retry-after parsing and jittered backoff match contract", {
+  expect_equal(NROUTER_MAX_RETRY_AFTER_SECONDS, 86400L)
+  expect_equal(nrouter_parse_retry_after("120"), 120L)
+  expect_equal(nrouter_parse_retry_after("  60  "), 60L)
+  expect_equal(nrouter_parse_retry_after("99999999"), 86400L)
+  expect_null(nrouter_parse_retry_after(NULL))
+  expect_null(nrouter_parse_retry_after(""))
+  expect_null(nrouter_parse_retry_after("invalid-value"))
+
+  # HTTP-date parsing
+  now <- as.POSIXct("2026-09-05 12:00:00 GMT", tz = "GMT")
+  future_date <- "Sat, 05 Sep 2026 12:02:00 GMT"
+  past_date <- "Sat, 05 Sep 2026 11:59:00 GMT"
+  expect_equal(nrouter_parse_retry_after(future_date, now = now), 120L)
+  expect_equal(nrouter_parse_retry_after(past_date, now = now), 0L)
+
+  # Condition receives retry_after
+  cond <- nrouter_condition("rate limited", status = 429, retry_after = 120L)
+  expect_equal(cond$retry_after, 120L)
+
+  # Jittered backoff computation
+  b0 <- nrouter_compute_jittered_backoff(0, base_delay_seconds = 1.0, jitter_factor = 0.0)
+  expect_equal(b0, 1.0)
+
+  b_retry <- nrouter_compute_jittered_backoff(0, retry_after_seconds = 5.0, jitter_factor = 0.0)
+  expect_equal(b_retry, 5.0)
+
+  b_jitter <- nrouter_compute_jittered_backoff(2, base_delay_seconds = 1.0, max_delay_seconds = 10.0, jitter_factor = 0.5)
+  expect_true(b_jitter >= 2.0 && b_jitter <= 4.0)
+})
+
+test_that("redacts keys and formats gateway error envelopes", {
+  msg <- "Invalid key sk-nrouter-live-12345678 or sk-ant-api03-abcdef123"
+  redacted <- nrouter_redact_keys(msg)
+  expect_true(grepl("sk-nrouter-\\*\\*\\*", redacted))
+  expect_true(grepl("sk-\\*\\*\\*", redacted))
+  expect_equal(redacted, nrouter_redact_keys(redacted)) # idempotent
+
+  json <- '{"error":{"message":"Failed with sk-nrouter-test-abcdef","code":"invalid_request_error","param":"model","type":"invalid_request_error"}}'
+  envelope <- nrouter_parse_gateway_error_envelope(json)
+  expect_equal(envelope$code, "invalid_request_error")
+  expect_equal(envelope$param, "model")
+  expect_equal(envelope$type, "invalid_request_error")
+  expect_true(grepl("sk-nrouter-\\*\\*\\*", envelope$message))
+
+  cond <- nrouter_condition(
+    message    = "model secret-key sk-nrouter-live-999 not found",
+    code       = "model_not_found",
+    param      = "model",
+    type       = "invalid_request_error",
+    status     = 404,
+    request_id = "req_123"
+  )
+  expect_equal(cond$param, "model")
+  expect_equal(cond$type, "invalid_request_error")
+  formatted <- nrouter_format_error(cond)
+  expect_true(grepl("\\[not_found\\]", formatted))
+  expect_true(grepl("HTTP 404", formatted))
+  expect_true(grepl("code=model_not_found", formatted))
+  expect_true(grepl("param=model", formatted))
+  expect_true(grepl("req_id=req_123", formatted))
+  expect_true(grepl("sk-nrouter-\\*\\*\\*", formatted))
+  expect_true(grepl("sk-nrouter-\\*\\*\\*", cond$message))
+})
+
+test_that("propagates trace context and rejects crlf", {
+  # Client fields and CRLF rejection
+  client <- nrouter_client(
+    api_key = "sk-nrouter-test",
+    trace_id = "tr_abc",
+    session_id = "sess_xyz"
+  )
+  expect_equal(client$trace_id, "tr_abc")
+  expect_equal(client$session_id, "sess_xyz")
+
+  expect_error(
+    nrouter_client(api_key = "sk-nrouter-test", trace_id = "bad\r\ntrace"),
+    class = "nrouter_configuration_error"
+  )
+  expect_error(
+    nrouter_client(api_key = "sk-nrouter-test", session_id = "bad\nsession"),
+    class = "nrouter_configuration_error"
+  )
+
+  # Header generation
+  hdrs <- nrouter:::nrouter_request_headers(client)
+  expect_equal(hdrs[["x-nr-client-language"]], "r")
+  expect_equal(hdrs[["x-nr-trace-id"]], "tr_abc")
+  expect_equal(hdrs[["x-nr-session-id"]], "sess_xyz")
+
+  # Trace headers extraction
+  meta <- nrouter_meta(list("x-nr-request-id" = "req_trace_999"))
+  ext_meta <- nrouter_extract_trace_headers(meta)
+  expect_equal(ext_meta[["x-nr-request-id"]], "req_trace_999")
+
+  header_map <- list(
+    "x-nr-request-id" = "req_1",
+    "x-nr-trace-id" = "tr_1",
+    "x-nr-session-id" = "sess_1",
+    "other" = "val"
+  )
+  ext_map <- nrouter_extract_trace_headers(header_map)
+  expect_equal(length(ext_map), 3L)
+  expect_equal(ext_map[["x-nr-request-id"]], "req_1")
+  expect_equal(ext_map[["x-nr-trace-id"]], "tr_1")
+  expect_equal(ext_map[["x-nr-session-id"]], "sess_1")
+
+  # Trace context injection
+  injected <- nrouter_with_trace_context(list(keep = "yes"), trace_id = "tr_2", session_id = "sess_2")
+  expect_equal(injected$keep, "yes")
+  expect_equal(injected[["x-nr-trace-id"]], "tr_2")
+  expect_equal(injected[["x-nr-session-id"]], "sess_2")
+
+  expect_error(
+    nrouter_with_trace_context(list(), trace_id = "injected\r\ntrace"),
+    class = "nrouter_configuration_error"
+  )
+})
+
+

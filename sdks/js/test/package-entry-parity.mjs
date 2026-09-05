@@ -18,14 +18,14 @@
 // would pass while the published package disagreed with itself.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
 const cjs = require(join(here, '..', 'dist', 'index.js'));
-const esm = await import(join(here, '..', 'dist', 'index.mjs'));
+const esm = await import(pathToFileURL(join(here, '..', 'dist', 'index.mjs')).href);
 
 // `default` is compared separately below: CJS carries it as an ordinary key,
 // ESM as the module's default binding, so a raw key-set diff always reports it

@@ -469,8 +469,8 @@ def js_chat_route_present(root: Path) -> bool:
     chat_path = root / "sdks/js/src/chat.ts"
     if not client_path.exists() or not chat_path.exists():
         return False
-    client = strip_comments(client_path.read_text())
-    chat = strip_comments(chat_path.read_text())
+    client = strip_comments(client_path.read_text(encoding="utf-8", errors="replace"))
+    chat = strip_comments(chat_path.read_text(encoding="utf-8", errors="replace"))
 
     wrapper = braced_region(
         client,
@@ -516,7 +516,7 @@ def js_audio_upload_present(root: Path) -> bool:
     path = root / "sdks/js/src/multimodal.ts"
     if not path.exists():
         return False
-    blob = strip_comments(path.read_text())
+    blob = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
     region = braced_region(blob, r"^\s{2}private\s+async\s+audioUpload\(")
     if region is None:
         return False
@@ -778,7 +778,7 @@ def route_coverage(root: Path, spec: dict) -> tuple[list[str], int, int]:
         for rel in rel_paths:
             path = root / rel
             if path.exists():
-                parts.append(path.read_text())
+                parts.append(path.read_text(encoding="utf-8", errors="replace"))
         blobs[sdk] = strip_comments("\n".join(parts))
 
     delegation_ok: dict[str, bool] = {}
@@ -786,7 +786,7 @@ def route_coverage(root: Path, spec: dict) -> tuple[list[str], int, int]:
         ok = True
         for label, rel, pattern in proofs:
             path = root / rel
-            text = path.read_text() if path.exists() else ""
+            text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
             if re.search(pattern, text) is None:
                 failures.append(f"{sdk}: explicit route delegation lost {label} in {rel}")
                 ok = False
@@ -964,7 +964,7 @@ def check_release_versions(root: Path, spec: dict) -> list[str]:
         if not path.exists():
             failures.append(f"release version: missing {relative}")
             return ""
-        return path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8", errors="replace")
 
     def match(relative: str, pattern: str) -> str | None:
         found = re.search(pattern, text(relative), flags=re.MULTILINE | re.DOTALL)
@@ -1117,7 +1117,7 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
             if not path.exists():
                 failures.append(f"{sdk}: missing source file {rel}")
                 continue
-            blob_parts.append(path.read_text(encoding="utf-8"))
+            blob_parts.append(path.read_text(encoding="utf-8", errors="replace"))
         if not blob_parts:
             continue
         raw = "\n".join(blob_parts)
@@ -1242,6 +1242,22 @@ def self_test() -> int:
     import shutil
     import tempfile
 
+    # The fixtures intentionally mutate files containing Unicode. pathlib uses
+    # the Windows ANSI code page when encoding is omitted, which can corrupt a
+    # fixture before the gate gets a chance to inspect it.
+    original_write_text = Path.write_text
+
+    def write_fixture_text(path: Path, data: str, encoding=None, errors=None, newline=None):
+        return original_write_text(
+            path,
+            data,
+            encoding=encoding or "utf-8",
+            errors=errors or "strict",
+            newline=newline,
+        )
+
+    Path.write_text = write_fixture_text
+
     spec = load_spec()
     problems = []
 
@@ -1325,7 +1341,7 @@ def self_test() -> int:
         # A package-version drift must stop every publish workflow that invokes
         # this gate, before any registry credential becomes reachable.
         victim = fake_root / "sdks/js/package.json"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(
             text.replace(f'"version": "{spec["version"]}"', '"version": "0.0.0"', 1)
         )
@@ -1336,7 +1352,7 @@ def self_test() -> int:
 
         # Delete a header this SDK really reads.
         victim = fake_root / "sdks/rust/src/meta.rs"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(text.replace('"x-nr-response-cache-age",\n', "", 1))
         failures = check(root=fake_root)
         if not any("x-nr-response-cache-age" in f and "rust" in f for f in failures):
@@ -1348,7 +1364,7 @@ def self_test() -> int:
         # Delete one native streaming helper. Streaming is a public capability,
         # so a buffered-only regression must not pass the shared gate.
         victim = fake_root / "sdks/go/stream.go"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(text.replace("MessagesStream(", "RemovedMessagesStream(", 1))
         failures = check(root=fake_root)
         if not any("messagesStream" in f and "go" in f for f in failures):
@@ -1358,7 +1374,7 @@ def self_test() -> int:
         # Java's native metadata surface is additive to openai-java. Losing a
         # named native helper must not hide behind the vendor factory.
         victim = fake_root / "sdks/java/src/main/java/ai/nrouter/sdk/NRouterHttpClient.java"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(
             text.replace(
                 "public NRouterHttpResponse embeddings(",
@@ -1387,7 +1403,7 @@ def self_test() -> int:
         # A path-only gate would miss this because the generic transport can
         # still send arbitrary paths; completeness requires the public helper.
         victim = fake_root / "sdks/go/client.go"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(
             text.replace(
                 "func (c *Client) ImagesGenerations",
@@ -1405,7 +1421,7 @@ def self_test() -> int:
         # JS owns its multimodal transport. Losing one of those helpers must
         # fail even though the inherited OpenAI client still has other routes.
         victim = fake_root / "sdks/js/src/multimodal.ts"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(text.replace("async speech(", "async removedSpeech(", 1))
         failures = check(root=fake_root)
         if not any("/v1/audio/speech" in f and "js" in f for f in failures):
@@ -1428,7 +1444,7 @@ def self_test() -> int:
         # SDK's native lane,
         # not one generic "extends OpenAI" waiver for the whole SDK.
         victim = fake_root / "sdks/js/src/client.ts"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(
             text.replace(
                 'OpenAI["completions"]["create"]',
@@ -1457,7 +1473,7 @@ def self_test() -> int:
         victim.write_text(text)
 
         victim = fake_root / "sdks/js/src/chat.ts"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(
             text.replace(
                 "messagesWire ? MESSAGES_PATH : CHAT_PATH,",
@@ -1473,7 +1489,7 @@ def self_test() -> int:
         # Python's video helpers are native additions to the inherited OpenAI
         # client. A deleted helper must not hide behind that inheritance seam.
         victim = fake_root / "sdks/python/nroutersdk/client.py"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(
             text.replace("def download_content(", "def removed_download_content(", 1)
         )
@@ -1524,7 +1540,7 @@ def self_test() -> int:
         # a streaming helper or generic transport elsewhere must not satisfy
         # the buffered route cell.
         victim = fake_root / "sdks/go/client.go"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(
             text.replace(
                 'return c.Post(ctx, "/chat/completions", body)',
@@ -1614,7 +1630,7 @@ def self_test() -> int:
         victim.write_text(text)
 
         victim = fake_root / "sdks/r/R/client.R"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(
             text.replace(
                 'retrieve_video = paste0("/videos/", segment(id))',
@@ -1628,7 +1644,7 @@ def self_test() -> int:
         victim.write_text(text)
 
         victim = fake_root / "sdks/js/src/multimodal.ts"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(
             text.replace(
                 "`/videos/${encodePathSegment(id, 'video id')}`",
@@ -1645,7 +1661,7 @@ def self_test() -> int:
         # delegation seam must invalidate all route-cell evidence, not merely
         # the base-URL check.
         victim = fake_root / "sdks/android/src/main/kotlin/ai/nrouter/sdk/android/NRouterAndroid.kt"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(text.replace("ai.nrouter.sdk.NRouter", "removed.sdk.NRouter"))
         failures = check(root=fake_root)
         if not any("/v1/chat/completions" in f and "android" in f for f in failures):
@@ -1656,7 +1672,7 @@ def self_test() -> int:
         # so one owner route drifting must invalidate the matching Android cell
         # rather than leaving all 15 green behind one shared class symbol.
         victim = fake_root / "sdks/kotlin/src/main/kotlin/ai/nrouter/sdk/NRouter.kt"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(
             text.replace(
                 'post("/images/generations", body)',
@@ -1671,10 +1687,10 @@ def self_test() -> int:
 
         # Delete an error code this SDK really maps.
         victim = fake_root / "sdks/dart/lib/src/errors.dart"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(text.replace("'guardrail_blocked'", "'REMOVED'"))
         stream_victim = fake_root / "sdks/dart/lib/src/client.dart"
-        stream_text = stream_victim.read_text()
+        stream_text = stream_victim.read_text(encoding="utf-8")
         stream_victim.write_text(
             stream_text.replace("'guardrail_blocked'", "'REMOVED'")
         )
@@ -1688,7 +1704,7 @@ def self_test() -> int:
 
         # Plant a retired spelling.
         victim = fake_root / "sdks/swift/Sources/NRouter/NRouter.swift"
-        text = victim.read_text()
+        text = victim.read_text(encoding="utf-8")
         victim.write_text(text + f"\n// {RETIRED[0]}\n")
         if not any("retired spelling" in f for f in check(root=fake_root)):
             problems.append("a retired spelling in a real SDK did not fail the check")
@@ -1698,7 +1714,7 @@ def self_test() -> int:
         # ships, so a floor changed in the nested one alone is invisible.
         victim = fake_root / "sdks/swift/Package.swift"
         if victim.exists():
-            text = victim.read_text()
+            text = victim.read_text(encoding="utf-8")
             victim.write_text(text.replace(".macOS(.v12)", ".macOS(.v13)"))
             if not any("platform floors differ" in f for f in check(root=fake_root)):
                 problems.append(
@@ -1710,7 +1726,7 @@ def self_test() -> int:
         # the package at all.
         shipping = fake_root / "Package.swift"
         if shipping.exists():
-            text = shipping.read_text()
+            text = shipping.read_text(encoding="utf-8")
             shipping.unlink()
             if not any(
                 "reads the manifest from the repository root" in f

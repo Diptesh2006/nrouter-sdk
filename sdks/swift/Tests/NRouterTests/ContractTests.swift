@@ -11,6 +11,14 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(NRouter.keyPrefix, "sk-nrouter-")
     }
 
+    func testUsesMessagesWire() {
+        XCTAssertTrue(NRouter.usesMessagesWire("claude-3-5-sonnet-20241022"))
+        XCTAssertTrue(NRouter.usesMessagesWire("anthropic/claude-3-haiku"))
+        XCTAssertTrue(NRouter.usesMessagesWire("my-model", provider: "anthropic"))
+        XCTAssertFalse(NRouter.usesMessagesWire("gpt-4o"))
+        XCTAssertFalse(NRouter.usesMessagesWire("meta-llama/llama-3"))
+    }
+
     func testEverySpecHeaderIsRead() {
         let expected = [
             "x-nr-request-id", "x-nr-request-cost", "x-nr-cost-status", "x-nr-model",

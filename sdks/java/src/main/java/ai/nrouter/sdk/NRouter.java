@@ -38,6 +38,25 @@ public final class NRouter {
     private NRouter() {
     }
 
+    /** True when a model family is served on /v1/messages rather than /v1/chat/completions. */
+    public static boolean usesMessagesWire(String model) {
+        return usesMessagesWire(model, null);
+    }
+
+    /** True when a model family is served on /v1/messages rather than /v1/chat/completions. */
+    public static boolean usesMessagesWire(String model, String provider) {
+        if (model != null) {
+            String m = model.toLowerCase();
+            if (m.contains("claude") || m.contains("anthropic") || m.contains("haiku") || m.contains("sonnet") || m.contains("opus")) {
+                return true;
+            }
+        }
+        if (provider != null && provider.toLowerCase().contains("anthropic")) {
+            return true;
+        }
+        return false;
+    }
+
     /** Reads the API key from the {@code NROUTER_API_KEY} environment variable. */
     public static OpenAIClient create() {
         return create(System.getenv(ENV_KEY));

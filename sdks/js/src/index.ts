@@ -97,6 +97,11 @@ export {
   toAnthropicMessagesRequest,
   toOpenAIChatCompletion,
   isAnthropicMessageResponse,
+  createAnthropicSSETranslator,
+  extractNRouterHeaders,
+  toFinishReason,
+  toOpenAIUsage,
+  type OpenAIUsage,
   type AnthropicRequestResult,
 } from './chat';
 

@@ -7,6 +7,14 @@ test_that("constants match the spec", {
   expect_equal(nrouter_key_prefix(), "sk-nrouter-")
 })
 
+test_that("nrouter_uses_messages_wire routes correctly", {
+  expect_true(nrouter_uses_messages_wire("claude-3-5-sonnet-20241022"))
+  expect_true(nrouter_uses_messages_wire("anthropic/claude-3-haiku"))
+  expect_true(nrouter_uses_messages_wire("my-model", provider = "anthropic"))
+  expect_false(nrouter_uses_messages_wire("gpt-4o"))
+  expect_false(nrouter_uses_messages_wire("meta-llama/llama-3"))
+})
+
 test_that("every spec header is read", {
   expected <- c(
     "x-nr-request-id", "x-nr-request-cost", "x-nr-cost-status", "x-nr-model",

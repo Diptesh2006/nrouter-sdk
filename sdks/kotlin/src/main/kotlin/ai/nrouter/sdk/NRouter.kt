@@ -498,6 +498,20 @@ public class NRouter @JvmOverloads constructor(
         /** Every customer key carries this prefix. */
         public const val KEY_PREFIX: String = "sk-nrouter-"
 
+        /** True when a model family is served on /v1/messages rather than /v1/chat/completions. */
+        @JvmStatic
+        @JvmOverloads
+        public fun usesMessagesWire(model: String, provider: String? = null): Boolean {
+            val m = model.lowercase()
+            if (m.contains("claude") || m.contains("anthropic") || m.contains("haiku") || m.contains("sonnet") || m.contains("opus")) {
+                return true
+            }
+            if (provider?.lowercase()?.contains("anthropic") == true) {
+                return true
+            }
+            return false
+        }
+
         /**
          * TCP and TLS handshake with the gateway.
          *

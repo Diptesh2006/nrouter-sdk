@@ -16,6 +16,14 @@ void main() {
       expect(NRouter.keyPrefix, 'sk-nrouter-');
     });
 
+    test('usesMessagesWire', () {
+      expect(NRouter.usesMessagesWire('claude-3-5-sonnet-20241022'), isTrue);
+      expect(NRouter.usesMessagesWire('anthropic/claude-3-haiku'), isTrue);
+      expect(NRouter.usesMessagesWire('my-model', provider: 'anthropic'), isTrue);
+      expect(NRouter.usesMessagesWire('gpt-4o'), isFalse);
+      expect(NRouter.usesMessagesWire('meta-llama/llama-3'), isFalse);
+    });
+
     test('every spec header is read', () {
       const expected = [
         'x-nr-request-id',

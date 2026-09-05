@@ -64,6 +64,25 @@ pub mod sampling;
 pub use errors::{ErrorBody, NRouterError};
 pub use meta::{ResponseMeta, HEADER_NAMES};
 
+/// True when a model family is served on /v1/messages rather than /v1/chat/completions.
+pub fn uses_messages_wire(model: &str, provider: Option<&str>) -> bool {
+    let m = model.to_ascii_lowercase();
+    if m.contains("claude")
+        || m.contains("anthropic")
+        || m.contains("haiku")
+        || m.contains("sonnet")
+        || m.contains("opus")
+    {
+        return true;
+    }
+    if let Some(p) = provider {
+        if p.to_ascii_lowercase().contains("anthropic") {
+            return true;
+        }
+    }
+    false
+}
+
 use async_openai::{config::OpenAIConfig, middleware::ReqwestService, Client as OpenAIClient};
 
 /// The gateway's customer surface. A dynamic value: override it for stage.
@@ -141,3 +160,18 @@ pub fn client_with_key_base_url_and_http_client(
     Ok(OpenAIClient::build(transport.clone(), config)
         .with_http_service(ReqwestService::new(transport)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_uses_messages_wire() {
+        assert!(uses_messages_wire("claude-3-5-sonnet-20241022", None));
+        assert!(uses_messages_wire("anthropic/claude-3-haiku", None));
+        assert!(uses_messages_wire("custom-model", Some("anthropic")));
+        assert!(!uses_messages_wire("gpt-4o", None));
+        assert!(!uses_messages_wire("llama-3", Some("meta")));
+    }
+}
+

@@ -31,7 +31,7 @@ import {
 } from './errors';
 import { buildSamplingParams } from './sampling';
 import { buildChatBody } from './options';
-import type { NRouterCallOptions, NRouterResponse, ResponseMeta } from './types';
+import { HEADER_NAMES, type NRouterCallOptions, type NRouterResponse, type ResponseMeta } from './types';
 
 /** The gateway's buffered chat endpoint. Path only — the runner owns the base URL. */
 const CHAT_PATH = '/chat/completions';
@@ -647,7 +647,7 @@ export function toOpenAIChatCompletion(
       {
         index: 0,
         message,
-        finish_reason: toFinishReason(doc['stop_reason']),
+        finish_reason: toFinishReason(doc['stop_reason']) ?? 'stop',
       },
     ],
   };
@@ -667,10 +667,27 @@ export function toOpenAIChatCompletion(
  * reason answers `stop` rather than the raw Anthropic token, because leaking a
  * provider-specific string onto a customer-visible field is gateway §4f gate 9.
  */
-function toFinishReason(stopReason: unknown): string {
-  if (stopReason === 'max_tokens') return 'length';
-  if (stopReason === 'tool_use') return 'tool_calls';
-  return 'stop';
+export function toFinishReason(stopReason: unknown): string | null {
+  if (stopReason == null) return null;
+  switch (String(stopReason)) {
+    case 'max_tokens':
+      return 'length';
+    case 'tool_use':
+      return 'tool_calls';
+    case 'end_turn':
+    case 'stop_sequence':
+    case 'pause_turn':
+    case 'refusal':
+      return 'stop';
+    default:
+      return 'stop';
+  }
+}
+
+export interface OpenAIUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
 }
 
 /**
@@ -683,9 +700,9 @@ function toFinishReason(stopReason: unknown): string {
  * Cost itself still comes from the gateway's `x-nr-request-cost` header; this
  * function computes no money.
  */
-function toOpenAIUsage(
+export function toOpenAIUsage(
   usage: unknown,
-): { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null {
+): OpenAIUsage | null {
   const u = asObject(usage);
   if (u === null) return null;
 
@@ -1200,3 +1217,269 @@ function describe(reason: unknown): string {
   }
   return 'unknown failure';
 }
+
+/**
+ * Extract all `x-nr-*` headers from a Response, Headers instance, or header map.
+ * Normalized to lowercase keys for reliable cross-platform forwarding.
+ */
+export function extractNRouterHeaders(
+  source: Response | Headers | Record<string, string | string[] | undefined> | HeaderSource | null | undefined,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!source) return result;
+
+  const res = source as { headers?: Headers };
+  if (res.headers && typeof res.headers.forEach === 'function') {
+    res.headers.forEach((val, key) => {
+      if (key.toLowerCase().startsWith('x-nr-')) {
+        result[key.toLowerCase()] = val;
+      }
+    });
+    return result;
+  }
+
+  const h = source as Headers;
+  if (typeof h.forEach === 'function') {
+    h.forEach((val, key) => {
+      if (key.toLowerCase().startsWith('x-nr-')) {
+        result[key.toLowerCase()] = val;
+      }
+    });
+    return result;
+  }
+
+  const hs = source as HeaderSource;
+  if (typeof hs.get === 'function') {
+    for (const name of HEADER_NAMES) {
+      const v = hs.get(name);
+      if (v !== null && v !== undefined) {
+        result[name.toLowerCase()] = v;
+      }
+    }
+    return result;
+  }
+
+  if (typeof source === 'object') {
+    for (const [k, v] of Object.entries(source)) {
+      if (k.toLowerCase().startsWith('x-nr-') && typeof v === 'string') {
+        result[k.toLowerCase()] = v;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Create a Web-standard TransformStream that translates Anthropic Messages SSE chunks
+ * into OpenAI-compatible chat.completion.chunk SSE frames.
+ *
+ * This allows streaming Anthropic models through standard OpenAI SSE parsers (such as
+ * the nRouter Playground frontend) without empty boxes or missing deltas.
+ */
+export function createAnthropicSSETranslator(opts: {
+  requestedModel?: string;
+  requestId?: string | null;
+} = {}): TransformStream<Uint8Array, Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  let buffer = '';
+  let id = `chatcmpl-${opts.requestId || 'nrouter'}`;
+  let model = opts.requestedModel ?? '';
+  const created = Math.floor(Date.now() / 1000);
+
+  let roleChunkSent = false;
+  let finishSent = false;
+  let doneSent = false;
+
+  let inputUsage: Record<string, unknown> | null = null;
+  let outputUsage: Record<string, unknown> | null = null;
+  let finishReason: string | null = null;
+
+  const toolSlots = new Map<number, number>();
+  let nextToolIndex = 0;
+
+  const frame = (payload: unknown): Uint8Array =>
+    encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+
+  const chunk = (delta: Record<string, unknown>, finish: string | null): Record<string, unknown> => ({
+    id,
+    object: 'chat.completion.chunk',
+    created,
+    model,
+    choices: [{ index: 0, delta, finish_reason: finish }],
+  });
+
+  const emitRoleOnce = (c: TransformStreamDefaultController<Uint8Array>) => {
+    if (roleChunkSent) return;
+    roleChunkSent = true;
+    c.enqueue(frame(chunk({ role: 'assistant' }, null)));
+  };
+
+  const emitFinishOnce = (c: TransformStreamDefaultController<Uint8Array>) => {
+    if (finishSent) return;
+    finishSent = true;
+    emitRoleOnce(c);
+    c.enqueue(frame(chunk({}, finishReason ?? 'stop')));
+  };
+
+  const emitTerminal = (c: TransformStreamDefaultController<Uint8Array>) => {
+    if (doneSent) return;
+    emitFinishOnce(c);
+    const usage = toOpenAIUsage({ ...(inputUsage ?? {}), ...(outputUsage ?? {}) });
+    if (usage) {
+      c.enqueue(
+        frame({ id, object: 'chat.completion.chunk', created, model, choices: [], usage }),
+      );
+    }
+    doneSent = true;
+    c.enqueue(encoder.encode('data: [DONE]\n\n'));
+  };
+
+  const handleData = (
+    data: string,
+    c: TransformStreamDefaultController<Uint8Array>,
+  ): void => {
+    const payload = data.trim();
+    if (!payload) return;
+    if (payload === '[DONE]') {
+      emitTerminal(c);
+      return;
+    }
+
+    let json: Record<string, unknown>;
+    try {
+      json = JSON.parse(payload) as Record<string, unknown>;
+    } catch {
+      c.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      return;
+    }
+
+    if (json['error'] !== undefined) {
+      c.enqueue(frame(json));
+      return;
+    }
+
+    if (json['object'] === 'chat.completion.chunk' || Array.isArray(json['choices'])) {
+      c.enqueue(frame(json));
+      return;
+    }
+
+    switch (json['type']) {
+      case 'message_start': {
+        const msg = (json['message'] ?? {}) as Record<string, unknown>;
+        if (typeof msg['id'] === 'string' && msg['id']) id = `chatcmpl-${msg['id']}`;
+        if (typeof msg['model'] === 'string' && msg['model']) model = msg['model'];
+        if (msg['usage'] && typeof msg['usage'] === 'object') {
+          inputUsage = msg['usage'] as Record<string, unknown>;
+        }
+        emitRoleOnce(c);
+        return;
+      }
+
+      case 'content_block_start': {
+        const block = (json['content_block'] ?? {}) as Record<string, unknown>;
+        if (block['type'] !== 'tool_use') return;
+        const anthropicIndex = typeof json['index'] === 'number' && Number.isFinite(json['index']) ? json['index'] : 0;
+        const slot = nextToolIndex++;
+        toolSlots.set(anthropicIndex, slot);
+        emitRoleOnce(c);
+        c.enqueue(
+          frame(
+            chunk(
+              {
+                tool_calls: [
+                  {
+                    index: slot,
+                    id: typeof block['id'] === 'string' ? block['id'] : '',
+                    type: 'function',
+                    function: {
+                      name: typeof block['name'] === 'string' ? block['name'] : '',
+                      arguments: '',
+                    },
+                  },
+                ],
+              },
+              null,
+            ),
+          ),
+        );
+        return;
+      }
+
+      case 'content_block_delta': {
+        const delta = (json['delta'] ?? {}) as Record<string, unknown>;
+
+        if (delta['type'] === 'text_delta' && typeof delta['text'] === 'string') {
+          if (!delta['text']) return;
+          emitRoleOnce(c);
+          c.enqueue(frame(chunk({ content: delta['text'] }, null)));
+          return;
+        }
+
+        if (delta['type'] === 'input_json_delta' && typeof delta['partial_json'] === 'string') {
+          const idx = typeof json['index'] === 'number' && Number.isFinite(json['index']) ? json['index'] : 0;
+          const slot = toolSlots.get(idx);
+          if (slot === undefined) return;
+          emitRoleOnce(c);
+          c.enqueue(
+            frame(
+              chunk(
+                {
+                  tool_calls: [
+                    { index: slot, function: { arguments: delta['partial_json'] } },
+                  ],
+                },
+                null,
+              ),
+            ),
+          );
+          return;
+        }
+
+        return;
+      }
+
+      case 'message_delta': {
+        const delta = (json['delta'] ?? {}) as Record<string, unknown>;
+        finishReason = toFinishReason(delta['stop_reason']) ?? finishReason;
+        if (json['usage'] && typeof json['usage'] === 'object') {
+          outputUsage = json['usage'] as Record<string, unknown>;
+        }
+        emitFinishOnce(c);
+        return;
+      }
+
+      case 'message_stop':
+        emitTerminal(c);
+        return;
+
+      case 'ping':
+      case 'content_block_stop':
+        return;
+
+      default:
+        return;
+    }
+  };
+
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(bytes, controller) {
+      buffer += decoder.decode(bytes, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        handleData(trimmed.slice(5), controller);
+      }
+    },
+    flush(controller) {
+      const rest = buffer.trim();
+      if (rest.startsWith('data:')) handleData(rest.slice(5), controller);
+      emitTerminal(controller);
+    },
+  });
+}
+

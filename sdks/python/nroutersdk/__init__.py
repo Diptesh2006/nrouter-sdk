@@ -25,7 +25,7 @@ from nroutersdk._errors import (
 from nroutersdk._response import nRouterResponseMeta
 from nroutersdk._unsupported import nRouterUnsupportedError
 from nroutersdk._version import __version__
-from nroutersdk.client import DEFAULT_MODEL, AsyncnRouter, nRouter
+from nroutersdk.client import DEFAULT_MODEL, AsyncnRouter, nRouter, uses_messages_wire
 from nroutersdk.memory import Memory, MemoryStore, create_array_store, create_memory
 from nroutersdk.prompts import (
     PROMPT_WIRE_FIELDS,
@@ -70,5 +70,6 @@ __all__ = [
     "prompt_template",
     "prompt_variables",
     "system_variable_conflicts",
+    "uses_messages_wire",
     "with_variables",
 ]

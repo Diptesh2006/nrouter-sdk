@@ -30,6 +30,18 @@ public struct NRouter: Sendable {
     /// Every customer key carries this prefix.
     public static let keyPrefix = "sk-nrouter-"
 
+    /// True when a model family is served on /v1/messages rather than /v1/chat/completions.
+    public static func usesMessagesWire(_ model: String, provider: String? = nil) -> Bool {
+        let m = model.lowercased()
+        if m.contains("claude") || m.contains("anthropic") || m.contains("haiku") || m.contains("sonnet") || m.contains("opus") {
+            return true
+        }
+        if let p = provider?.lowercased(), p.contains("anthropic") {
+            return true
+        }
+        return false
+    }
+
     // MARK: - Transport deadlines
     //
     // This client used to be built on `URLSession.shared`, which carries

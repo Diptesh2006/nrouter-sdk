@@ -39,6 +39,15 @@ class ContractTest {
     }
 
     @Test
+    fun `usesMessagesWire routes correctly`() {
+        assertTrue(NRouter.usesMessagesWire("claude-3-5-sonnet-20241022"))
+        assertTrue(NRouter.usesMessagesWire("anthropic/claude-3-haiku"))
+        assertTrue(NRouter.usesMessagesWire("my-model", "anthropic"))
+        assertFalse(NRouter.usesMessagesWire("gpt-4o"))
+        assertFalse(NRouter.usesMessagesWire("meta-llama/llama-3"))
+    }
+
+    @Test
     fun `every spec header is read`() {
         val expected = listOf(
             "x-nr-request-id", "x-nr-request-cost", "x-nr-cost-status", "x-nr-model",

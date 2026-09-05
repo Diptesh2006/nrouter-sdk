@@ -8,6 +8,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -116,5 +117,14 @@ class NRouterTest {
         assertThrows(IllegalArgumentException.class, () -> NRouter.buildSamplingParams(true, "gpt-4", null, -0.5, 0.5));
         assertThrows(IllegalArgumentException.class, () -> NRouter.buildSamplingParams(true, "gpt-4", null, 0.7, -0.1));
         assertThrows(IllegalArgumentException.class, () -> NRouter.buildSamplingParams(true, "gpt-4", null, Double.NaN, 0.5));
+    }
+
+    @Test
+    void testUsesMessagesWire() {
+        assertTrue(NRouter.usesMessagesWire("claude-3-5-sonnet-20241022"));
+        assertTrue(NRouter.usesMessagesWire("anthropic/claude-3-haiku"));
+        assertTrue(NRouter.usesMessagesWire("my-model", "anthropic"));
+        assertFalse(NRouter.usesMessagesWire("gpt-4o"));
+        assertFalse(NRouter.usesMessagesWire("meta-llama/llama-3"));
     }
 }

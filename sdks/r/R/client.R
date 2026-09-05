@@ -15,6 +15,22 @@ nrouter_env_key <- function() "NROUTER_API_KEY"
 #' @export
 nrouter_key_prefix <- function() "sk-nrouter-"
 
+#' True when a model family is served on /v1/messages rather than /v1/chat/completions
+#' @param model The model identifier string.
+#' @param provider Optional provider name string.
+#' @return TRUE when the model uses the messages wire, FALSE otherwise.
+#' @export
+nrouter_uses_messages_wire <- function(model, provider = NULL) {
+  m <- tolower(as.character(model))
+  if (grepl("claude|anthropic|haiku|sonnet|opus", m)) {
+    return(TRUE)
+  }
+  if (!is.null(provider) && grepl("anthropic", tolower(as.character(provider)))) {
+    return(TRUE)
+  }
+  FALSE
+}
+
 # --- transport deadlines -----------------------------------------------------
 #
 # \pkg{httr} passes no timeout to libcurl unless one is given, and libcurl's own

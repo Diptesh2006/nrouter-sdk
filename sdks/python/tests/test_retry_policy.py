@@ -19,7 +19,14 @@ out on the wire.
 
 from __future__ import annotations
 
-import httpx2 as httpx
+try:
+    import openai._base_client as _obc
+    httpx = _obc.httpx
+except (ImportError, AttributeError):
+    try:
+        import httpx
+    except ImportError:
+        import httpx2 as httpx
 import pytest
 
 from nroutersdk import AsyncnRouter, nRouter, nRouterBudgetExceededError

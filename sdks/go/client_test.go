@@ -1256,3 +1256,22 @@ func TestWithHTTPClientFullyOverridesTheDefaultTransport(t *testing.T) {
 		t.Error("WithHTTPClient(nil) disarmed the default transport")
 	}
 }
+
+func TestUsesMessagesWire(t *testing.T) {
+	if !UsesMessagesWire("claude-3-5-sonnet-20241022") {
+		t.Error("expected true for claude model")
+	}
+	if !UsesMessagesWire("anthropic/claude-3-haiku") {
+		t.Error("expected true for anthropic model")
+	}
+	if !UsesMessagesWire("my-model", "anthropic") {
+		t.Error("expected true for anthropic provider attribution")
+	}
+	if UsesMessagesWire("gpt-4o") {
+		t.Error("expected false for gpt-4o")
+	}
+	if UsesMessagesWire("meta-llama/llama-3") {
+		t.Error("expected false for llama-3")
+	}
+}
+

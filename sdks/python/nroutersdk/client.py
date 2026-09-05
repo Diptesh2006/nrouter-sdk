@@ -91,6 +91,16 @@ _KEY_PREFIX = "sk-nrouter-"
 #: `tests/test_defaults.py` and by `conformance/source_defaults.py`.
 DEFAULT_MODEL = "gpt-5.4-mini"
 
+
+def uses_messages_wire(model: str, provider: str | None = None) -> bool:
+    """True when a model family is served by the gateway on /v1/messages rather
+    than /v1/chat/completions."""
+    m = (model or "").lower()
+    if any(k in m for k in ("claude", "anthropic", "haiku", "sonnet", "opus")):
+        return True
+    return "anthropic" in (provider or "").lower()
+
+
 # ---------------------------------------------------------------------------
 # Transport defaults
 # ---------------------------------------------------------------------------

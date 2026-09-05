@@ -77,6 +77,22 @@ class NRouter {
   /// Every customer key carries this prefix.
   static const String keyPrefix = 'sk-nrouter-';
 
+  /// True when a model family is served on /v1/messages rather than /v1/chat/completions.
+  static bool usesMessagesWire(String model, {String? provider}) {
+    final m = model.toLowerCase();
+    if (m.contains('claude') ||
+        m.contains('anthropic') ||
+        m.contains('haiku') ||
+        m.contains('sonnet') ||
+        m.contains('opus')) {
+      return true;
+    }
+    if (provider != null && provider.toLowerCase().contains('anthropic')) {
+      return true;
+    }
+    return false;
+  }
+
   // --- transport deadlines --------------------------------------------------
   //
   // `package:http` applies NO timeout of any kind: a `Client` that connects to

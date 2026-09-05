@@ -297,6 +297,23 @@ func (c Client) String() string {
 // GoString keeps %#v redacted too; %v and %#v take different paths in fmt.
 func (c Client) GoString() string { return c.String() }
 
+// UsesMessagesWire returns true when a model family is served on /v1/messages
+// rather than /v1/chat/completions (e.g. Claude / Anthropic family models).
+func UsesMessagesWire(model string, provider ...string) bool {
+	m := strings.ToLower(model)
+	if strings.Contains(m, "claude") ||
+		strings.Contains(m, "anthropic") ||
+		strings.Contains(m, "haiku") ||
+		strings.Contains(m, "sonnet") ||
+		strings.Contains(m, "opus") {
+		return true
+	}
+	if len(provider) > 0 && strings.Contains(strings.ToLower(provider[0]), "anthropic") {
+		return true
+	}
+	return false
+}
+
 // ChatCompletions posts to /chat/completions.
 func (c *Client) ChatCompletions(ctx context.Context, body any) (*Response[map[string]any], error) {
 	return c.Post(ctx, "/chat/completions", body)

@@ -6,7 +6,19 @@ import os
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
-import httpx2 as httpx
+try:
+    import openai._base_client as _oai_base
+    _httpx = getattr(_oai_base, "httpx", None)
+except Exception:
+    _httpx = None
+
+if _httpx is None:
+    try:
+        import httpx2 as _httpx
+    except ImportError:
+        import httpx as _httpx  # type: ignore[no-redef]
+
+httpx = _httpx
 from openai import APIStatusError
 from openai import AsyncOpenAI as _AsyncOpenAI
 from openai import OpenAI as _OpenAI

@@ -3,6 +3,8 @@ Type: Package
 Title: OpenAI-Compatible SDK for the nRouter LLM Gateway
 Version: 3.0.0
 Authors@R: person("nRouter", email = "hello@nrouter.ai", role = c("aut", "cre"))
+Author: nRouter [aut, cre]
+Maintainer: nRouter <hello@nrouter.ai>
 Description: A client for the nRouter LLM gateway (<https://nrouter.ai>), an
     OpenAI-compatible API giving one key access to models across six provider
     clouds. No official OpenAI SDK exists for R, so this package calls the HTTP

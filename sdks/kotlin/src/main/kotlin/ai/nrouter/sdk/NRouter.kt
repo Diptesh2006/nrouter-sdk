@@ -113,7 +113,8 @@ public class NRouter @JvmOverloads constructor(
         }
         val host = uri.host?.trim('[', ']')?.lowercase(java.util.Locale.ROOT)
             ?: throw NRouterError.Configuration("nRouter gateway URL must include a host")
-        val isLoopback = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0" || host.endsWith(".local")
+        val isLoopback = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0" || host.endsWith(".local") ||
+            runCatching { java.net.InetAddress.getByName(host).isLoopbackAddress }.getOrDefault(false)
         if (scheme == "http" && !isLoopback) {
             throw NRouterError.Configuration("nRouter gateway URL must use HTTPS; HTTP is allowed only for loopback development")
         }

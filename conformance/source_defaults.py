@@ -175,7 +175,7 @@ def check_source_defaults(root: Path = ROOT) -> list[str]:
             # A vanished source must not read as a pass.
             failures.append(f"{sdk}: {rel} is missing — its default model cannot be checked")
             continue
-        match = pattern.search(path.read_text())
+        match = pattern.search(path.read_text(encoding="utf-8"))
         if match is None:
             failures.append(
                 f"{sdk}: no default model found in {rel}. Either the declaration moved "

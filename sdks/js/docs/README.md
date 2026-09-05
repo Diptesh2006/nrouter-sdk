@@ -14,6 +14,8 @@ signatures cannot: which of two plausible readings is the real one.
 | [memory.md](./memory.md) | Where conversation state lives, and what the gateway does not remember |
 | [test-coverage-and-issues.md](./test-coverage-and-issues.md) | What the permanent JS tests cover and which follow-up issues are tracked |
 | [live-sdk-agent-report.md](./live-sdk-agent-report.md) | What the local demo agent, UI and feature-spend probes verified against the live gateway |
+| [live-js-sdk-validation-2026-09-02.md](./live-js-sdk-validation-2026-09-02.md) | Dated JS-only validation matrix covering local tests, live gateway probes, dashboard-observed behavior and required follow-up |
+| [js-100-issue-evidence.md](./js-100-issue-evidence.md) | One hundred JS SDK hardening items with proof pointers, snippets and classification |
 
 ## The one shape everything else hangs off
 

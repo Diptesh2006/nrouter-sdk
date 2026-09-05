@@ -951,7 +951,7 @@ def strip_comments(text: str) -> str:
 
 
 def load_spec() -> dict:
-    return json.loads(SPEC.read_text())
+    return json.loads(SPEC.read_text(encoding="utf-8"))
 
 
 def check_release_versions(root: Path, spec: dict) -> list[str]:
@@ -964,7 +964,7 @@ def check_release_versions(root: Path, spec: dict) -> list[str]:
         if not path.exists():
             failures.append(f"release version: missing {relative}")
             return ""
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
 
     def match(relative: str, pattern: str) -> str | None:
         found = re.search(pattern, text(relative), flags=re.MULTILINE | re.DOTALL)
@@ -1083,7 +1083,7 @@ def check_swift_manifests(root: Path = ROOT) -> list[str]:
     def names(text: str, kind: str) -> set[str]:
         return set(re.findall(rf'\.{kind}\(\s*name:\s*"([^"]+)"', text))
 
-    a, b = shipping.read_text(), nested.read_text()
+    a, b = shipping.read_text(encoding="utf-8"), nested.read_text(encoding="utf-8")
 
     if platforms(a) != platforms(b):
         failures.append(
@@ -1117,7 +1117,7 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
             if not path.exists():
                 failures.append(f"{sdk}: missing source file {rel}")
                 continue
-            blob_parts.append(path.read_text())
+            blob_parts.append(path.read_text(encoding="utf-8"))
         if not blob_parts:
             continue
         raw = "\n".join(blob_parts)
@@ -1745,6 +1745,11 @@ def self_test() -> int:
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
+
+    if "--feature-report" in sys.argv:
+        from check_features import main as feature_report
+
+        return feature_report()
 
     failures = check()
     checked = len(SDK_SOURCES)

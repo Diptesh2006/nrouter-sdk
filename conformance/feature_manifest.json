@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "description": "Offline structural checks for the public SDK feature surface. Patterns are evidence hints, not live capability tests.",
+  "features": {
+    "model_discovery": {
+      "description": "Public access to the key-visible model catalogue.",
+      "patterns": ["/models", "models("]
+    },
+    "cache_metadata": {
+      "description": "Response cache controls or parsed cache outcome metadata.",
+      "patterns": ["x-nr-response-cache", "responseCache", "nrouter_cache"]
+    },
+    "request_metadata": {
+      "description": "Request ID, cost, and token metadata exposed from gateway headers.",
+      "patterns": ["x-nr-request-id", "requestId", "request_id"]
+    },
+    "streaming": {
+      "description": "Public streaming/SSE surface.",
+      "patterns": ["stream", "Stream", "Flow", "AsyncIterator"]
+    },
+    "timeout_retry_cancellation": {
+      "description": "Transport timeout/retry configuration and cancellation support.",
+      "patterns": ["timeout", "retry", "cancel", "abort", "context"]
+    }
+  },
+  "delegated": {
+    "android": "Delegates wire behavior to the Kotlin SDK.",
+    "java": {
+      "model_discovery": "Delegates model discovery to openai-java's models resource.",
+      "streaming": "Delegates streaming to openai-java's OpenAI-compatible resources.",
+      "timeout_retry_cancellation": "Delegates transport controls to openai-java's client builder."
+    }
+  }
+}

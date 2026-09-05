@@ -194,10 +194,10 @@ manual test findings.
 
 ## Requirements
 
-**Node 22 or newer**, declared in `engines`. That is the RUNTIME floor for
-anyone installing this package, not just for running its tests: `openai` 7 sets
-it and this package inherits it. Before 2.0.0 nothing declared a floor at all,
-so an unsupported runtime failed somewhere further in with a worse message.
+**Node 22.18 or newer**, declared in `engines`. That is the floor for this
+package because the test runner executes TypeScript tests directly through
+Node's native type stripping. Before 2.0.0 nothing declared a floor at all, so
+an unsupported runtime failed somewhere further in with a worse message.
 
 The dependency tree is deliberately **one package**. `openai` 7 has no
 dependencies of its own, where `openai` 4 pulled in 36 transitive packages —

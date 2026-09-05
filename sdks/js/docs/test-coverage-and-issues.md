@@ -24,7 +24,7 @@ Current coverage by file:
 | `sampling.test.ts` | 7 | Claude/OpenAI sampling rules and invalid sampling value refusal. |
 | `stream.test.ts` | 35 | SSE parsing, streaming chat, aborts, truncation detection, streaming errors and Claude/OpenAI stream translation. |
 
-Total: 284 named tests.
+Total: 325 named tests.
 
 ## Issues to track
 
@@ -33,9 +33,10 @@ Total: 284 named tests.
    TypeScript stripping support, so Node 22.16 fails before the tests run.
    Use Node 22.18+ or 23+ for local test runs.
 
-2. **The test command does not fail early with a clear Node-version message.**
-   `package.json` says `node >=22`, but the test runner needs a newer patch
-   line than that. Add a preflight check or tighten `engines.node`.
+2. **Resolved: the test command now fails early on unsupported Node 22 patch
+   versions.** `package.json`, `package-lock.json` and `test/smoke.js` now
+   require Node 22.18+ so the failure explains the runtime mismatch before the
+   TypeScript tests are loaded.
 
 3. **Permanent live gateway coverage is still small compared with the full SDK
    surface.** Most tests use fake transports so they are fast and deterministic.

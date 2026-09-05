@@ -18,6 +18,15 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const [major, minor] = process.versions.node.split(".").map(Number);
+if (major < 22 || (major === 22 && minor < 18)) {
+  console.error(
+    `Node ${process.versions.node} cannot run the TypeScript test files directly. ` +
+      "Use Node >=22.18, then rerun `npm test`.",
+  );
+  process.exit(1);
+}
+
 const files = fs
   .readdirSync(__dirname)
   .filter((name) => name.endsWith(".test.ts") || name.endsWith(".test.js"))

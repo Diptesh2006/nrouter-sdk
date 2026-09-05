@@ -8,6 +8,7 @@ const {
   DEFAULT_REQUEST_TIMEOUT_MS,
   ENV_KEY,
   KEY_PREFIX,
+  validateGatewayBaseUrl,
   HEADER_NAMES,
   metaFromHeaders,
   metaFromLookup,
@@ -37,6 +38,7 @@ const {
   parseErrorBody,
   parseRetryAfter,
   MAX_RETRY_AFTER_SECONDS,
+  computeJitteredBackoff,
   withResponse,
   ERROR_CLASS_BY_CODE,
   ERROR_STATUS_BY_CODE,
@@ -59,6 +61,7 @@ const {
   toOpenAIUsage,
   createMemory,
   createArrayStore,
+  slidingWindow,
   PROMPT_TEMPLATE_ID_FIELD,
   PROMPT_VARIABLES_FIELD,
   PROMPT_WIRE_FIELDS,
@@ -69,6 +72,7 @@ const {
   promptExtraBody,
   applyPrompt,
   systemVariableConflicts,
+  renderPrompt,
   chatText,
   compareError,
   COMPARE_ERROR_KEY,
@@ -77,6 +81,8 @@ const {
   Multimodal,
   dataUrlToPart,
   MULTIMODAL_ENDPOINTS,
+  VALID_AUDIO_FORMATS,
+  validateAudioFormat,
 } = cjs;
 
 export {
@@ -87,6 +93,7 @@ export {
   DEFAULT_REQUEST_TIMEOUT_MS,
   ENV_KEY,
   KEY_PREFIX,
+  validateGatewayBaseUrl,
   HEADER_NAMES,
   metaFromHeaders,
   metaFromLookup,
@@ -116,6 +123,7 @@ export {
   parseErrorBody,
   parseRetryAfter,
   MAX_RETRY_AFTER_SECONDS,
+  computeJitteredBackoff,
   withResponse,
   ERROR_CLASS_BY_CODE,
   ERROR_STATUS_BY_CODE,
@@ -138,6 +146,7 @@ export {
   toOpenAIUsage,
   createMemory,
   createArrayStore,
+  slidingWindow,
   PROMPT_TEMPLATE_ID_FIELD,
   PROMPT_VARIABLES_FIELD,
   PROMPT_WIRE_FIELDS,
@@ -148,6 +157,7 @@ export {
   promptExtraBody,
   applyPrompt,
   systemVariableConflicts,
+  renderPrompt,
   chatText,
   compareError,
   COMPARE_ERROR_KEY,
@@ -156,6 +166,8 @@ export {
   Multimodal,
   dataUrlToPart,
   MULTIMODAL_ENDPOINTS,
+  VALID_AUDIO_FORMATS,
+  validateAudioFormat,
 };
 
 export default nRouter;

@@ -126,6 +126,26 @@ export interface Transport {
   request(request: TransportRequest): Promise<TransportResponse>;
 }
 
+/** Audio formats supported by the nRouter speech endpoint. */
+export const VALID_AUDIO_FORMATS = ['mp3', 'opus', 'aac', 'flac', 'wav', 'pcm'] as const;
+export type AudioFormat = (typeof VALID_AUDIO_FORMATS)[number];
+
+/** Validates an audio format string against the supported speech formats. */
+export function validateAudioFormat(format: string): void {
+  const clean = format.trim().toLowerCase();
+  if (!VALID_AUDIO_FORMATS.includes(clean as AudioFormat)) {
+    throw configurationError(
+      `Invalid audio format '${format}'; must be one of: ${VALID_AUDIO_FORMATS.join(', ')}`
+    );
+  }
+}
+
+export interface WaitForVideoOptions {
+  readonly pollIntervalMs?: number;
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignalLike;
+}
+
 /** Per-call knobs that are not part of the request body. */
 export interface CallOptions {
   readonly signal?: AbortSignalLike;
@@ -352,6 +372,9 @@ export class Multimodal {
     requireNonEmpty(params.model, 'model');
     requireNonEmpty(params.input, 'input');
     requireNonEmpty(params.voice, 'voice');
+    if (params.response_format) {
+      validateAudioFormat(params.response_format);
+    }
 
     // `defined()` around the named fields, not a bare spread. A property whose
     // value is `undefined` still OVERWRITES an earlier one in an object
@@ -462,6 +485,43 @@ export class Multimodal {
   async videoContent(id: string, options?: CallOptions): Promise<BinaryResult> {
     const raw = await this.send('GET', `/videos/${encodePathSegment(id, 'video id')}/content`, undefined, options);
     return requireBinary(raw, 'videoContent()');
+  }
+
+  /**
+   * Polls a video generation job until it completes ("completed", "succeeded"),
+   * fails ("failed", "cancelled"), or times out.
+   */
+  async waitForVideo(
+    id: string,
+    options?: WaitForVideoOptions
+  ): Promise<NRouterResponse<JsonObject>> {
+    const trimmed = id.trim();
+    if (!trimmed) {
+      throw configurationError('video id must not be empty');
+    }
+    const pollInterval = options?.pollIntervalMs ?? 500;
+    const timeout = options?.timeoutMs ?? 60_000;
+    const start = Date.now();
+
+    while (Date.now() - start < timeout) {
+      if (options?.signal?.aborted) {
+        throw transportError('Video polling aborted by signal');
+      }
+      const resp = await this.videoStatus(trimmed, options);
+      const status = String(resp.body?.status ?? '').toLowerCase();
+      if (status === 'completed' || status === 'succeeded') {
+        return resp;
+      }
+      if (status === 'failed' || status === 'cancelled') {
+        throw createError(`Video job ${trimmed} ended with status: ${status}`, {
+          code: 'video_failed',
+          status: 500,
+          meta: resp.meta,
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+    throw transportError(`Timeout waiting for video job ${trimmed}`);
   }
 
   /** POST /v1/embeddings. */

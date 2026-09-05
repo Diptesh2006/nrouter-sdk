@@ -54,3 +54,75 @@ public func systemVariableConflicts(_ variables: [String: Any]?) -> [String] {
     }
     return conflicts
 }
+
+public struct NRouterRenderPromptOptions: Sendable {
+    public let strict: Bool
+    public let systemVariables: [String: String]?
+
+    public init(strict: Bool = false, systemVariables: [String: String]? = nil) {
+        self.strict = strict
+        self.systemVariables = systemVariables
+    }
+}
+
+/// Safely renders a prompt template by interpolating `{{variable}}` or `{{ variable }}` tokens.
+///
+/// Security & resiliency features:
+/// - Single-pass replacement prevents recursive variable expansion loops.
+/// - Escape-safe: string appends avoid regex backreference and format injection.
+/// - Strict mode: throws `NRouterError.configuration` if any template variable is missing.
+/// - System variables: take precedence over caller variables matching gateway rules.
+public func renderPrompt(
+    _ template: String,
+    variables: [String: Any]? = nil,
+    options: NRouterRenderPromptOptions = NRouterRenderPromptOptions()
+) throws -> String {
+    if template.isEmpty {
+        return ""
+    }
+    let pattern = "\\{\\{\\s*([a-zA-Z0-9_-]+)\\s*\\}\\}"
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+        return template
+    }
+
+    let nsString = template as NSString
+    let matches = regex.matches(in: template, options: [], range: NSRange(location: 0, length: nsString.length))
+
+    var missingKeys: [String] = []
+    var result = ""
+    var lastIndex = 0
+
+    for match in matches {
+        let matchRange = match.range
+        let keyRange = match.range(at: 1)
+
+        let prefix = nsString.substring(with: NSRange(location: lastIndex, length: matchRange.location - lastIndex))
+        result.append(prefix)
+        lastIndex = matchRange.location + matchRange.length
+
+        let key = nsString.substring(with: keyRange)
+        if let sysVal = options.systemVariables?[key] {
+            result.append(sysVal)
+        } else if let val = variables?[key] {
+            if !(val is NSNull) {
+                result.append("\(val)")
+            }
+        } else if options.strict {
+            missingKeys.append(key)
+            result.append(nsString.substring(with: matchRange))
+        } else {
+            result.append(nsString.substring(with: matchRange))
+        }
+    }
+
+    if lastIndex < nsString.length {
+        result.append(nsString.substring(with: NSRange(location: lastIndex, length: nsString.length - lastIndex)))
+    }
+
+    if options.strict && !missingKeys.isEmpty {
+        throw NRouterError.configuration("Missing required prompt template variables: \(missingKeys.joined(separator: ", "))")
+    }
+
+    return result
+}
+

@@ -231,5 +231,27 @@ def test_unmodelled_kwarg_still_reaches_the_wire(monkeypatch):
         max_tokens=50,
         top_k=5,
     )
-
     assert posted[0][1]["top_k"] == 5
+
+
+def test_messages_payload_normalizes_system_tokens_and_stops(monkeypatch):
+    client, posted = _sync_client(monkeypatch)
+
+    client.messages.create(
+        model="claude-sonnet-4-5",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hello"},
+        ],
+        system="Global system instructions.",
+        max_completion_tokens=1024,
+        stop=["Human:", "AI:"],
+    )
+
+    body = posted[0][1]
+    assert body["system"] == "Global system instructions.\n\nYou are a helpful assistant."
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["role"] == "user"
+    assert body["max_tokens"] == 1024
+    assert body["stop_sequences"] == ["Human:", "AI:"]
+

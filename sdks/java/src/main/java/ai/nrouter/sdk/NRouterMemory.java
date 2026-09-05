@@ -16,7 +16,8 @@ import java.util.Set;
  */
 public final class NRouterMemory {
 
-    private static final Set<String> ROLES = Set.of("system", "user", "assistant");
+    private static final Set<String> ROLES =
+            Set.of("system", "user", "assistant", "tool", "developer");
     private static final Set<String> TENANCY_KEYS =
             Set.of("organizationid", "orgid", "teamid", "userid", "nrouterorg");
 
@@ -49,8 +50,42 @@ public final class NRouterMemory {
         return out;
     }
 
+    public synchronized List<Map<String, Object>> messages(int maxMessages, boolean preserveSystem) {
+        return slidingWindow(messages(), maxMessages, preserveSystem);
+    }
+
     public synchronized void clear() {
         store.save(Collections.emptyList());
+    }
+
+    public static List<Map<String, Object>> slidingWindow(
+            List<Map<String, Object>> messages, int maxMessages, boolean preserveSystem) {
+        if (maxMessages <= 0) {
+            return Collections.emptyList();
+        }
+        if (messages.size() <= maxMessages) {
+            return copyMessages(messages);
+        }
+        if (preserveSystem && !messages.isEmpty()) {
+            Object role = messages.get(0).get("role");
+            if ("system".equals(role) || "developer".equals(role)) {
+                if (maxMessages == 1) {
+                    return List.of(copyMessage(messages.get(messages.size() - 1)));
+                }
+                int tailCount = maxMessages - 1;
+                List<Map<String, Object>> out = new ArrayList<>();
+                out.add(copyMessage(messages.get(0)));
+                for (int i = messages.size() - tailCount; i < messages.size(); i++) {
+                    out.add(copyMessage(messages.get(i)));
+                }
+                return out;
+            }
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (int i = messages.size() - maxMessages; i < messages.size(); i++) {
+            out.add(copyMessage(messages.get(i)));
+        }
+        return out;
     }
 
     public interface MemoryStore {
@@ -101,10 +136,17 @@ public final class NRouterMemory {
         }
         Object role = copy.get("role");
         if (!(role instanceof String) || !ROLES.contains(role)) {
-            throw new IllegalArgumentException(where + ": role must be one of system, user, assistant.");
+            throw new IllegalArgumentException(
+                    where + ": role must be one of system, user, assistant, tool, developer.");
         }
         Object content = copy.get("content");
-        if (!(content instanceof String) && !(content instanceof List<?>)) {
+        Object toolCalls = copy.get("tool_calls");
+        boolean hasToolCalls = (toolCalls instanceof List<?>) && !((List<?>) toolCalls).isEmpty();
+        if (content == null) {
+            if (!hasToolCalls && !"assistant".equals(role)) {
+                throw new IllegalArgumentException(where + ": content must be a string or content-parts list.");
+            }
+        } else if (!(content instanceof String) && !(content instanceof List<?>)) {
             throw new IllegalArgumentException(where + ": content must be a string or content-parts list.");
         }
         return copy;

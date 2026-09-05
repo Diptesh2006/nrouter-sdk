@@ -28,6 +28,7 @@ const {
   promptExtraBody,
   applyPrompt,
   systemVariableConflicts,
+  renderPrompt,
 } = require('../dist/prompts');
 
 const { buildExtraBody } = require('../dist/options');
@@ -351,3 +352,64 @@ test('systemVariableConflicts survives a non-object without inventing a conflict
   }
   assert.deepEqual(systemVariableConflicts(null), []);
 });
+
+// ---------------------------------------------------------------------------
+// renderPrompt — client-side template interpolation safety
+// ---------------------------------------------------------------------------
+
+test('renderPrompt safely interpolates variables with whitespace tolerance', () => {
+  const tpl = 'Hello {{name}}! Welcome to {{  city  }}, user {{id}}.';
+  const out = renderPrompt(tpl, { name: 'Alice', city: 'Wonderland', id: 42 });
+  assert.equal(out, 'Hello Alice! Welcome to Wonderland, user 42.');
+});
+
+test('renderPrompt prevents recursive expansion loops in a single pass', () => {
+  // If {{a}} is replaced with {{b}}, it must NOT evaluate {{b}} to 'final'
+  const tpl = 'Value: {{a}}';
+  const out = renderPrompt(tpl, { a: '{{b}}', b: 'final' });
+  assert.equal(out, 'Value: {{b}}');
+});
+
+test('renderPrompt escapes regex replacement string metacharacters ($1, $&, $\')', () => {
+  // In JavaScript, String.prototype.replace treats $&, $', $1 as backreferences!
+  // A price like "$100" or a pattern like "$&" must not corrupt the string.
+  const tpl = 'Cost: {{price}}, snippet: {{code}}';
+  const out = renderPrompt(tpl, { price: '$100', code: 'foo $& bar' });
+  assert.equal(out, 'Cost: $100, snippet: foo $& bar');
+});
+
+test('renderPrompt preserves unmatched tokens when strict is false', () => {
+  const tpl = 'Hello {{name}}, missing {{unknown}}!';
+  const out = renderPrompt(tpl, { name: 'Bob' });
+  assert.equal(out, 'Hello Bob, missing {{unknown}}!');
+});
+
+test('renderPrompt throws configurationError when strict is true and variables are missing', () => {
+  const tpl = 'Hello {{name}}, need {{missing1}} and {{missing2}}!';
+  assert.throws(
+    () => renderPrompt(tpl, { name: 'Bob' }, { strict: true }),
+    (err: any) => {
+      assert.ok(err instanceof nRouterConfigurationError);
+      assert.ok(err.message.includes('missing1'));
+      assert.ok(err.message.includes('missing2'));
+      return true;
+    }
+  );
+});
+
+test('renderPrompt gives systemVariables precedence over caller variables', () => {
+  const tpl = 'Model: {{model}}, User: {{user_id}}, Tone: {{tone}}';
+  const out = renderPrompt(
+    tpl,
+    { model: 'user-override', tone: 'helpful' },
+    { systemVariables: { model: 'claude-3-5-sonnet', user_id: 'sys-usr-1' } }
+  );
+  assert.equal(out, 'Model: claude-3-5-sonnet, User: sys-usr-1, Tone: helpful');
+});
+
+test('renderPrompt is prototype pollution safe', () => {
+  const tpl = 'Test: {{toString}} {{valueOf}} {{constructor}}';
+  const out = renderPrompt(tpl, {});
+  assert.equal(out, 'Test: {{toString}} {{valueOf}} {{constructor}}');
+});
+

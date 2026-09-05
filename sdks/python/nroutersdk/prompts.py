@@ -79,3 +79,49 @@ def system_variable_conflicts(variables: Mapping[str, str] | None) -> list[str]:
     if not variables:
         return []
     return [name for name in SYSTEM_VARIABLE_NAMES if name in variables]
+
+
+import re
+
+_VARIABLE_PATTERN = re.compile(r"\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}")
+
+
+def render_prompt(
+    template: str,
+    variables: Mapping[str, object] | None = None,
+    *,
+    strict: bool = False,
+    system_variables: Mapping[str, str] | None = None,
+) -> str:
+    """Safely renders a prompt template by interpolating `{{variable}}` tokens.
+
+    Security & resiliency properties:
+    - Single-pass replacement: prevents recursive expansion loops.
+    - Callable replacer: prevents regex backreference escapes (\\1, \\g<...>).
+    - Strict mode: raises nRouterRequestError if any template variable is missing.
+    - System variables: take precedence over caller variables matching gateway rules.
+    """
+    if not isinstance(template, str):
+        return ""
+
+    missing_keys: list[str] = []
+
+    def _repl(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if system_variables and key in system_variables:
+            val = system_variables[key]
+            return "" if val is None else str(val)
+        if variables and key in variables:
+            val = variables[key]
+            return "" if val is None else str(val)
+        if strict:
+            missing_keys.append(key)
+        return match.group(0)
+
+    result = _VARIABLE_PATTERN.sub(_repl, template)
+    if strict and missing_keys:
+        raise nRouterRequestError(
+            f"Missing required prompt template variables: {', '.join(missing_keys)}"
+        )
+    return result
+

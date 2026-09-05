@@ -129,6 +129,15 @@ impl ResponseMeta {
         }
         let spend = amounts[0].parse::<f64>().ok()?;
         let ceiling = amounts[1].parse::<f64>().ok()?;
+        if spend.is_nan()
+            || spend.is_infinite()
+            || spend < 0.0
+            || ceiling.is_nan()
+            || ceiling.is_infinite()
+            || ceiling <= 0.0
+        {
+            return None;
+        }
         Some(BudgetWarningInfo {
             scope: parts[0].to_string(),
             spend,

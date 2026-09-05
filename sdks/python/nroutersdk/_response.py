@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 
 @dataclass(frozen=True)
@@ -85,30 +85,52 @@ class nRouterResponseMeta:
     )
 
     @classmethod
-    def from_headers(cls, headers: dict) -> nRouterResponseMeta:
+    def from_headers(cls, headers: dict | Any) -> nRouterResponseMeta:
         """Parse nRouter response headers into metadata."""
-        cost_str = headers.get("x-nr-request-cost")
-        cost = float(cost_str) if cost_str else None
+        norm: dict[str, Any] = {}
+        if hasattr(headers, "items"):
+            for k, v in headers.items():
+                if isinstance(k, str):
+                    norm[k.lower()] = v
+        elif isinstance(headers, dict):
+            norm = {str(k).lower(): v for k, v in headers.items()}
+        else:
+            norm = {}
+
+        cost_str = norm.get("x-nr-request-cost")
+        cost = None
+        if cost_str is not None:
+            try:
+                parsed = float(cost_str)
+                if not (parsed == 0.0 and any(c in "123456789" for c in str(cost_str))):
+                    cost = parsed
+            except (ValueError, TypeError):
+                cost = None
 
         def optional_int(name: str) -> int | None:
-            value = headers.get(name)
-            return int(value) if value else None
+            value = norm.get(name)
+            if value is None or str(value).strip() == "":
+                return None
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                return None
 
         return cls(
-            request_id=headers.get("x-nr-request-id"),
+            request_id=norm.get("x-nr-request-id"),
             cost=cost,
-            cost_status=headers.get("x-nr-cost-status"),
-            model=headers.get("x-nr-model"),
+            cost_status=norm.get("x-nr-cost-status"),
+            model=norm.get("x-nr-model"),
             input_tokens=optional_int("x-nr-input-tokens"),
             output_tokens=optional_int("x-nr-output-tokens"),
             total_tokens=optional_int("x-nr-total-tokens"),
             cache_read_tokens=optional_int("x-nr-cache-read-tokens"),
             cache_write_tokens=optional_int("x-nr-cache-write-tokens"),
-            limit_source=headers.get("x-nr-limit-source"),
-            budget_warning=headers.get("x-nr-budget-warning"),
-            guardrails=headers.get("x-nr-guardrails"),
-            auth_reason=headers.get("x-nr-auth-reason"),
-            response_cache=headers.get("x-nr-response-cache"),
+            limit_source=norm.get("x-nr-limit-source"),
+            budget_warning=norm.get("x-nr-budget-warning"),
+            guardrails=norm.get("x-nr-guardrails"),
+            auth_reason=norm.get("x-nr-auth-reason"),
+            response_cache=norm.get("x-nr-response-cache"),
             response_cache_age=optional_int("x-nr-response-cache-age"),
         )
 
@@ -123,7 +145,7 @@ class nRouterResponseMeta:
     def parse_budget_warning(self) -> BudgetWarningInfo | None:
         if not self.budget_warning:
             return None
-        parts = self.budget_warning.strip().split(" ")
+        parts = self.budget_warning.strip().split()
         if len(parts) != 3 or parts[1] != "soft_budget":
             return None
         scope = parts[0]
@@ -131,8 +153,12 @@ class nRouterResponseMeta:
         if len(amounts) != 2:
             return None
         try:
-            return BudgetWarningInfo(scope=scope, spend=float(amounts[0]), ceiling=float(amounts[1]))
-        except ValueError:
+            spend = float(amounts[0])
+            ceiling = float(amounts[1])
+            if spend < 0 or ceiling <= 0:
+                return None
+            return BudgetWarningInfo(scope=scope, spend=spend, ceiling=ceiling)
+        except (ValueError, TypeError):
             return None
 
 

@@ -430,7 +430,14 @@ export function transportError(message: string, options: nRouterErrorOptions = {
  * and Node's `fetch`; `TimeoutError` is `AbortSignal.timeout()`;
  * `APIUserAbortError` is the `openai` client this SDK is built on.
  */
-export const ABORT_NAMES = new Set(['AbortError', 'TimeoutError', 'APIUserAbortError']);
+export const ABORT_NAMES = new Set([
+  'AbortError',
+  'TimeoutError',
+  'APIUserAbortError',
+  'CanceledError',
+  'ERR_ABORTED',
+  'ABORT_ERR',
+]);
 
 /**
  * True when a value is a cancellation, by NAME or by CLASS.
@@ -467,11 +474,12 @@ function wasAborted(err: unknown): boolean {
 /**
  * Whether retrying the identical request could plausibly succeed.
  *
- * True for exactly three kinds — rate limit, service, transport. Everything
- * else names a permanent condition, and a retry there burns quota without any
- * chance of a different answer. `configuration` is the one that bites: it is
- * raised locally like `transport`, so treating them alike makes a retry loop
- * spin forever having never made a single request.
+ * True for exactly three kinds — rate limit, service, transport — plus transient
+ * status codes 408 (Request Timeout) and 425 (Too Early). Everything else names
+ * a permanent condition, and a retry there burns quota without any chance of a
+ * different answer. `configuration` is the one that bites: it is raised locally
+ * like `transport`, so treating them alike makes a retry loop spin forever having
+ * never made a single request.
  *
  * An aborted request is never retryable whatever its kind — the caller asked
  * to stop, and a loop that retries past its own deadline is ignoring it.
@@ -483,6 +491,7 @@ function wasAborted(err: unknown): boolean {
 export function isRetryable(err: unknown): boolean {
   if (!(err instanceof nRouterError)) return false;
   if (wasAborted(err.cause) || wasAborted(err)) return false;
+  if (err.status === 408 || err.status === 425) return true;
   return err.kind === 'rate_limit' || err.kind === 'service' || err.kind === 'transport';
 }
 
@@ -589,6 +598,38 @@ export function parseRetryAfter(
   if (Number.isNaN(at)) return null;
   const seconds = Math.max(0, Math.ceil((at - now) / 1000));
   return Math.min(seconds, MAX_RETRY_AFTER_SECONDS);
+}
+
+export interface BackoffOptions {
+  attempt: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  retryAfterSeconds?: number | null;
+  jitterFactor?: number;
+}
+
+/**
+ * Computes a jittered exponential backoff in milliseconds.
+ *
+ * Honors Retry-After when present and positive, bounded by maxDelayMs.
+ * Clamps attempt to 30 to prevent 2^N numeric overflow.
+ * Jitter factor distributes delays to prevent thundering herd.
+ */
+export function computeJitteredBackoff(options: BackoffOptions): number {
+  const attempt = Math.max(0, Math.min(options.attempt, 30));
+  const baseDelayMs = options.baseDelayMs ?? 500;
+  const maxDelayMs = options.maxDelayMs ?? 30000;
+  const jitterFactor = Math.max(0, Math.min(options.jitterFactor ?? 0.5, 1.0));
+
+  if (typeof options.retryAfterSeconds === 'number' && Number.isFinite(options.retryAfterSeconds) && options.retryAfterSeconds > 0) {
+    const retryMs = Math.min(options.retryAfterSeconds * 1000, maxDelayMs);
+    const jitterMultiplier = (1 - jitterFactor) + Math.random() * jitterFactor;
+    return Math.max(0, Math.round(retryMs * jitterMultiplier));
+  }
+
+  const exponentialDelay = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt));
+  const jitterMultiplier = (1 - jitterFactor) + Math.random() * jitterFactor;
+  return Math.max(0, Math.round(exponentialDelay * jitterMultiplier));
 }
 
 /**

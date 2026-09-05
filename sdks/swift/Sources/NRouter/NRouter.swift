@@ -185,9 +185,32 @@ public struct NRouter: Sendable {
         streamingSession: URLSession? = nil
     ) throws {
         self.apiKey = try NRouter.resolveAPIKey(apiKey)
-        self.baseURL = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+        self.baseURL = try NRouter.validateGatewayBaseURL(baseURL)
         self.session = session ?? NRouter.sharedSession
         self.streamingSession = streamingSession ?? session ?? NRouter.sharedStreamingSession
+    }
+
+    /// Parse and enforce transport boundary on gateway base URL.
+    public static func validateGatewayBaseURL(_ value: String) throws -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.contains("\r") || trimmed.contains("\n") || trimmed.contains("\t") {
+            throw NRouterError.configuration("Base URL contains invalid control characters or whitespace")
+        }
+        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased() else {
+            throw NRouterError.configuration("Invalid base URL '\(value)'")
+        }
+        if url.user != nil || url.password != nil {
+            throw NRouterError.configuration("nRouter gateway URL must not contain credentials")
+        }
+        if scheme != "http" && scheme != "https" {
+            throw NRouterError.configuration("Invalid base URL scheme '\(scheme)'")
+        }
+        let normalizedHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        let isLoopback = normalizedHost == "localhost" || normalizedHost == "127.0.0.1" || normalizedHost == "::1" || normalizedHost == "0.0.0.0" || normalizedHost.hasSuffix(".local")
+        if scheme == "http" && !isLoopback {
+            throw NRouterError.configuration("nRouter gateway URL must use HTTPS; HTTP is allowed only for loopback development")
+        }
+        return trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
     }
 
     /// Resolve and validate a key: explicit argument first, then environment.
@@ -225,9 +248,70 @@ public struct NRouter: Sendable {
         try await post("/embeddings", body)
     }
 
+    /// Normalizes body for the Anthropic Messages wire: extracts system messages into top-level system,
+    /// maps max_completion_tokens to max_tokens, and normalizes stop sequences.
+    public static func normalizeAnthropicMessages(_ body: [String: Any]) -> [String: Any] {
+        var out = body
+
+        if let messages = out["messages"] as? [[String: Any]] {
+            var cleaned: [[String: Any]] = []
+            var systemChunks: [String] = []
+
+            if let existingSys = out["system"] as? String, !existingSys.isEmpty {
+                systemChunks.append(existingSys)
+            }
+
+            for turn in messages {
+                let role = (turn["role"] as? String ?? "").lowercased()
+                if role == "system" || role == "developer" {
+                    if let contentStr = turn["content"] as? String, !contentStr.isEmpty {
+                        systemChunks.append(contentStr)
+                    } else if let parts = turn["content"] as? [[String: Any]] {
+                        for part in parts {
+                            if (part["type"] as? String) == "text", let text = part["text"] as? String, !text.isEmpty {
+                                systemChunks.append(text)
+                            }
+                        }
+                    }
+                    continue
+                }
+                cleaned.append(turn)
+            }
+
+            out["messages"] = cleaned
+            if !systemChunks.isEmpty {
+                out["system"] = systemChunks.joined(separator: "\n\n")
+            }
+        }
+
+        if let maxComp = out.removeValue(forKey: "max_completion_tokens") {
+            if out["max_tokens"] == nil {
+                out["max_tokens"] = maxComp
+            }
+        }
+        if out["max_tokens"] == nil {
+            out["max_tokens"] = 4096
+        }
+
+        if let stopVal = out.removeValue(forKey: "stop") {
+            if out["stop_sequences"] == nil {
+                if let s = stopVal as? String, !s.isEmpty {
+                    out["stop_sequences"] = [s]
+                } else if let arr = stopVal as? [String] {
+                    let valid = arr.filter { !$0.isEmpty }
+                    if !valid.isEmpty {
+                        out["stop_sequences"] = valid
+                    }
+                }
+            }
+        }
+
+        return out
+    }
+
     /// `POST /messages` — the Anthropic wire format the gateway also serves.
     public func messages(_ body: [String: Any]) async throws -> Response {
-        try await post("/messages", body)
+        try await post("/messages", Self.normalizeAnthropicMessages(body))
     }
 
     /// `POST /responses`
@@ -247,7 +331,7 @@ public struct NRouter: Sendable {
 
     /// Incremental native Anthropic `POST /messages`.
     public func messagesStream(_ body: [String: Any]) async throws -> StreamResponse {
-        try await stream("/messages", body)
+        try await stream("/messages", Self.normalizeAnthropicMessages(body))
     }
 
     /// Incremental `POST /responses`.
@@ -476,24 +560,48 @@ public struct NRouter: Sendable {
                         let pieces = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
                         let name = String(pieces[0])
                         let value = pieces.count == 2
-                            ? String(pieces[1]).drop(while: { $0 == " " })
+                            ? (pieces[1].hasPrefix(" ") ? pieces[1].dropFirst() : pieces[1])
                             : Substring()
                         if name == "event" { event = String(value) }
                         if name == "data" { dataLines.append(String(value)) }
                         return false
                     }
+                    var lastWasCR = false
                     for try await byte in bytes {
                         if byte == 0x0A {
+                            if lastWasCR {
+                                lastWasCR = false
+                                continue
+                            }
                             let line = String(data: lineData, encoding: .utf8) ?? ""
                             lineData.removeAll(keepingCapacity: true)
                             if try processLine(line) { return }
+                        } else if byte == 0x0D {
+                            let line = String(data: lineData, encoding: .utf8) ?? ""
+                            lineData.removeAll(keepingCapacity: true)
+                            lastWasCR = true
+                            if try processLine(line) { return }
                         } else {
+                            lastWasCR = false
                             lineData.append(byte)
                         }
                     }
                     if !lineData.isEmpty {
                         let line = String(data: lineData, encoding: .utf8) ?? ""
                         if try processLine(line) { return }
+                    }
+                    if !dataLines.isEmpty {
+                        let result = try NRouter.parseStreamFrame(
+                            event: event,
+                            data: dataLines.joined(separator: "\n"),
+                            meta: meta
+                        )
+                        if case .chunk(let chunk) = result {
+                            continuation.yield(chunk)
+                        } else if case .done = result {
+                            continuation.finish()
+                            return
+                        }
                     }
                     continuation.finish(
                         throwing: NRouterError.transport(
@@ -697,8 +805,15 @@ public struct NRouter: Sendable {
             let raw = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         else {
             if event == "error" {
-                throw NRouterError.other(
-                    NRouterErrorBody(message: trimmed, status: 200, requestID: meta.requestID)
+                throw NRouterError.fromCode(
+                    NRouterErrorBody(
+                        message: trimmed,
+                        code: knownStreamErrorCodes.contains(trimmed) ? trimmed : nil,
+                        status: 200,
+                        requestID: meta.requestID,
+                        limitSource: meta.limitSource,
+                        authReason: meta.authReason
+                    )
                 )
             }
             return .skip

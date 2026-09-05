@@ -6,7 +6,12 @@ const double neutralTopP = 1.0;
 bool isClaudeModel(String model, [String? provider]) {
   final m = model.toLowerCase();
   final p = provider?.toLowerCase() ?? '';
-  return m.contains('claude') || p.contains('anthropic');
+  return m.contains('claude') ||
+      m.contains('anthropic') ||
+      m.contains('haiku') ||
+      m.contains('sonnet') ||
+      m.contains('opus') ||
+      p.contains('anthropic');
 }
 
 /// Implements Claude sampling policy: mutual exclusion between temperature and top_p.

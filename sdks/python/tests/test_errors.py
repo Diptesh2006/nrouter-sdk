@@ -28,6 +28,9 @@ from nroutersdk import (
     nRouterRateLimitError,
     nRouterRequestError,
     nRouterServiceError,
+    parse_retry_after,
+    compute_jittered_backoff,
+    MAX_RETRY_AFTER_SECONDS,
 )
 from nroutersdk.client import _maybe_raise_nrouter_error
 
@@ -111,6 +114,59 @@ def test_retry_after_is_carried_through():
     with pytest.raises(nRouterRateLimitError) as caught:
         _maybe_raise_nrouter_error(err)
     assert caught.value.retry_after == 30
+
+
+def test_parse_retry_after_rfc9110():
+    # Delta-seconds
+    assert parse_retry_after("45") == 45
+    assert parse_retry_after(" 120 ") == 120
+    assert parse_retry_after("999999") == MAX_RETRY_AFTER_SECONDS
+
+    # Invalid delta-seconds
+    assert parse_retry_after("-10") is None
+    assert parse_retry_after("12.5") is None
+    assert parse_retry_after("invalid") is None
+    assert parse_retry_after(None) is None
+    assert parse_retry_after("") is None
+
+    # HTTP-date
+    now = 1700000000.0
+    # Future IMF-fixdate (60s in future)
+    future_http = "Tue, 14 Nov 2023 22:14:20 GMT"
+    assert parse_retry_after(future_http, now=now) == 60
+
+    # Past IMF-fixdate (clamps to 0)
+    past_http = "Tue, 14 Nov 2023 22:12:20 GMT"
+    assert parse_retry_after(past_http, now=now) == 0
+
+
+def test_compute_jittered_backoff_bounds():
+    # Attempt exponential calculation
+    b0 = compute_jittered_backoff(attempt=0, base_delay_ms=1000, max_delay_ms=10000, jitter_factor=0.0)
+    assert b0 == 1000.0
+
+    b2 = compute_jittered_backoff(attempt=2, base_delay_ms=1000, max_delay_ms=10000, jitter_factor=0.0)
+    assert b2 == 4000.0
+
+    # Attempt clamp to prevent 2^N overflow
+    b_huge = compute_jittered_backoff(attempt=100, base_delay_ms=1000, max_delay_ms=8000, jitter_factor=0.0)
+    assert b_huge == 8000.0
+
+    # Negative attempt safe
+    b_neg = compute_jittered_backoff(attempt=-5, base_delay_ms=500, jitter_factor=0.0)
+    assert b_neg == 500.0
+
+    # Retry-After priority
+    b_retry = compute_jittered_backoff(attempt=0, retry_after_seconds=5, max_delay_ms=10000, jitter_factor=0.0)
+    assert b_retry == 5000.0
+
+    # Retry-After capped by max_delay_ms
+    b_retry_capped = compute_jittered_backoff(attempt=0, retry_after_seconds=30, max_delay_ms=10000, jitter_factor=0.0)
+    assert b_retry_capped == 10000.0
+
+    # Jitter range
+    b_jitter = compute_jittered_backoff(attempt=1, base_delay_ms=1000, jitter_factor=0.4)
+    assert 1200.0 <= b_jitter <= 2000.0
 
 
 def test_the_request_id_is_carried_through():

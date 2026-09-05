@@ -44,9 +44,48 @@ class NRouterMemoryTest {
     }
 
     @Test
+    void acceptsDeveloperAndToolRoles() {
+        NRouterMemory memory = NRouterMemory.createMemory();
+        memory.add(Map.of("role", "developer", "content", "system prompt"));
+        memory.add(Map.of("role", "tool", "content", "tool result"));
+        List<Map<String, Object>> msgs = memory.messages();
+        assertEquals(2, msgs.size());
+        assertEquals("developer", msgs.get(0).get("role"));
+        assertEquals("tool", msgs.get(1).get("role"));
+    }
+
+    @Test
+    void acceptsAssistantWithNullContentAndToolCalls() {
+        NRouterMemory memory = NRouterMemory.createMemory();
+        Map<String, Object> asst = new java.util.HashMap<>();
+        asst.put("role", "assistant");
+        asst.put("content", null);
+        asst.put("tool_calls", List.of(Map.of("id", "c1")));
+        memory.add(asst);
+        List<Map<String, Object>> msgs = memory.messages();
+        assertEquals(1, msgs.size());
+        assertEquals("assistant", msgs.get(0).get("role"));
+    }
+
+    @Test
+    void slidingWindowPreservesSystem() {
+        List<Map<String, Object>> msgs = List.of(
+                Map.of("role", "system", "content", "sys"),
+                Map.of("role", "user", "content", "1"),
+                Map.of("role", "assistant", "content", "2"),
+                Map.of("role", "user", "content", "3"),
+                Map.of("role", "assistant", "content", "4"));
+        List<Map<String, Object>> pruned = NRouterMemory.slidingWindow(msgs, 3, true);
+        assertEquals(3, pruned.size());
+        assertEquals("system", pruned.get(0).get("role"));
+        assertEquals("3", pruned.get(1).get("content"));
+        assertEquals("4", pruned.get(2).get("content"));
+    }
+
+    @Test
     void refusesMalformedMessages() {
         NRouterMemory memory = NRouterMemory.createMemory();
-        assertThrows(IllegalArgumentException.class, () -> memory.add(Map.of("role", "tool", "content", "hi")));
+        assertThrows(IllegalArgumentException.class, () -> memory.add(Map.of("role", "invalid_role", "content", "hi")));
         assertThrows(IllegalArgumentException.class, () -> memory.add(Map.of("role", "user", "content", 42)));
     }
 }

@@ -65,6 +65,14 @@ impl EventStream {
                 Some(bytes) => self.buffer.extend_from_slice(&bytes),
                 None => {
                     self.done = true;
+                    if !self.buffer.is_empty() {
+                        let frame = std::mem::take(&mut self.buffer);
+                        match parse_sse_frame(&frame, &self.meta)? {
+                            ParsedFrame::Chunk(chunk) => return Ok(Some(chunk)),
+                            ParsedFrame::Done => return Ok(None),
+                            ParsedFrame::Skip => {}
+                        }
+                    }
                     return Err(NRouterError::Transport(
                         "the stream ended before its terminal event".into(),
                     ));
@@ -113,7 +121,7 @@ fn redacted(api_key: &str) -> String {
 /// Parse and enforce the transport boundary before an API key is attached.
 /// Plain HTTP is reserved for a gateway on the same machine; every remote
 /// gateway must authenticate and encrypt the connection with HTTPS.
-fn validate_gateway_base_url(value: &str) -> Result<reqwest::Url, NRouterError> {
+pub fn validate_gateway_base_url(value: &str) -> Result<reqwest::Url, NRouterError> {
     let mut url = reqwest::Url::parse(value).map_err(|error| {
         NRouterError::Configuration(format!("invalid nRouter gateway URL: {error}"))
     })?;
@@ -247,6 +255,14 @@ impl Client {
         self
     }
 
+    /// Point the client at a different gateway and validate the URL immediately.
+    pub fn try_with_base_url(mut self, base_url: impl Into<String>) -> Result<Self, NRouterError> {
+        let b = base_url.into();
+        validate_gateway_base_url(&b)?;
+        self.base_url = b.trim_end_matches('/').to_string();
+        Ok(self)
+    }
+
     /// Override the underlying HTTP client — proxy, timeout, connection pool.
     ///
     /// It replaces [`Client::default_http_client`] entirely, including every
@@ -286,9 +302,97 @@ impl Client {
         self.post("/embeddings", body).await
     }
 
+    /// Normalize messages body for the Anthropic Messages wire:
+    /// extract system messages into top-level system, map max_completion_tokens,
+    /// and normalize stop sequences.
+    pub fn normalize_anthropic_messages(body: &Value) -> Value {
+        let Some(obj) = body.as_object() else {
+            return body.clone();
+        };
+        let mut out = obj.clone();
+
+        if let Some(Value::Array(messages)) = out.get("messages") {
+            let mut cleaned = Vec::new();
+            let mut system_chunks: Vec<String> = Vec::new();
+
+            if let Some(existing_sys) = out.get("system").and_then(|s| s.as_str()) {
+                if !existing_sys.is_empty() {
+                    system_chunks.push(existing_sys.to_string());
+                }
+            }
+
+            for turn in messages {
+                if let Some(t_obj) = turn.as_object() {
+                    let role = t_obj.get("role").and_then(|r| r.as_str()).unwrap_or("");
+                    if role.eq_ignore_ascii_case("system") || role.eq_ignore_ascii_case("developer")
+                    {
+                        if let Some(content_str) = t_obj.get("content").and_then(|c| c.as_str()) {
+                            if !content_str.is_empty() {
+                                system_chunks.push(content_str.to_string());
+                            }
+                        } else if let Some(parts) = t_obj.get("content").and_then(|c| c.as_array())
+                        {
+                            for part in parts {
+                                if let Some(p_obj) = part.as_object() {
+                                    if p_obj.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                        if let Some(txt) =
+                                            p_obj.get("text").and_then(|t| t.as_str())
+                                        {
+                                            if !txt.is_empty() {
+                                                system_chunks.push(txt.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+                cleaned.push(turn.clone());
+            }
+
+            out.insert("messages".into(), Value::Array(cleaned));
+            if !system_chunks.is_empty() {
+                out.insert("system".into(), Value::String(system_chunks.join("\n\n")));
+            }
+        }
+
+        if let Some(max_comp) = out.remove("max_completion_tokens") {
+            if !out.contains_key("max_tokens") {
+                out.insert("max_tokens".into(), max_comp);
+            }
+        }
+
+        if let Some(stop_val) = out.remove("stop") {
+            if !out.contains_key("stop_sequences") {
+                if let Some(s) = stop_val.as_str() {
+                    if !s.is_empty() {
+                        out.insert(
+                            "stop_sequences".into(),
+                            Value::Array(vec![Value::String(s.to_string())]),
+                        );
+                    }
+                } else if let Some(arr) = stop_val.as_array() {
+                    let valid: Vec<Value> = arr
+                        .iter()
+                        .filter(|item| item.as_str().is_some_and(|s| !s.is_empty()))
+                        .cloned()
+                        .collect();
+                    if !valid.is_empty() {
+                        out.insert("stop_sequences".into(), Value::Array(valid));
+                    }
+                }
+            }
+        }
+
+        Value::Object(out)
+    }
+
     /// `POST /messages` — the Anthropic wire format the gateway also serves.
     pub async fn messages(&self, body: &Value) -> Result<Response<Value>, NRouterError> {
-        self.post("/messages", body).await
+        let normalized = Self::normalize_anthropic_messages(body);
+        self.post("/messages", &normalized).await
     }
 
     /// `POST /responses`.
@@ -308,7 +412,8 @@ impl Client {
 
     /// Incremental native Anthropic `POST /messages`.
     pub async fn messages_stream(&self, body: &Value) -> Result<EventStream, NRouterError> {
-        self.stream("/messages", body).await
+        let normalized = Self::normalize_anthropic_messages(body);
+        self.stream("/messages", &normalized).await
     }
 
     /// Incremental `POST /responses`.
@@ -617,21 +722,26 @@ enum ParsedFrame {
 
 fn take_sse_frame(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     let lf = buffer.windows(2).position(|w| w == b"\n\n").map(|i| (i, 2));
+    let cr = buffer.windows(2).position(|w| w == b"\r\r").map(|i| (i, 2));
     let crlf = buffer
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
         .map(|i| (i, 4));
-    let (index, delimiter) = match (lf, crlf) {
-        (Some(a), Some(b)) => {
-            if a.0 <= b.0 {
-                a
-            } else {
-                b
-            }
-        }
-        (Some(found), None) | (None, Some(found)) => found,
-        (None, None) => return None,
-    };
+    let mut candidates = Vec::new();
+    if let Some(c) = lf {
+        candidates.push(c);
+    }
+    if let Some(c) = cr {
+        candidates.push(c);
+    }
+    if let Some(c) = crlf {
+        candidates.push(c);
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by_key(|c| c.0);
+    let (index, delimiter) = candidates[0];
     let frame = buffer[..index].to_vec();
     buffer.drain(..index + delimiter);
     Some(frame)
@@ -641,9 +751,9 @@ fn parse_sse_frame(frame: &[u8], meta: &ResponseMeta) -> Result<ParsedFrame, NRo
     let text = String::from_utf8_lossy(frame);
     let mut event = None;
     let mut data = Vec::new();
-    for raw_line in text.lines() {
+    for raw_line in text.split(['\n', '\r']) {
         let line = raw_line.trim_end_matches('\r');
-        if line.starts_with(':') {
+        if line.is_empty() || line.starts_with(':') {
             continue;
         }
         let (name, value) = line.split_once(':').unwrap_or((line, ""));

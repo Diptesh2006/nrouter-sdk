@@ -12,7 +12,12 @@ const NeutralTopP = 1.0
 func IsClaudeModel(model string, provider string) bool {
 	m := strings.ToLower(model)
 	p := strings.ToLower(provider)
-	return strings.Contains(m, "claude") || strings.Contains(p, "anthropic")
+	return strings.Contains(m, "claude") ||
+		strings.Contains(m, "anthropic") ||
+		strings.Contains(m, "haiku") ||
+		strings.Contains(m, "sonnet") ||
+		strings.Contains(m, "opus") ||
+		strings.Contains(p, "anthropic")
 }
 
 // BuildSamplingParams implements the Claude sampling mutual exclusion policy.

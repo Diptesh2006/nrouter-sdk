@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const util = require('node:util');
 
-const { nRouter, isRetryable, nRouterError } = require('../dist/index');
+const { nRouter, isRetryable, nRouterError, validateGatewayBaseUrl } = require('../dist/index');
 
 const KEY_PREFIX = 'sk-nrouter-';
 const ENV_KEY = 'NROUTER_API_KEY';
@@ -1039,4 +1039,28 @@ test('the api key cannot be deleted out from under the guard', async () => {
   // Non-configurable: in sloppy mode this returns false rather than throwing.
   assert.equal(Reflect.deleteProperty(client as object, 'apiKey'), false);
   assert.equal((client as unknown as { apiKey: string }).apiKey, TEST_KEY, 'the key survives the attempt');
+});
+
+test('cleartext is limited to loopback development gateways and rejects credentials', () => {
+  for (const allowed of [
+    'http://127.0.0.1:4000/v1',
+    'http://[::1]:4000/v1',
+    'http://localhost:4000/v1',
+    'https://api.nrouter.ai/v1',
+  ]) {
+    assert.doesNotThrow(() => validateGatewayBaseUrl(allowed));
+  }
+
+  for (const refused of [
+    'http://api.nrouter.ai/v1',
+    'http://192.0.2.10:4000/v1',
+    'ftp://127.0.0.1/v1',
+    'https://user:pass@api.nrouter.ai/v1',
+    'not-a-url',
+  ]) {
+    assert.throws(
+      () => validateGatewayBaseUrl(refused),
+      (err: any) => err.name === 'nRouterConfigurationError'
+    );
+  }
 });

@@ -101,4 +101,49 @@ public final class NRouterResponseMeta {
     public String responseCache() { return responseCache; }
     public Long responseCacheAge() { return responseCacheAge; }
     public boolean isPriced() { return cost != null && "exact".equals(costStatus); }
+    public boolean isCacheHit() { return "hit".equals(responseCache); }
+    public boolean isCacheMiss() { return "miss".equals(responseCache); }
+    public long cacheAgeSeconds() { return responseCacheAge != null ? responseCacheAge : 0L; }
+
+    public static final class BudgetWarningInfo {
+        private final String scope;
+        private final double spend;
+        private final double ceiling;
+
+        public BudgetWarningInfo(String scope, double spend, double ceiling) {
+            this.scope = scope;
+            this.spend = spend;
+            this.ceiling = ceiling;
+        }
+
+        public String scope() { return scope; }
+        public double spend() { return spend; }
+        public double ceiling() { return ceiling; }
+    }
+
+    public BudgetWarningInfo parseBudgetWarning() {
+        if (budgetWarning == null || budgetWarning.trim().isEmpty()) {
+            return null;
+        }
+        String[] parts = budgetWarning.trim().split("\\s+");
+        if (parts.length != 3 || !"soft_budget".equals(parts[1])) {
+            return null;
+        }
+        String scope = parts[0];
+        String[] amounts = parts[2].split("/");
+        if (amounts.length != 2) {
+            return null;
+        }
+        try {
+            double spend = Double.parseDouble(amounts[0]);
+            double ceiling = Double.parseDouble(amounts[1]);
+            if (Double.isNaN(spend) || Double.isInfinite(spend) || spend < 0 ||
+                Double.isNaN(ceiling) || Double.isInfinite(ceiling) || ceiling <= 0) {
+                return null;
+            }
+            return new BudgetWarningInfo(scope, spend, ceiling);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
 }

@@ -6,7 +6,12 @@ public let neutralTopP: Double = 1.0
 public func isClaudeModel(_ model: String, provider: String? = nil) -> Bool {
     let m = model.lowercased()
     let p = provider?.lowercased() ?? ""
-    return m.contains("claude") || p.contains("anthropic")
+    return m.contains("claude")
+        || m.contains("anthropic")
+        || m.contains("haiku")
+        || m.contains("sonnet")
+        || m.contains("opus")
+        || p.contains("anthropic")
 }
 
 /// Implements Claude sampling policy: mutual exclusion between temperature and top_p.

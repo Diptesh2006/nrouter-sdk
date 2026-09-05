@@ -1,12 +1,17 @@
 package ai.nrouter.sdk;
 
 import com.openai.client.OpenAIClient;
+import java.net.http.HttpHeaders;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -120,6 +125,32 @@ class NRouterTest {
     }
 
     @Test
+    void isClaudeModelAndNormalizeAnthropicMessages() {
+        assertTrue(NRouter.isClaudeModel("claude-sonnet-4-5", null));
+        assertTrue(NRouter.isClaudeModel("sonnet-4-5", null));
+        assertTrue(NRouter.isClaudeModel("haiku-3-5", null));
+        assertTrue(NRouter.isClaudeModel("opus-4", null));
+        assertTrue(NRouter.isClaudeModel("custom", "anthropic"));
+        assertFalse(NRouter.isClaudeModel("gpt-4o", "openai"));
+
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("model", "claude-sonnet-4-5");
+        input.put("system", "Initial system");
+        input.put("messages", List.of(
+            Map.of("role", "system", "content", "Turn system"),
+            Map.of("role", "user", "content", "Hello")
+        ));
+        input.put("max_completion_tokens", 1024);
+        input.put("stop", "Human:");
+
+        Map<String, Object> normalized = NRouterHttpClient.normalizeAnthropicMessages(input);
+        assertEquals("Initial system\n\nTurn system", normalized.get("system"));
+        assertEquals(1, ((List<?>) normalized.get("messages")).size());
+        assertEquals(1024, normalized.get("max_tokens"));
+        assertEquals(List.of("Human:"), normalized.get("stop_sequences"));
+    }
+
+    @Test
     void testUsesMessagesWire() {
         assertTrue(NRouter.usesMessagesWire("claude-3-5-sonnet-20241022"));
         assertTrue(NRouter.usesMessagesWire("anthropic/claude-3-haiku"));
@@ -127,4 +158,62 @@ class NRouterTest {
         assertFalse(NRouter.usesMessagesWire("gpt-4o"));
         assertFalse(NRouter.usesMessagesWire("meta-llama/llama-3"));
     }
+
+    @Test
+    void testRenderPrompt() {
+        // 1. Whitespace tolerance & formatting
+        String tpl = "Hello {{name}}! Age: {{  age  }}, active: {{ active }}.";
+        Map<String, Object> vars = new HashMap<>();
+        vars.put("name", "Alice");
+        vars.put("age", 30);
+        vars.put("active", true);
+        String out = NRouterPrompts.renderPrompt(tpl, vars);
+        assertEquals("Hello Alice! Age: 30, active: true.", out);
+
+        // 2. Single pass non-recursive
+        String tpl2 = "Value: {{a}}";
+        String out2 = NRouterPrompts.renderPrompt(tpl2, Map.of("a", "{{b}}", "b", "final"));
+        assertEquals("Value: {{b}}", out2);
+
+        // 3. Metacharacter safety ($1, $&, escapes)
+        String tpl3 = "Price: {{price}}, Path: {{path}}";
+        String out3 = NRouterPrompts.renderPrompt(tpl3, Map.of("price", "$100", "path", "C:\\test\\1"));
+        assertEquals("Price: $100, Path: C:\\test\\1", out3);
+
+        // 4. Non-strict preserves missing tokens
+        String tpl4 = "Greeting: {{hello}}, missing: {{world}}";
+        String out4 = NRouterPrompts.renderPrompt(tpl4, Map.of("hello", "hi"));
+        assertEquals("Greeting: hi, missing: {{world}}", out4);
+
+        // 5. Strict throws error on missing tokens
+        assertThrows(
+            NRouterException.class,
+            () -> NRouterPrompts.renderPrompt(tpl4, Map.of("hello", "hi"), new NRouterPrompts.RenderOptions(true))
+        );
+
+        // 6. System variables override
+        String tpl5 = "Model: {{model}}, User: {{user}}";
+        String out5 = NRouterPrompts.renderPrompt(
+            tpl5,
+            Map.of("model", "caller-model", "user", "alice"),
+            new NRouterPrompts.RenderOptions(false, Map.of("model", "claude-3-7-sonnet"))
+        );
+        assertEquals("Model: claude-3-7-sonnet, User: alice", out5);
+    }
+
+    @Test
+    void testSseEventInspectionPreservesIndentationAndSurfacesErrors() {
+        NRouterHttpClient client = new NRouterHttpClient("sk-nrouter-test", "https://api.nrouter.ai/v1");
+        HttpHeaders headers = HttpHeaders.of(Map.of("x-nr-request-id", List.of("req_sse_test")), (a, b) -> true);
+        NRouterResponseMeta meta = NRouterResponseMeta.fromHeaders(headers);
+        // Preserves code indentation and does not throw on normal data lines
+        assertDoesNotThrow(() -> {
+            client.inspectSseEvent(List.of("data:   def foo():", "data:       return 42"), 200, meta);
+        });
+        // Surfaces in-band error even if non-JSON text
+        assertThrows(NRouterException.class, () -> {
+            client.inspectSseEvent(List.of("event: error", "data: guardrail blocked response"), 200, meta);
+        });
+    }
 }
+

@@ -812,3 +812,23 @@ test('a data: image URI is split into an Anthropic base64 source', () => {
     source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
   });
 });
+
+test('toAnthropicMessagesRequest extracts system messages, maps max_completion_tokens and normalizes stop_sequences', () => {
+  const { body } = toAnthropicMessagesRequest({
+    model: 'claude-sonnet-4-5',
+    system: 'Top level system prompt',
+    messages: [
+      { role: 'system', content: 'Turn system prompt' },
+      { role: 'user', content: 'Hello' },
+    ],
+    max_completion_tokens: 2048,
+    stop_sequences: ['Human:', 'END'],
+  }) as any;
+
+  assert.equal(body.system, 'Top level system prompt\n\nTurn system prompt');
+  assert.equal(body.messages.length, 1);
+  assert.equal(body.messages[0].role, 'user');
+  assert.equal(body.max_tokens, 2048);
+  assert.deepEqual(body.stop_sequences, ['Human:', 'END']);
+});
+

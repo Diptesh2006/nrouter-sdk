@@ -75,14 +75,57 @@ nrouter_header_names <- function() {
   )
 }
 
-#' Did the gateway price this request exactly?
-#'
-#' @param meta An \code{nrouter_meta} object.
-#' @return \code{TRUE} only when the cost is both present and exact.
-#' @export
 nrouter_is_priced <- function(meta) {
   identical(meta$cost_status, "exact") && !is.null(meta$cost)
 }
+
+#' Parse structured budget warning from response metadata
+#'
+#' @param meta An \code{nrouter_meta} object or character string.
+#' @return A list with scope, spend, ceiling, or NULL if absent/unparseable.
+#' @export
+nrouter_parse_budget_warning <- function(meta) {
+  raw <- if (inherits(meta, "nrouter_meta")) meta$budget_warning else meta
+  if (is.null(raw) || !nzchar(as.character(raw))) return(NULL)
+  raw <- trimws(as.character(raw))
+  parts <- strsplit(raw, "\\s+")[[1]]
+  if (length(parts) != 3 || parts[2] != "soft_budget") return(NULL)
+  scope <- parts[1]
+  amounts <- strsplit(parts[3], "/")[[1]]
+  if (length(amounts) != 2) return(NULL)
+  spend <- suppressWarnings(as.numeric(amounts[1]))
+  ceiling <- suppressWarnings(as.numeric(amounts[2]))
+  if (is.na(spend) || is.na(ceiling) || spend < 0 || ceiling <= 0) return(NULL)
+  list(scope = scope, spend = spend, ceiling = ceiling)
+}
+
+#' Check if response was a cache hit
+#'
+#' @param meta An \code{nrouter_meta} object.
+#' @return Logical TRUE if cache hit.
+#' @export
+nrouter_is_cache_hit <- function(meta) {
+  identical(meta$response_cache, "hit")
+}
+
+#' Check if response was a cache miss
+#'
+#' @param meta An \code{nrouter_meta} object.
+#' @return Logical TRUE if cache miss.
+#' @export
+nrouter_is_cache_miss <- function(meta) {
+  identical(meta$response_cache, "miss")
+}
+
+#' Cache age in seconds
+#'
+#' @param meta An \code{nrouter_meta} object.
+#' @return Numeric age in seconds, or 0.
+#' @export
+nrouter_cache_age_seconds <- function(meta) {
+  if (!is.null(meta$response_cache_age)) meta$response_cache_age else 0
+}
+
 
 #' @export
 print.nrouter_meta <- function(x, ...) {

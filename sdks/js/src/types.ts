@@ -174,11 +174,15 @@ export interface NRouterCallOptions extends NRouterFeatureOptions {
   extra?: Record<string, unknown>;
 }
 
-export type ChatRole = 'system' | 'user' | 'assistant';
+export type ChatRole = 'system' | 'user' | 'assistant' | 'tool' | 'developer';
 
 export interface ChatMessage {
   role: ChatRole;
-  content: string | ChatContentPart[];
+  content?: string | ChatContentPart[] | null;
+  tool_calls?: unknown[];
+  tool_call_id?: string;
+  name?: string;
+  [key: string]: unknown;
 }
 
 export type ChatContentPart =

@@ -66,3 +66,22 @@ test_that("messages stream sends the real path, auth, and stream flag", {
   expect_equal(result$meta$request_id, "req_r_stream")
   expect_equal(chunks[[1]]$delta, "ok")
 })
+
+test_that("SSE parser handles non-JSON keepalive, CR-only boundaries, and trailing event", {
+  chunks <- list()
+  parser <- nrouter_sse_parser(function(chunk) {
+    chunks[[length(chunks) + 1L]] <<- chunk
+  })
+
+  parser$feed(charToRaw(paste0(
+    ": keep-alive\r\r",
+    "data: ping\r\r",
+    "data: {\"choices\":[{\"delta\":{\"content\":\"  def foo():\"}}]}\n\n",
+    "data: [DONE]"
+  )))
+  parser$finish()
+
+  expect_length(chunks, 1)
+  expect_equal(chunks[[1]]$delta, "  def foo():")
+})
+

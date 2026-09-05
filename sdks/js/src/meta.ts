@@ -207,8 +207,8 @@ export function metaFromHeaders(headers: HeaderSource): ResponseMeta {
     // is what Go's `http.Header.Get` does: joining them would turn two counts
     // into "1, 2", which parses to null and loses a real measurement.
     const first = Array.isArray(value) ? value[0] : value;
-    if (typeof first !== 'string') continue;
-    index.set(key.toLowerCase(), first);
+    if (first === null || first === undefined) continue;
+    index.set(key.toLowerCase(), String(first));
   }
 
   return metaFromLookup((name) => index.get(name) ?? null);
@@ -236,14 +236,14 @@ export interface BudgetWarningInfo {
 
 export function parseBudgetWarning(budgetWarning: string | null | undefined): BudgetWarningInfo | null {
   if (!budgetWarning) return null;
-  const parts = budgetWarning.trim().split(' ');
+  const parts = budgetWarning.trim().split(/\s+/);
   if (parts.length !== 3 || parts[1] !== 'soft_budget') return null;
   const scope = parts[0];
   const amounts = parts[2].split('/');
   if (amounts.length !== 2) return null;
   const spend = parseFloat(amounts[0]);
   const ceiling = parseFloat(amounts[1]);
-  if (!Number.isFinite(spend) || !Number.isFinite(ceiling)) return null;
+  if (!Number.isFinite(spend) || !Number.isFinite(ceiling) || spend < 0 || ceiling <= 0) return null;
   return { scope, spend, ceiling };
 }
 

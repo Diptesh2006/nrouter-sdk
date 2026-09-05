@@ -87,6 +87,8 @@ sealed class NRouterError implements Exception {
   /// False for every permanent 4xx: a retry there burns quota and cannot
   /// change the answer.
   bool get isRetryable =>
+      body?.status == 408 ||
+      body?.status == 425 ||
       this is NRouterRateLimitError ||
       this is NRouterServiceError ||
       this is NRouterTransportError;

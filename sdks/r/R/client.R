@@ -178,6 +178,51 @@ nrouter_resolve_api_key <- function(api_key = NULL) {
 #' # Unpriced is unknown, not free. Never render a NULL cost as 0.
 #' print(result$meta)
 #' }
+#' Validate and normalize the nRouter gateway base URL
+#'
+#' Enforces HTTPS scheme unless targeting loopback addresses (localhost,
+#' 127.0.0.1, ::1, 0.0.0.0, or *.local), rejects embedded user credentials,
+#' and trims trailing slashes.
+#' @param base_url The base URL string to validate.
+#' @return Normalized base URL string without trailing slashes.
+#' @export
+nrouter_validate_gateway_base_url <- function(base_url) {
+  cleaned_base <- trimws(as.character(base_url))
+  if (grepl("[\r\n\t ]", cleaned_base)) {
+    stop(nrouter_configuration_condition("base_url contains invalid control characters or whitespace"))
+  }
+  if (!grepl("^https?://", cleaned_base, ignore.case = TRUE)) {
+    stop(nrouter_configuration_condition("invalid nRouter gateway URL: must start with https:// or http://"))
+  }
+  scheme <- tolower(sub("://.*$", "", cleaned_base))
+  rest <- sub("^https?://", "", cleaned_base, ignore.case = TRUE)
+  authority <- sub("[/?#].*$", "", rest)
+  if (grepl("@", authority)) {
+    stop(nrouter_configuration_condition("nRouter gateway URL must not contain credentials"))
+  }
+  if (startsWith(authority, "[")) {
+    host_part <- sub(":[0-9]+$", "", authority)
+    if (!endsWith(host_part, "]")) {
+      stop(nrouter_configuration_condition("invalid nRouter gateway URL: malformed IPv6 host"))
+    }
+    host <- substr(host_part, 2, nchar(host_part) - 1)
+  } else {
+    host <- sub(":[0-9]+$", "", authority)
+    if (grepl(":", host)) {
+      stop(nrouter_configuration_condition("invalid nRouter gateway URL: malformed host"))
+    }
+  }
+  host <- tolower(host)
+  if (!nzchar(host)) {
+    stop(nrouter_configuration_condition("nRouter gateway URL must include a host"))
+  }
+  is_loopback <- host %in% c("localhost", "127.0.0.1", "::1", "0.0.0.0") || endsWith(host, ".local")
+  if (scheme == "http" && !is_loopback) {
+    stop(nrouter_configuration_condition("nRouter gateway URL must use HTTPS; HTTP is allowed only for loopback development"))
+  }
+  sub("/+$", "", cleaned_base)
+}
+
 #' @export
 nrouter_client <- function(api_key = NULL, base_url = nrouter_default_base_url(),
                            timeout_seconds = nrouter_default_timeout_seconds(),
@@ -185,11 +230,12 @@ nrouter_client <- function(api_key = NULL, base_url = nrouter_default_base_url()
                              nrouter_default_connect_timeout_seconds(),
                            stream_idle_seconds =
                              nrouter_default_stream_idle_seconds()) {
+  valid_base <- nrouter_validate_gateway_base_url(base_url)
   structure(
     class = "nrouter_client",
     list(
       api_key                 = nrouter_resolve_api_key(api_key),
-      base_url                = sub("/+$", "", base_url),
+      base_url                = valid_base,
       timeout_seconds         = timeout_seconds,
       connect_timeout_seconds = connect_timeout_seconds,
       stream_idle_seconds     = stream_idle_seconds
@@ -408,11 +454,103 @@ nrouter_embeddings <- function(client, body) {
   nrouter_request(client, "/embeddings", body)
 }
 
+#' Normalize an Anthropic Messages request payload
+#'
+#' - Extracts system/developer turns from \code{messages} into top-level \code{system}
+#' - Maps \code{max_completion_tokens} to \code{max_tokens} (with fallback to 4096)
+#' - Normalizes \code{stop} to \code{stop_sequences} list of strings
+#'
+#' @param body A list representing the request body.
+#' @return A normalized list suitable for POST /messages.
+#' @export
+nrouter_normalize_anthropic_messages <- function(body) {
+  if (!is.list(body)) {
+    return(body)
+  }
+  out <- body
+
+  if ("messages" %in% names(out) && is.list(out$messages)) {
+    cleaned <- list()
+    system_chunks <- character(0)
+
+    if ("system" %in% names(out) && is.character(out$system) && any(nzchar(out$system))) {
+      system_chunks <- c(system_chunks, out$system[nzchar(out$system)])
+    }
+
+    for (turn in out$messages) {
+      if (is.list(turn)) {
+        role <- tolower(as.character(turn$role %||% ""))
+        if (role %in% c("system", "developer")) {
+          content <- turn$content
+          if (is.character(content) && any(nzchar(content))) {
+            system_chunks <- c(system_chunks, content[nzchar(content)])
+          } else if (is.list(content)) {
+            for (part in content) {
+              if (is.list(part) && identical(part$type, "text")) {
+                txt <- as.character(part$text %||% "")
+                if (nzchar(txt)) {
+                  system_chunks <- c(system_chunks, txt)
+                }
+              }
+            }
+          }
+          next
+        }
+      }
+      cleaned[[length(cleaned) + 1]] <- turn
+    }
+
+    out$messages <- cleaned
+    if (length(system_chunks) > 0) {
+      out$system <- paste(system_chunks, collapse = "\n\n")
+    }
+  }
+
+  if ("max_completion_tokens" %in% names(out)) {
+    max_comp <- out$max_completion_tokens
+    out$max_completion_tokens <- NULL
+    if (!("max_tokens" %in% names(out))) {
+      out$max_tokens <- max_comp
+    }
+  }
+  if (!("max_tokens" %in% names(out))) {
+    out$max_tokens <- 4096L
+  }
+
+  if ("stop" %in% names(out)) {
+    stop_val <- out$stop
+    out$stop <- NULL
+    if (!("stop_sequences" %in% names(out))) {
+      if (is.character(stop_val)) {
+        non_empty <- stop_val[nzchar(stop_val)]
+        if (length(non_empty) > 0) {
+          out$stop_sequences <- as.list(non_empty)
+        }
+      } else if (is.list(stop_val)) {
+        non_empty <- list()
+        for (item in stop_val) {
+          if (is.character(item) && any(nzchar(item))) {
+            for (s in item[nzchar(item)]) {
+              non_empty[[length(non_empty) + 1]] <- s
+            }
+          }
+        }
+        if (length(non_empty) > 0) {
+          out$stop_sequences <- non_empty
+        }
+      }
+    }
+  }
+
+  out
+}
+
 #' POST /messages (the Anthropic wire format the gateway also serves)
 #' @inheritParams nrouter_chat_completions
 #' @return A list with \code{body}, \code{meta} and \code{status_code}.
 #' @export
 nrouter_messages <- function(client, body) {
+  body <- nrouter_normalize_anthropic_messages(body)
   nrouter_request(client, "/messages", body)
 }
 
@@ -598,6 +736,7 @@ nrouter_sse_parser <- function(on_chunk) {
     n <- length(bytes)
     if (n < 2L) return(NULL)
     lf <- which(bytes[-n] == as.raw(10L) & bytes[-1L] == as.raw(10L))
+    cr <- which(bytes[-n] == as.raw(13L) & bytes[-1L] == as.raw(13L))
     crlf <- if (n >= 4L) {
       which(bytes[seq_len(n - 3L)] == as.raw(13L) &
             bytes[2L:(n - 2L)] == as.raw(10L) &
@@ -605,10 +744,12 @@ nrouter_sse_parser <- function(on_chunk) {
             bytes[4L:n] == as.raw(10L))
     } else integer()
     starts <- c(if (length(lf)) lf[[1L]] else integer(),
+                if (length(cr)) cr[[1L]] else integer(),
                 if (length(crlf)) crlf[[1L]] else integer())
     if (!length(starts)) return(NULL)
     start <- min(starts)
-    list(start = start, end = start + if (start %in% crlf) 3L else 1L)
+    delimiter_len <- if (start %in% crlf) 4L else 2L
+    list(start = start, end = start + delimiter_len - 1L)
   }
 
   delta_from <- function(data) {
@@ -625,7 +766,9 @@ nrouter_sse_parser <- function(on_chunk) {
   }
 
   dispatch <- function(frame) {
-    lines <- strsplit(gsub("\r\n", "\n", frame, fixed = TRUE), "\n", fixed = TRUE)[[1L]]
+    clean_frame <- gsub("\r\n", "\n", frame, fixed = TRUE)
+    clean_frame <- gsub("\r", "\n", clean_frame, fixed = TRUE)
+    lines <- strsplit(clean_frame, "\n", fixed = TRUE)[[1L]]
     event <- ""
     data_lines <- character()
     for (line in lines) {
@@ -646,14 +789,15 @@ nrouter_sse_parser <- function(on_chunk) {
     }
     data <- tryCatch(
       jsonlite::fromJSON(encoded, simplifyVector = FALSE),
-      error = function(e) stop(nrouter_transport_condition(
-        paste0("The stream contained invalid JSON: ", conditionMessage(e))
-      ))
+      error = function(e) {
+        if (identical(event, "error")) {
+          stop(nrouter_condition(encoded, code = "gateway_error", status = 200L))
+        }
+        NULL
+      }
     )
-    if (!is.list(data)) {
-      stop(nrouter_transport_condition(
-        "The stream contained a JSON event that is not an object."
-      ))
+    if (is.null(data) || !is.list(data)) {
+      return(invisible(NULL))
     }
     if (identical(event, "error") || is.list(data$error)) {
       node <- if (is.list(data$error)) data$error else data
@@ -693,6 +837,11 @@ nrouter_sse_parser <- function(on_chunk) {
   }
 
   finish <- function() {
+    if (!terminated && length(buffer)) {
+      frame <- rawToChar(buffer)
+      buffer <<- raw()
+      dispatch(frame)
+    }
     if (!terminated) {
       stop(nrouter_transport_condition(
         "The stream ended before its terminal event."
@@ -808,6 +957,7 @@ nrouter_completions_stream <- function(client, body, on_chunk) {
 #' @inheritParams nrouter_stream
 #' @export
 nrouter_messages_stream <- function(client, body, on_chunk) {
+  body <- nrouter_normalize_anthropic_messages(body)
   nrouter_stream(client, "/messages", body, on_chunk)
 }
 

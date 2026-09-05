@@ -221,6 +221,30 @@ void main() {
       );
       expect(client.baseUrl, 'https://api.nrouter.ai/v1');
     });
+
+    test('cleartext is limited to loopback development gateways and rejects credentials', () {
+      for (final allowed in [
+        'http://127.0.0.1:4000/v1',
+        'http://[::1]:4000/v1',
+        'http://localhost:4000/v1',
+        'https://api.nrouter.ai/v1',
+      ]) {
+        expect(() => NRouter(apiKey: 'sk-nrouter-abc', baseUrl: allowed), returnsNormally);
+      }
+
+      for (final refused in [
+        'http://api.nrouter.ai/v1',
+        'http://192.0.2.10:4000/v1',
+        'ftp://127.0.0.1/v1',
+        'https://user:pass@api.nrouter.ai/v1',
+        'not-a-url',
+      ]) {
+        expect(
+          () => NRouter(apiKey: 'sk-nrouter-abc', baseUrl: refused),
+          throwsA(isA<NRouterConfigurationError>()),
+        );
+      }
+    });
   });
 
   group('transport deadlines', () {
@@ -484,6 +508,27 @@ void main() {
       );
     });
 
+    test('stream handles non-JSON keepalives, CR-only boundaries, and trailing event', () async {
+      final mock = MockClient.streaming((request, bodyStream) async {
+        await bodyStream.drain<void>();
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(
+            ': keep-alive\r\r'
+            'data: ping\r\r'
+            'data: {"choices":[{"delta":{"content":"  def foo():"}}]}\n\n'
+            'data: [DONE]',
+          )),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+
+      final chunks = await client.chatCompletionsStream({}).toList();
+      expect(chunks, hasLength(1));
+      expect(chunks.single.delta, '  def foo():');
+    });
+
     test('a call carries the key and returns the gateway metadata', () async {
       late http.Request seen;
       final mock = MockClient((request) async {
@@ -697,6 +742,39 @@ void main() {
       await mem.clear();
       final cleared = await mem.messages();
       expect(cleared.length, 0);
+
+      // Developer and tool roles
+      await mem.add({'role': 'developer', 'content': 'sys prompt'});
+      await mem.add({'role': 'tool', 'content': 'tool res'});
+
+      // Assistant with tool_calls and null content
+      await mem.add({'role': 'assistant', 'content': null, 'tool_calls': [{'id': 'c1'}]});
+      final updated = await mem.messages();
+      expect(updated.length, 3);
+      expect(updated[0]['role'], 'developer');
+      expect(updated[1]['role'], 'tool');
+      expect(updated[2]['role'], 'assistant');
+
+      // Sliding window via messages
+      final windowed = await mem.messages(maxMessages: 2, preserveSystem: true);
+      expect(windowed.length, 2);
+      expect(windowed[0]['role'], 'developer');
+      expect(windowed[1]['role'], 'assistant');
+    });
+
+    test('slidingWindow helper prunes messages and preserves system', () {
+      final msgs = [
+        {'role': 'system', 'content': 'sys'},
+        {'role': 'user', 'content': '1'},
+        {'role': 'assistant', 'content': '2'},
+        {'role': 'user', 'content': '3'},
+        {'role': 'assistant', 'content': '4'},
+      ];
+      final pruned = slidingWindow(msgs, 3, preserveSystem: true);
+      expect(pruned.length, 3);
+      expect(pruned[0]['role'], 'system');
+      expect(pruned[1]['content'], '3');
+      expect(pruned[2]['content'], '4');
     });
 
     test('prompt helpers and system variable conflicts', () {
@@ -718,6 +796,44 @@ void main() {
       });
       expect(conflicts, ['org_name', 'timestamp', 'user_id']);
     });
+
+    test('renderPrompt safely interpolates variables', () {
+      // 1. Whitespace tolerance & type formatting
+      final tpl = 'Hello {{name}}! Age: {{  age  }}, active: {{ active }}.';
+      final out = renderPrompt(tpl, {'name': 'Alice', 'age': 30, 'active': true});
+      expect(out, 'Hello Alice! Age: 30, active: true.');
+
+      // 2. Single-pass non-recursive expansion
+      final tpl2 = 'Value: {{a}}';
+      final out2 = renderPrompt(tpl2, {'a': '{{b}}', 'b': 'final'});
+      expect(out2, 'Value: {{b}}');
+
+      // 3. Metacharacter safety ($1, $&, escapes)
+      final tpl3 = 'Price: {{price}}, Path: {{path}}';
+      final out3 = renderPrompt(tpl3, {'price': r'$100', 'path': r'C:\test\1'});
+      expect(out3, r'Price: $100, Path: C:\test\1');
+
+      // 4. Non-strict preserves missing tokens
+      final tpl4 = 'Greeting: {{hello}}, missing: {{world}}';
+      final out4 = renderPrompt(tpl4, {'hello': 'hi'});
+      expect(out4, 'Greeting: hi, missing: {{world}}');
+
+      // 5. Strict throws error on missing tokens
+      expect(
+        () => renderPrompt(tpl4, {'hello': 'hi'}, const RenderPromptOptions(strict: true)),
+        throwsA(isA<NRouterConfigurationError>()),
+      );
+
+      // 6. System variables override
+      final tpl5 = 'Model: {{model}}, User: {{user}}';
+      final out5 = renderPrompt(
+        tpl5,
+        {'model': 'caller-model', 'user': 'alice'},
+        const RenderPromptOptions(systemVariables: {'model': 'claude-3-7-sonnet'}),
+      );
+      expect(out5, 'Model: claude-3-7-sonnet, User: alice');
+    });
+
 
     test('media audio validation and video polling', () async {
       for (final fmt in ['mp3', 'opus', 'aac', 'flac', 'wav', 'pcm', 'MP3']) {
@@ -746,6 +862,9 @@ void main() {
 
     test('sampling policy adheres to Claude rules', () {
       expect(isClaudeModel('claude-3-opus'), isTrue);
+      expect(isClaudeModel('sonnet-4-5'), isTrue);
+      expect(isClaudeModel('haiku-3-5'), isTrue);
+      expect(isClaudeModel('opus-4'), isTrue);
       expect(isClaudeModel('custom-model', 'anthropic'), isTrue);
       expect(isClaudeModel('gpt-4o', 'openai'), isFalse);
 
@@ -768,6 +887,21 @@ void main() {
         () => buildSamplingParams(advanced: true, model: 'gpt-4o', topP: 1.5),
         throwsA(isA<NRouterConfigurationError>()),
       );
+
+      final normalized = NRouter.normalizeAnthropicMessages({
+        'model': 'claude-sonnet-4-5',
+        'system': 'Initial system',
+        'messages': [
+          {'role': 'system', 'content': 'Turn system'},
+          {'role': 'user', 'content': 'Hello'},
+        ],
+        'max_completion_tokens': 1024,
+        'stop': 'Human:',
+      });
+      expect(normalized['system'], 'Initial system\n\nTurn system');
+      expect((normalized['messages'] as List).length, 1);
+      expect(normalized['max_tokens'], 1024);
+      expect(normalized['stop_sequences'], ['Human:']);
     });
   });
 }

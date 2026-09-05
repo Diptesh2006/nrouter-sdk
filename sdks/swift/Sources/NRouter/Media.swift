@@ -26,6 +26,7 @@ extension NRouter {
 
         let start = Date()
         while Date().timeIntervalSince(start) < timeout {
+            try Task.checkCancellation()
             let resp = try await retrieveVideo(trimmedID)
             if let status = resp.body["status"] as? String {
                 let s = status.lowercased()

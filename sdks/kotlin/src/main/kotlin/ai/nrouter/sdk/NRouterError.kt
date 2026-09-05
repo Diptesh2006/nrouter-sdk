@@ -73,7 +73,10 @@ public sealed class NRouterError(
      * change the answer.
      */
     public val isRetryable: Boolean
-        get() = this is RateLimit || this is Service || this is Transport
+        get() {
+            if (body?.status == 408 || body?.status == 425) return true
+            return this is RateLimit || this is Service || this is Transport
+        }
 
     public companion object {
         /**

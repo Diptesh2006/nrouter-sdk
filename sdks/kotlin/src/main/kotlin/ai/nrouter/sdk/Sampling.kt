@@ -6,7 +6,7 @@ public const val NEUTRAL_TOP_P: Double = 1.0
 public fun isClaudeModel(model: String, provider: String? = null): Boolean {
     val m = model.lowercase()
     val p = provider?.lowercase() ?: ""
-    return m.contains("claude") || p.contains("anthropic")
+    return m.contains("claude") || m.contains("haiku") || m.contains("sonnet") || m.contains("opus") || p.contains("anthropic")
 }
 
 /** Implements Claude sampling policy: mutual exclusion between temperature and top_p. */

@@ -235,3 +235,59 @@ export function systemVariableConflicts(
     Object.prototype.hasOwnProperty.call(variables, name),
   );
 }
+
+/** Options for client-side prompt template rendering. */
+export interface RenderPromptOptions {
+  /** If true, throw configurationError when a template variable is missing. Default: false. */
+  strict?: boolean;
+  /** System variables that override caller variables, matching gateway precedence. */
+  systemVariables?: Record<string, string>;
+}
+
+/**
+ * Safely renders a prompt template by interpolating `{{variable}}` or `{{ variable }}` tokens.
+ *
+ * Security and resiliency features:
+ * - Single-pass replacement prevents recursive variable expansion loops.
+ * - Replacer function avoids JS regex replacement string metacharacter injection (`$1`, `$&`, `$'`).
+ * - Prototype pollution safe: only own properties are read from `variables`.
+ * - Optional `strict: true` validates that all template variables are present.
+ */
+export function renderPrompt(
+  template: string,
+  variables?: Record<string, any> | null,
+  options?: RenderPromptOptions,
+): string {
+  if (typeof template !== 'string') {
+    return '';
+  }
+
+  const strict = options?.strict ?? false;
+  const sysVars = options?.systemVariables;
+  const missingKeys: string[] = [];
+
+  const result = template.replace(/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g, (match, key) => {
+    // 1. Gateway system variables take precedence if provided
+    if (sysVars && Object.prototype.hasOwnProperty.call(sysVars, key)) {
+      return String(sysVars[key] ?? '');
+    }
+    // 2. Safe own-property lookup prevents prototype pollution
+    if (variables && Object.prototype.hasOwnProperty.call(variables, key)) {
+      const val = variables[key];
+      return val === null || val === undefined ? '' : String(val);
+    }
+    if (strict) {
+      missingKeys.push(key);
+    }
+    return match;
+  });
+
+  if (strict && missingKeys.length > 0) {
+    throw configurationError(
+      `Missing required prompt template variables: ${missingKeys.join(', ')}`,
+    );
+  }
+
+  return result;
+}
+

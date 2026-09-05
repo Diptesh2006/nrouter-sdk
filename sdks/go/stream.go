@@ -51,7 +51,7 @@ func (c *Client) CompletionsStream(ctx context.Context, body any) (*Stream, erro
 
 // MessagesStream streams the native Anthropic /messages wire.
 func (c *Client) MessagesStream(ctx context.Context, body any) (*Stream, error) {
-	return c.Stream(ctx, "/messages", body)
+	return c.Stream(ctx, "/messages", NormalizeAnthropicMessages(body))
 }
 
 // ResponsesStream streams the OpenAI /responses wire.
@@ -101,7 +101,33 @@ func (c *Client) Stream(ctx context.Context, path string, body any) (*Stream, er
 
 	scanner := bufio.NewScanner(res.Body)
 	scanner.Buffer(make([]byte, 4096), maxSSELine)
+	scanner.Split(scanLinesCRLF)
 	return &Stream{Meta: meta, response: res, scanner: scanner}, nil
+}
+
+func scanLinesCRLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	if i := bytes.IndexAny(data, "\r\n"); i >= 0 {
+		if data[i] == '\r' {
+			if i+1 < len(data) {
+				if data[i+1] == '\n' {
+					return i + 2, data[0:i], nil
+				}
+				return i + 1, data[0:i], nil
+			}
+			if atEOF {
+				return i + 1, data[0:i], nil
+			}
+			return 0, nil, nil
+		}
+		return i + 1, data[0:i], nil
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 func streamingBody(body any) ([]byte, error) {
@@ -153,11 +179,19 @@ func (s *Stream) Next() bool {
 			s.data = append(s.data, value)
 		}
 	}
+	if len(s.data) > 0 {
+		if s.dispatch() {
+			return true
+		}
+		if s.done {
+			return false
+		}
+	}
 	if err := s.scanner.Err(); err != nil {
 		failure := transportErr("the stream failed while being read: %v", err).withResponse(s.response, s.Meta)
 		failure.Cause = err
 		s.err = failure
-	} else {
+	} else if !s.done {
 		// Both gateway stream wires have an explicit terminator: [DONE] on the
 		// OpenAI-compatible wires and message_stop on Anthropic. A bare EOF is
 		// indistinguishable from a cut connection and must not look complete.

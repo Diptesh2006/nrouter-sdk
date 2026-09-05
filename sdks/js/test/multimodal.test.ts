@@ -1,7 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { nRouter, nRouterConfigurationError } = require('../dist/index');
+const {
+  nRouter,
+  nRouterConfigurationError,
+  validateAudioFormat,
+  VALID_AUDIO_FORMATS,
+} = require('../dist/index');
 
 const TEST_KEY = 'sk-nrouter-test0000000000000abcd';
 
@@ -172,4 +177,62 @@ test('nr.media.transcribe supports plain text, srt, and vtt formats', async () =
     assert.ok(res.text.includes('00:00:00,000'));
   }
   assert.equal(res.meta.requestId, 'req-transcribe-srt');
+});
+
+test('validateAudioFormat accepts valid formats and rejects invalid ones', () => {
+  for (const fmt of VALID_AUDIO_FORMATS) {
+    assert.doesNotThrow(() => validateAudioFormat(fmt));
+    assert.doesNotThrow(() => validateAudioFormat(` ${fmt.toUpperCase()} `));
+  }
+  assert.throws(() => validateAudioFormat('mp4'), nRouterConfigurationError);
+  assert.throws(() => validateAudioFormat('ogg'), nRouterConfigurationError);
+});
+
+test('nr.media.speech validates response_format', async () => {
+  const client = new nRouter({ apiKey: TEST_KEY });
+  await assert.rejects(
+    () => client.nr.media.speech({
+      model: 'tts-1',
+      input: 'hello',
+      voice: 'alloy',
+      response_format: 'unsupported' as any,
+    }),
+    nRouterConfigurationError
+  );
+});
+
+test('nr.media.waitForVideo polls until completion', async () => {
+  let calls = 0;
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    fetch: async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/videos/vid_poll')) {
+        calls++;
+        if (calls === 1) {
+          return jsonResponse({ id: 'vid_poll', status: 'processing' });
+        }
+        return jsonResponse({ id: 'vid_poll', status: 'completed' });
+      }
+      return new Response('not found', { status: 404 });
+    },
+  });
+
+  const res = await client.nr.media.waitForVideo('vid_poll', { pollIntervalMs: 10, timeoutMs: 1000 });
+  assert.equal(res.body.status, 'completed');
+  assert.equal(calls, 2);
+});
+
+test('nr.media.waitForVideo throws on failed status', async () => {
+  const client = new nRouter({
+    apiKey: TEST_KEY,
+    fetch: async (url: unknown) => {
+      return jsonResponse({ id: 'vid_fail', status: 'failed' });
+    },
+  });
+
+  await assert.rejects(
+    () => client.nr.media.waitForVideo('vid_fail', { pollIntervalMs: 10, timeoutMs: 1000 }),
+    /ended with status: failed/
+  );
 });

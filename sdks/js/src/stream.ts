@@ -511,7 +511,7 @@ function interpret(
   // stream: the reader falls off the end of a whole answer, reports it
   // truncated and marks it retryable, so a caller's retry loop re-sends — and
   // re-pays for — a request that already succeeded (gateway §4f gate 8).
-  if (raw.type === 'message_stop') {
+  if (raw.type === 'message_stop' || raw.type === 'response.completed') {
     return { kind: 'done' };
   }
 
@@ -521,18 +521,24 @@ function interpret(
 /**
  * The incremental text a frame carried.
  *
- * Two wire shapes, because the gateway serves both `/v1/chat/completions`
- * (OpenAI-shaped: `choices[0].delta.content`) and `/v1/messages`
- * (Anthropic-shaped: a `content_block_delta` carrying `delta.text`). The
- * Anthropic arm is gated on `type` so a `message_delta` — whose `delta` holds
- * a stop reason, not text — cannot be read as content.
+ * Covers OpenAI chat (`choices[0].delta.content`), OpenAI completions
+ * (`choices[0].text`), direct deltas (`delta`), and Anthropic messages
+ * (`content_block_delta` carrying `delta.text`).
  */
 function extractDelta(raw: Record<string, unknown>): string {
+  if (typeof raw.delta === 'string') return raw.delta;
+  if (typeof raw.delta === 'object' && raw.delta !== null) {
+    const text = (raw.delta as Record<string, unknown>).text;
+    if (typeof text === 'string') return text;
+  }
+
   const choices = raw.choices;
   if (Array.isArray(choices) && choices.length > 0) {
     const first = choices[0];
     if (typeof first === 'object' && first !== null) {
-      const delta = (first as Record<string, unknown>).delta;
+      const choiceObj = first as Record<string, unknown>;
+      if (typeof choiceObj.text === 'string') return choiceObj.text;
+      const delta = choiceObj.delta;
       if (typeof delta === 'object' && delta !== null) {
         const content = (delta as Record<string, unknown>).content;
         if (typeof content === 'string') return content;

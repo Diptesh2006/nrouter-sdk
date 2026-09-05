@@ -2,6 +2,7 @@ package nrouter
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -96,3 +97,66 @@ func SystemVariableConflicts(variables map[string]any) []string {
 	}
 	return conflicts
 }
+
+// RenderPromptOptions controls client-side prompt template interpolation.
+type RenderPromptOptions struct {
+	Strict          bool
+	SystemVariables map[string]string
+}
+
+var promptVariableRegex = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}`)
+
+// RenderPrompt safely interpolates `{{variable}}` or `{{ variable }}` tokens in a template.
+//
+// Security & resiliency features:
+// - Single-pass replacement prevents recursive variable expansion loops.
+// - Safe interpolation: no metacharacter injection from variable values.
+// - Strict mode: returns error if any template variable is missing.
+// - System variables: take precedence over caller variables matching gateway rules.
+func RenderPrompt(template string, variables map[string]any, opts ...RenderPromptOptions) (string, error) {
+	if template == "" {
+		return "", nil
+	}
+	var options RenderPromptOptions
+	if len(opts) > 0 {
+		options = opts[0]
+	}
+
+	var missingKeys []string
+	result := promptVariableRegex.ReplaceAllStringFunc(template, func(match string) string {
+		submatches := promptVariableRegex.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+		key := submatches[1]
+
+		// 1. System variables take precedence
+		if options.SystemVariables != nil {
+			if sysVal, ok := options.SystemVariables[key]; ok {
+				return sysVal
+			}
+		}
+
+		// 2. Caller variables
+		if variables != nil {
+			if val, ok := variables[key]; ok {
+				if val == nil {
+					return ""
+				}
+				return fmt.Sprintf("%v", val)
+			}
+		}
+
+		if options.Strict {
+			missingKeys = append(missingKeys, key)
+		}
+		return match
+	})
+
+	if options.Strict && len(missingKeys) > 0 {
+		return "", fmt.Errorf("missing required prompt template variables: %s", strings.Join(missingKeys, ", "))
+	}
+
+	return result, nil
+}
+

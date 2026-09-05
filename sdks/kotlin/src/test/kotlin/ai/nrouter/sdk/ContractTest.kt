@@ -44,8 +44,51 @@ class ContractTest {
         assertTrue(NRouter.usesMessagesWire("claude-3-5-sonnet-20241022"))
         assertTrue(NRouter.usesMessagesWire("anthropic/claude-3-haiku"))
         assertTrue(NRouter.usesMessagesWire("my-model", "anthropic"))
+        assertTrue(NRouter.usesMessagesWire("haiku-3"))
+        assertTrue(NRouter.usesMessagesWire("sonnet-3.7"))
+        assertTrue(NRouter.usesMessagesWire("opus-4"))
         assertFalse(NRouter.usesMessagesWire("gpt-4o"))
         assertFalse(NRouter.usesMessagesWire("meta-llama/llama-3"))
+    }
+
+    @Test
+    fun `isClaudeModel recognizes aliases`() {
+        assertTrue(isClaudeModel("claude-3-5-sonnet"))
+        assertTrue(isClaudeModel("anthropic.claude-v2"))
+        assertTrue(isClaudeModel("haiku-20240307"))
+        assertTrue(isClaudeModel("sonnet-3.7"))
+        assertTrue(isClaudeModel("opus-4"))
+        assertTrue(isClaudeModel("custom", "anthropic"))
+        assertFalse(isClaudeModel("gpt-4o"))
+    }
+
+    @Test
+    fun `normalizeAnthropicMessages normalizes payload`() {
+        val input = JSONObject()
+            .put("model", "claude-3-5-sonnet")
+            .put("system", "Base prompt.")
+            .put("max_completion_tokens", 1000)
+            .put("stop", "STOP_HERE")
+            .put(
+                "messages",
+                listOf(
+                    mapOf("role" to "system", "content" to "Extra system instructions."),
+                    mapOf("role" to "user", "content" to "Hello Claude"),
+                ),
+            )
+
+        val normalized = NRouter.normalizeAnthropicMessages(input)
+
+        assertEquals("Base prompt.\n\nExtra system instructions.", normalized.getString("system"))
+        assertEquals(1000, normalized.getInt("max_tokens"))
+        assertFalse(normalized.has("max_completion_tokens"))
+        assertEquals("STOP_HERE", normalized.getJSONArray("stop_sequences").getString(0))
+        assertFalse(normalized.has("stop"))
+
+        val messages = normalized.getJSONArray("messages")
+        assertEquals(1, messages.length())
+        assertEquals("user", messages.getJSONObject(0).getString("role"))
+        assertEquals("Hello Claude", messages.getJSONObject(0).getString("content"))
     }
 
     @Test
@@ -332,6 +375,26 @@ class ContractTest {
         }
         assertEquals("req_blocked", error.body?.requestId)
         assertEquals("guardrail_blocked", error.body?.code)
+    }
+
+    @Test
+    fun `stream handles keepalive and trailing event without blank line`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "text/event-stream")
+                .setHeader("x-nr-request-id", "req_stream_robust")
+                .setBody(
+                    ": keep-alive\n\n" +
+                        "data: ping\n\n" +
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"  def foo():\"}}]}\n\n" +
+                        "data: [DONE]",
+                ),
+        )
+
+        val chunks = clientFor(server).chatCompletionsStream(JSONObject()).toList()
+        assertEquals(1, chunks.size)
+        assertEquals("  def foo():", chunks.single().delta)
     }
 
     @Test
@@ -740,6 +803,40 @@ class ContractTest {
 
         mem.clear()
         assertEquals(0, mem.messages().size)
+
+        // Developer and tool roles
+        mem.add(mapOf("role" to "developer", "content" to "sys instructions"))
+        mem.add(mapOf("role" to "tool", "content" to "tool result"))
+
+        // Assistant with null content and tool_calls
+        mem.add(mapOf("role" to "assistant", "content" to null, "tool_calls" to listOf(mapOf("id" to "c1"))))
+        val updated = mem.messages()
+        assertEquals(3, updated.size)
+        assertEquals("developer", updated[0]["role"])
+        assertEquals("tool", updated[1]["role"])
+        assertEquals("assistant", updated[2]["role"])
+
+        // Windowing via messages
+        val windowed = mem.messages(maxMessages = 2, preserveSystem = true)
+        assertEquals(2, windowed.size)
+        assertEquals("developer", windowed[0]["role"])
+        assertEquals("assistant", windowed[1]["role"])
+    }
+
+    @Test
+    fun `slidingWindow helper prunes messages and preserves system prompt`() {
+        val msgs = listOf(
+            mapOf("role" to "system", "content" to "sys"),
+            mapOf("role" to "user", "content" to "1"),
+            mapOf("role" to "assistant", "content" to "2"),
+            mapOf("role" to "user", "content" to "3"),
+            mapOf("role" to "assistant", "content" to "4")
+        )
+        val pruned = slidingWindow(msgs, 3, preserveSystem = true)
+        assertEquals(3, pruned.size)
+        assertEquals("system", pruned[0]["role"])
+        assertEquals("3", pruned[1]["content"])
+        assertEquals("4", pruned[2]["content"])
     }
 
     @Test
@@ -763,6 +860,43 @@ class ContractTest {
             "timestamp" to 123
         ))
         assertEquals(listOf("org_name", "timestamp", "user_id"), conflicts)
+    }
+
+    @Test
+    fun `renderPrompt safely interpolates variables`() {
+        // 1. Whitespace tolerance & formatting
+        val tpl = "Hello {{name}}! Age: {{  age  }}, active: {{ active }}."
+        val out = renderPrompt(tpl, mapOf("name" to "Alice", "age" to 30, "active" to true))
+        assertEquals("Hello Alice! Age: 30, active: true.", out)
+
+        // 2. Single pass non-recursive
+        val tpl2 = "Value: {{a}}"
+        val out2 = renderPrompt(tpl2, mapOf("a" to "{{b}}", "b" to "final"))
+        assertEquals("Value: {{b}}", out2)
+
+        // 3. Metacharacter safety ($1, $&, escapes)
+        val tpl3 = "Price: {{price}}, Path: {{path}}"
+        val out3 = renderPrompt(tpl3, mapOf("price" to "$100", "path" to "C:\\test\\1"))
+        assertEquals("Price: $100, Path: C:\\test\\1", out3)
+
+        // 4. Non-strict preserves missing tokens
+        val tpl4 = "Greeting: {{hello}}, missing: {{world}}"
+        val out4 = renderPrompt(tpl4, mapOf("hello" to "hi"))
+        assertEquals("Greeting: hi, missing: {{world}}", out4)
+
+        // 5. Strict throws error on missing tokens
+        assertFailsWith<NRouterError.Configuration> {
+            renderPrompt(tpl4, mapOf("hello" to "hi"), RenderPromptOptions(strict = true))
+        }
+
+        // 6. System variables override
+        val tpl5 = "Model: {{model}}, User: {{user}}"
+        val out5 = renderPrompt(
+            tpl5,
+            mapOf("model" to "caller-model", "user" to "alice"),
+            RenderPromptOptions(systemVariables = mapOf("model" to "claude-3-7-sonnet"))
+        )
+        assertEquals("Model: claude-3-7-sonnet, User: alice", out5)
     }
 
     @Test
@@ -815,5 +949,53 @@ class ContractTest {
         ).format(java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
         assertEquals(0L, NRouterError.parseRetryAfter(past, now))
     }
+
+    @Test
+    fun `media audio validation and video polling`() = runBlocking {
+        for (fmt in VALID_AUDIO_FORMATS) {
+            validateAudioFormat(fmt)
+            validateAudioFormat(" ${fmt.uppercase()} ")
+        }
+        assertFailsWith<NRouterError.Configuration> {
+            validateAudioFormat("unsupported_fmt")
+        }
+
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("content-type", "application/json")
+                .setBody("""{"id":"vid_123","status":"completed","output":"https://example.com/out.mp4"}""")
+        )
+
+        val client = clientFor(server)
+        val resp = client.waitForVideo("vid_123", pollIntervalMillis = 10, timeoutMillis = 1000)
+        assertEquals("completed", resp.body.getString("status"))
+    }
+
+    @Test
+    fun `cleartext is limited to loopback development gateways and rejects credentials`() {
+        for (allowed in listOf(
+            "http://127.0.0.1:4000/v1",
+            "http://[::1]:4000/v1",
+            "http://localhost:4000/v1",
+            "https://api.nrouter.ai/v1",
+        )) {
+            val client = NRouter(apiKey = "sk-nrouter-abc", baseURL = allowed)
+            assertEquals(allowed.trimEnd('/'), client.baseURL)
+        }
+
+        for (refused in listOf(
+            "http://api.nrouter.ai/v1",
+            "http://192.0.2.10:4000/v1",
+            "ftp://127.0.0.1/v1",
+            "https://user:pass@api.nrouter.ai/v1",
+            "not-a-url",
+        )) {
+            assertFailsWith<NRouterError.Configuration> {
+                NRouter(apiKey = "sk-nrouter-abc", baseURL = refused)
+            }
+        }
+    }
 }
+
 

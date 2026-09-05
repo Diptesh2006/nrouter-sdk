@@ -80,7 +80,7 @@ const NEUTRAL_TOP_P = 1;
  * but the provider attribution still says Anthropic.
  */
 export function isClaudeModel(model: string, provider?: string | null): boolean {
-  return /claude/i.test(model) || /anthropic/i.test(provider ?? '');
+  return /claude|anthropic|haiku|sonnet|opus/i.test(model ?? '') || /anthropic/i.test(provider ?? '');
 }
 
 /**

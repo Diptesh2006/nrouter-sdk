@@ -144,6 +144,25 @@ async fn stream_guardrail_event_is_a_typed_failure() {
 }
 
 #[tokio::test]
+async fn stream_handles_keepalive_cr_boundaries_and_trailing_event() {
+    let body = concat!(
+        ": keep-alive\r\r",
+        "data: ping\r\r",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"  def foo():\"}}]}\n\n",
+        "data: [DONE]"
+    );
+    let (base, _rx) = serve_once(200, "text/event-stream", body);
+    let mut stream = client(&base)
+        .chat_completions_stream(&json!({}))
+        .await
+        .expect("open stream");
+    let chunk = stream.next().await.expect("ok").expect("chunk");
+    assert_eq!(chunk.delta, "  def foo():");
+    let term = stream.next().await.expect("ok");
+    assert!(term.is_none());
+}
+
+#[tokio::test]
 async fn a_non_json_2xx_refuses_rather_than_reporting_an_empty_success() {
     // /v1/audio/speech returns audio. Parsed as JSON it becomes Null — the
     // caller is BILLED and receives nothing, while the call reports 200.
@@ -479,5 +498,50 @@ async fn with_http_client_fully_overrides_the_default_deadlines() {
     assert!(
         started.elapsed() < std::time::Duration::from_secs(3),
         "the caller's client was not in force"
+    );
+}
+
+#[test]
+fn compute_jittered_backoff_bounds() {
+    let base = std::time::Duration::from_millis(1000);
+    let max = std::time::Duration::from_millis(10000);
+
+    // Exponential bounds
+    let d0 = nrouter::compute_jittered_backoff(0, base, max, None);
+    assert!(
+        d0 >= std::time::Duration::from_millis(500) && d0 <= std::time::Duration::from_millis(1000)
+    );
+
+    let d2 = nrouter::compute_jittered_backoff(2, base, max, None);
+    assert!(
+        d2 >= std::time::Duration::from_millis(2000)
+            && d2 <= std::time::Duration::from_millis(4000)
+    );
+
+    // Attempt capping prevents overflow
+    let dhuge =
+        nrouter::compute_jittered_backoff(100, base, std::time::Duration::from_millis(8000), None);
+    assert!(
+        dhuge >= std::time::Duration::from_millis(4000)
+            && dhuge <= std::time::Duration::from_millis(8000)
+    );
+
+    // Retry-After precedence
+    let d_retry = nrouter::compute_jittered_backoff(0, base, max, Some(5));
+    assert!(
+        d_retry >= std::time::Duration::from_millis(2500)
+            && d_retry <= std::time::Duration::from_millis(5000)
+    );
+
+    // Retry-After capped by max_delay
+    let d_retry_capped = nrouter::compute_jittered_backoff(
+        0,
+        base,
+        std::time::Duration::from_millis(4000),
+        Some(20),
+    );
+    assert!(
+        d_retry_capped >= std::time::Duration::from_millis(2000)
+            && d_retry_capped <= std::time::Duration::from_millis(4000)
     );
 }

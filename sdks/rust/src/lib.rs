@@ -55,6 +55,7 @@
 
 pub mod errors;
 pub mod http;
+pub mod media;
 pub mod memory;
 pub mod meta;
 pub mod options;
@@ -62,9 +63,13 @@ pub mod prompts;
 pub mod sampling;
 
 pub use errors::{
-    parse_retry_after, parse_retry_after_at, ErrorBody, NRouterError, MAX_RETRY_AFTER_SECONDS,
+    compute_jittered_backoff, parse_retry_after, parse_retry_after_at, ErrorBody, NRouterError,
+    MAX_RETRY_AFTER_SECONDS,
 };
+pub use media::{validate_audio_format, VALID_AUDIO_FORMATS};
+pub use memory::{sliding_window, ArrayStore, ChatMessage, Memory, MemoryStore};
 pub use meta::{BudgetWarningInfo, ResponseMeta, HEADER_NAMES};
+pub use prompts::{render_prompt, RenderPromptOptions};
 
 /// True when a model family is served on /v1/messages rather than /v1/chat/completions.
 pub fn uses_messages_wire(model: &str, provider: Option<&str>) -> bool {

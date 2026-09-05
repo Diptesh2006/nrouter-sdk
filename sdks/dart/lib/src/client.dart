@@ -143,6 +143,36 @@ class NRouter {
   /// [httpClient] on purpose:
   /// `package:http`'s `Client` interface carries no timeout, so injecting one
   /// cannot supply the bound and would silently restore the unbounded default.
+  static String _normalizeBaseUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.contains('\r') || trimmed.contains('\n') || trimmed.contains('\t')) {
+      throw NRouterConfigurationError('Base URL contains invalid control characters or whitespace');
+    }
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+      throw NRouterConfigurationError("Invalid base URL '$url'");
+    }
+    if (uri.userInfo.isNotEmpty) {
+      throw NRouterConfigurationError('nRouter gateway URL must not contain credentials');
+    }
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') {
+      throw NRouterConfigurationError("Invalid base URL scheme '$scheme'");
+    }
+    final host = uri.host.toLowerCase();
+    final isLoopback = host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '::1' ||
+        host == '0.0.0.0' ||
+        host.endsWith('.local');
+    if (scheme == 'http' && !isLoopback) {
+      throw NRouterConfigurationError(
+        'nRouter gateway URL must use HTTPS; HTTP is allowed only for loopback development',
+      );
+    }
+    return trimmed.endsWith('/') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
+  }
+
   NRouter({
     required String apiKey,
     String baseUrl = defaultBaseUrl,
@@ -151,9 +181,7 @@ class NRouter {
     this.streamTimeout = defaultStreamTimeout,
     this.bodyIdleTimeout = defaultBodyIdleTimeout,
   })  : _apiKey = validateApiKey(apiKey),
-        baseUrl = baseUrl.endsWith('/')
-            ? baseUrl.substring(0, baseUrl.length - 1)
-            : baseUrl,
+        baseUrl = _normalizeBaseUrl(baseUrl),
         _http = httpClient ?? http.Client(),
         _ownsClient = httpClient == null;
 
@@ -242,9 +270,80 @@ class NRouter {
   Future<NRouterResponse> embeddings(Map<String, dynamic> body) =>
       post('/embeddings', body);
 
+  /// Normalizes messages body for the Anthropic Messages wire: extracts system messages into top-level system,
+  /// maps max_completion_tokens to max_tokens, and normalizes stop sequences.
+  static Map<String, dynamic> normalizeAnthropicMessages(Map<String, dynamic> body) {
+    final out = Map<String, dynamic>.from(body);
+
+    if (out['messages'] is List) {
+      final messages = out['messages'] as List;
+      final cleaned = <dynamic>[];
+      final systemChunks = <String>[];
+
+      final existingSys = out['system'];
+      if (existingSys is String && existingSys.isNotEmpty) {
+        systemChunks.add(existingSys);
+      }
+
+      for (final turn in messages) {
+        if (turn is Map) {
+          final role = (turn['role'] as String? ?? '').toLowerCase();
+          if (role == 'system' || role == 'developer') {
+            final contentStr = turn['content'];
+            if (contentStr is String && contentStr.isNotEmpty) {
+              systemChunks.add(contentStr);
+            } else if (contentStr is List) {
+              for (final part in contentStr) {
+                if (part is Map && part['type'] == 'text') {
+                  final text = part['text'];
+                  if (text is String && text.isNotEmpty) {
+                    systemChunks.add(text);
+                  }
+                }
+              }
+            }
+            continue;
+          }
+        }
+        cleaned.add(turn);
+      }
+
+      out['messages'] = cleaned;
+      if (systemChunks.isNotEmpty) {
+        out['system'] = systemChunks.join('\n\n');
+      }
+    }
+
+    if (out.containsKey('max_completion_tokens')) {
+      final maxComp = out.remove('max_completion_tokens');
+      if (!out.containsKey('max_tokens')) {
+        out['max_tokens'] = maxComp;
+      }
+    }
+    if (!out.containsKey('max_tokens')) {
+      out['max_tokens'] = 4096;
+    }
+
+    if (out.containsKey('stop')) {
+      final stopVal = out.remove('stop');
+      if (!out.containsKey('stop_sequences')) {
+        if (stopVal is String && stopVal.isNotEmpty) {
+          out['stop_sequences'] = [stopVal];
+        } else if (stopVal is List) {
+          final valid = stopVal.whereType<String>().where((s) => s.isNotEmpty).toList();
+          if (valid.isNotEmpty) {
+            out['stop_sequences'] = valid;
+          }
+        }
+      }
+    }
+
+    return out;
+  }
+
   /// `POST /messages` — the Anthropic wire format the gateway also serves.
   Future<NRouterResponse> messages(Map<String, dynamic> body) =>
-      post('/messages', body);
+      post('/messages', normalizeAnthropicMessages(body));
 
   /// `POST /responses`
   Future<NRouterResponse> responses(Map<String, dynamic> body) =>
@@ -260,7 +359,7 @@ class NRouter {
 
   /// Incrementally stream the native Anthropic `POST /messages` wire.
   Stream<NRouterStreamChunk> messagesStream(Map<String, dynamic> body) =>
-      stream('/messages', body);
+      stream('/messages', normalizeAnthropicMessages(body));
 
   /// Incrementally stream `POST /responses`.
   Stream<NRouterStreamChunk> responsesStream(Map<String, dynamic> body) =>
@@ -326,7 +425,7 @@ class NRouter {
     var terminated = false;
     try {
       await for (final text in response.stream.transform(utf8.decoder)) {
-        buffer = (buffer + text).replaceAll('\r\n', '\n');
+        buffer = (buffer + text).replaceAll('\r\n', '\n').replaceAll('\r', '\n');
         var boundary = buffer.indexOf('\n\n');
         while (boundary >= 0) {
           final frame = buffer.substring(0, boundary);
@@ -339,6 +438,14 @@ class NRouter {
           if (result.chunk != null) yield result.chunk!;
           boundary = buffer.indexOf('\n\n');
         }
+      }
+      if (!terminated && buffer.trim().isNotEmpty) {
+        final result = _parseSseFrame(buffer, meta, response.statusCode);
+        if (result.terminal) {
+          terminated = true;
+          return;
+        }
+        if (result.chunk != null) yield result.chunk!;
       }
     } on NRouterError {
       rethrow;
@@ -671,7 +778,10 @@ _SseResult _parseSseFrame(
 ) {
   var event = '';
   final dataLines = <String>[];
-  for (final line in frame.split('\n')) {
+  for (final rawLine in frame.split('\n')) {
+    final line = rawLine.endsWith('\r')
+        ? rawLine.substring(0, rawLine.length - 1)
+        : rawLine;
     if (line.isEmpty || line.startsWith(':')) continue;
     final separator = line.indexOf(':');
     final name = separator < 0 ? line : line.substring(0, separator);
@@ -685,17 +795,23 @@ _SseResult _parseSseFrame(
   if (encoded.isEmpty) return (chunk: null, terminal: false);
   if (encoded == '[DONE]') return (chunk: null, terminal: true);
 
-  final Object? decoded;
+  Object? decoded;
   try {
     decoded = jsonDecode(encoded);
-  } on FormatException catch (e) {
-    throw NRouterTransportError(
-        'the stream contained invalid JSON: ${e.message}');
+  } on FormatException {
+    if (event == 'error') {
+      throw NRouterError.fromCode(NRouterErrorBody(
+        message: encoded,
+        status: status,
+        requestId: meta.requestId,
+        limitSource: meta.limitSource,
+        authReason: meta.authReason,
+      ));
+    }
+    return (chunk: null, terminal: false);
   }
   if (decoded is! Map<String, dynamic>) {
-    throw const NRouterTransportError(
-      'the stream contained a JSON event that is not an object',
-    );
+    return (chunk: null, terminal: false);
   }
 
   if (event == 'error' || decoded['error'] != null) {

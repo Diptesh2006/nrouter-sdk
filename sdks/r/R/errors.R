@@ -27,14 +27,17 @@ NROUTER_ERROR_CLASSES <- c(
   service_unavailable  = "nrouter_service_error"
 )
 
-# Used only when the gateway supplied no code at all.
 NROUTER_STATUS_CLASSES <- c(
   "400" = "nrouter_request_error",
   "401" = "nrouter_authentication_error",
   "402" = "nrouter_credit_error",
   "404" = "nrouter_not_found_error",
+  "408" = "nrouter_transport_error",
+  "425" = "nrouter_service_error",
   "429" = "nrouter_rate_limit_error",
-  "503" = "nrouter_service_error"
+  "502" = "nrouter_service_error",
+  "503" = "nrouter_service_error",
+  "504" = "nrouter_service_error"
 )
 
 # Classes a retry could plausibly clear. Every other 4xx names something
@@ -145,5 +148,8 @@ nrouter_transport_condition <- function(message) {
 #' @return \code{TRUE} when retrying the identical request could succeed.
 #' @export
 nrouter_is_retryable <- function(cond) {
+  if (!is.null(cond$status) && cond$status %in% c(408, 425)) {
+    return(TRUE)
+  }
   any(class(cond) %in% NROUTER_RETRYABLE)
 }

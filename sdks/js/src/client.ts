@@ -458,6 +458,45 @@ function contentTypeOf(headers: HeaderSource): string {
 }
 
 /**
+ * Parse and enforce the transport boundary before an API key is attached.
+ * Plain HTTP is reserved for a loopback gateway on the same machine; every remote
+ * gateway must authenticate and encrypt the connection with HTTPS.
+ */
+export function validateGatewayBaseUrl(urlStr: string): string {
+  if (/[\r\n\t]/.test(urlStr)) {
+    throw configurationError('Base URL contains invalid control characters or whitespace');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(urlStr);
+  } catch (err) {
+    throw configurationError(`invalid nRouter gateway URL: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw configurationError(`invalid nRouter gateway URL scheme '${parsed.protocol.replace(':', '')}'`);
+  }
+  if (parsed.username || parsed.password) {
+    throw configurationError('nRouter gateway URL must not contain credentials');
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (!host) {
+    throw configurationError('nRouter gateway URL must include a host');
+  }
+  const isLoopback =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.local');
+  if (parsed.protocol === 'http:' && !isLoopback) {
+    throw configurationError(
+      'nRouter gateway URL must use HTTPS; HTTP is allowed only for loopback development'
+    );
+  }
+  return urlStr;
+}
+
+/**
  * Client pre-configured for nRouter.
  *
  * Every OpenAI resource (`chat.completions`, `embeddings`, `images`, …) is
@@ -582,7 +621,7 @@ export class nRouter extends OpenAI {
 
   constructor(options: NRouterOptions = {}) {
     const apiKey = resolveApiKey(options?.apiKey);
-    const baseURL = options?.baseURL || DEFAULT_BASE_URL;
+    const baseURL = validateGatewayBaseUrl(options?.baseURL || DEFAULT_BASE_URL);
     const bodyIdleTimeoutMs = options.bodyIdleTimeoutMs ?? DEFAULT_BODY_IDLE_TIMEOUT_MS;
     if (!Number.isFinite(bodyIdleTimeoutMs) || bodyIdleTimeoutMs <= 0) {
       throw configurationError('bodyIdleTimeoutMs must be a positive finite number');

@@ -221,7 +221,12 @@ public final class NRouter {
     }
 
     public static boolean isClaudeModel(String model, String provider) {
-        return containsIgnoreCase(model, "claude") || containsIgnoreCase(provider, "anthropic");
+        return containsIgnoreCase(model, "claude")
+                || containsIgnoreCase(model, "anthropic")
+                || containsIgnoreCase(model, "haiku")
+                || containsIgnoreCase(model, "sonnet")
+                || containsIgnoreCase(model, "opus")
+                || containsIgnoreCase(provider, "anthropic");
     }
 
     public static Map<String, Double> buildSamplingParams(

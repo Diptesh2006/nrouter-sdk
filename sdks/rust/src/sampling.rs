@@ -7,11 +7,14 @@ use crate::NRouterError;
 const NEUTRAL_TOP_P: f64 = 1.0;
 
 pub fn is_claude_model(model: &str, provider: Option<&str>) -> bool {
-    model.to_ascii_lowercase().contains("claude")
-        || provider
-            .unwrap_or("")
-            .to_ascii_lowercase()
-            .contains("anthropic")
+    let m = model.to_ascii_lowercase();
+    let p = provider.unwrap_or("").to_ascii_lowercase();
+    m.contains("claude")
+        || m.contains("anthropic")
+        || m.contains("haiku")
+        || m.contains("sonnet")
+        || m.contains("opus")
+        || p.contains("anthropic")
 }
 
 pub fn build_sampling_params(

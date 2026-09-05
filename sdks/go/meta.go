@@ -164,6 +164,10 @@ func (m ResponseMeta) ParseBudgetWarning() *BudgetWarningInfo {
 	if err != nil || n != 3 {
 		return nil
 	}
+	if math.IsNaN(spend) || math.IsInf(spend, 0) || spend < 0 ||
+		math.IsNaN(ceiling) || math.IsInf(ceiling, 0) || ceiling <= 0 {
+		return nil
+	}
 	return &BudgetWarningInfo{
 		Scope:   scope,
 		Spend:   spend,

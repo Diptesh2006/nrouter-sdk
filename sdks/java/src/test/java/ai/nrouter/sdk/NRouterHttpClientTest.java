@@ -723,4 +723,27 @@ class NRouterHttpClientTest {
             server.stop(0);
         }
     }
+
+    @Test
+    void cleartextIsLimitedToLoopbackAndRejectsCredentials() {
+        for (String allowed : List.of(
+                "http://127.0.0.1:4000/v1",
+                "http://[::1]:4000/v1",
+                "http://localhost:4000/v1",
+                "https://api.nrouter.ai/v1"
+        )) {
+            assertDoesNotThrow(() -> NRouter.httpClient("sk-nrouter-test", allowed));
+        }
+
+        for (String refused : List.of(
+                "http://api.nrouter.ai/v1",
+                "http://192.0.2.10:4000/v1",
+                "ftp://127.0.0.1/v1",
+                "https://user:pass@api.nrouter.ai/v1",
+                "not-a-url"
+        )) {
+            assertThrows(IllegalArgumentException.class, () -> NRouter.httpClient("sk-nrouter-test", refused));
+        }
+    }
 }
+

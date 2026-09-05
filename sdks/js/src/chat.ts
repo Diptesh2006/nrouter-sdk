@@ -451,6 +451,20 @@ export function toAnthropicMessagesRequest(
   const out: Record<string, unknown> = { model: openai['model'] };
 
   const systemChunks: string[] = [];
+  if (typeof openai['system'] === 'string' && openai['system']) {
+    systemChunks.push(openai['system']);
+  } else if (Array.isArray(openai['system'])) {
+    for (const part of openai['system']) {
+      if (typeof part === 'string' && part) {
+        systemChunks.push(part);
+      } else {
+        const p = asObject(part);
+        if (p?.['type'] === 'text' && typeof p['text'] === 'string' && p['text']) {
+          systemChunks.push(p['text']);
+        }
+      }
+    }
+  }
   const messages: Record<string, unknown>[] = [];
   const input = Array.isArray(openai['messages']) ? (openai['messages'] as unknown[]) : [];
 
@@ -529,15 +543,16 @@ export function toAnthropicMessagesRequest(
   if (systemChunks.length > 0) out['system'] = systemChunks.join('\n\n');
   out['messages'] = messages;
 
-  const maxTokens = finite(openai['max_tokens']);
+  const maxTokens = finite(openai['max_tokens']) ?? finite(openai['max_completion_tokens']);
   out['max_tokens'] =
     maxTokens !== null && maxTokens > 0 ? maxTokens : DEFAULT_ANTHROPIC_MAX_TOKENS;
 
-  const stop = openai['stop'];
+  const stop = openai['stop'] ?? openai['stop_sequences'];
   if (typeof stop === 'string' && stop) {
     out['stop_sequences'] = [stop];
   } else if (Array.isArray(stop) && stop.length > 0) {
-    out['stop_sequences'] = stop.filter((s) => typeof s === 'string' && s.length > 0);
+    const validStops = stop.filter((s) => typeof s === 'string' && s.length > 0);
+    if (validStops.length > 0) out['stop_sequences'] = validStops;
   }
 
   const temperature = finite(openai['temperature']);

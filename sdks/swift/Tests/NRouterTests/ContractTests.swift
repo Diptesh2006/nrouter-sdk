@@ -307,6 +307,30 @@ final class ContractTests: XCTestCase {
         }
     }
 
+    func testStreamHandlesKeepaliveCrBoundariesAndTrailingEvent() async throws {
+        StubProtocol.response = (
+            200,
+            ["content-type": "text/event-stream", "x-nr-request-id": "req_stream_robust"],
+            Data(
+                (
+                    ": keep-alive\r\r" +
+                    "data: ping\r\r" +
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"  def foo():\"}}]}\n\n" +
+                    "data: [DONE]"
+                ).utf8
+            )
+        )
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(apiKey: "sk-nrouter-test", session: URLSession(configuration: config))
+        let response = try await client.chatCompletionsStream([:])
+        var chunks: [NRouter.StreamChunk] = []
+        for try await chunk in response.chunks { chunks.append(chunk) }
+
+        XCTAssertEqual(chunks.count, 1)
+        XCTAssertEqual(chunks[0].delta, "  def foo():")
+    }
+
     func testCancellingBufferedCallStopsURLSessionTask() async throws {
         StubProtocol.hangs = true
         StubProtocol.stopped = false
@@ -574,6 +598,27 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(client.baseURL, "https://api.nrouter.ai/v1")
     }
 
+    func testCleartextIsLimitedToLoopbackAndRejectsCredentials() {
+        for allowed in [
+            "http://127.0.0.1:4000/v1",
+            "http://[::1]:4000/v1",
+            "http://localhost:4000/v1",
+            "https://api.nrouter.ai/v1",
+        ] {
+            XCTAssertNoThrow(try NRouter.validateGatewayBaseURL(allowed))
+        }
+
+        for refused in [
+            "http://api.nrouter.ai/v1",
+            "http://192.0.2.10:4000/v1",
+            "ftp://127.0.0.1/v1",
+            "https://user:pass@api.nrouter.ai/v1",
+            "not-a-url",
+        ] {
+            XCTAssertThrowsError(try NRouter.validateGatewayBaseURL(refused))
+        }
+    }
+
     // MARK: - Transport deadlines
 
     func testDefaultTimeoutsAreDeclaredAndWiredIntoTheDefaultSessions() {
@@ -698,6 +743,38 @@ final class ContractTests: XCTestCase {
         try await mem.clear()
         let cleared = try await mem.messages()
         XCTAssertEqual(cleared.count, 0)
+
+        // Developer role & Tool role
+        try await mem.add(["role": "developer", "content": "system prompt"])
+        try await mem.add(["role": "tool", "content": "tool result"])
+
+        // Assistant with tool_calls and null content
+        try await mem.add(["role": "assistant", "content": NSNull(), "tool_calls": [["id": "c1"]]])
+        let updated = try await mem.messages()
+        XCTAssertEqual(updated.count, 3)
+        XCTAssertEqual(updated[0]["role"] as? String, "developer")
+        XCTAssertEqual(updated[1]["role"] as? String, "tool")
+        XCTAssertEqual(updated[2]["role"] as? String, "assistant")
+
+        // Windowing via messages
+        let windowed = try await mem.messages(maxMessages: 2, preserveSystem: true)
+        XCTAssertEqual(windowed.count, 2)
+        XCTAssertEqual(windowed[0]["role"] as? String, "developer")
+    }
+
+    func testSlidingWindow() {
+        let msgs: [ChatMessage] = [
+            ["role": "system", "content": "sys"],
+            ["role": "user", "content": "1"],
+            ["role": "assistant", "content": "2"],
+            ["role": "user", "content": "3"],
+            ["role": "assistant", "content": "4"],
+        ]
+        let pruned = slidingWindow(messages: msgs, maxMessages: 3, preserveSystem: true)
+        XCTAssertEqual(pruned.count, 3)
+        XCTAssertEqual(pruned[0]["role"] as? String, "system")
+        XCTAssertEqual(pruned[1]["content"] as? String, "3")
+        XCTAssertEqual(pruned[2]["content"] as? String, "4")
     }
 
     func testPromptHelpersAndConflicts() throws {
@@ -724,6 +801,41 @@ final class ContractTests: XCTestCase {
         ])
         XCTAssertEqual(conflicts, ["org_name", "timestamp", "user_id"])
     }
+
+    func testRenderPrompt() throws {
+        // 1. Whitespace tolerance & type formatting
+        let tpl = "Hello {{name}}! Age: {{  age  }}, active: {{ active }}."
+        let out = try renderPrompt(tpl, variables: ["name": "Alice", "age": 30, "active": true])
+        XCTAssertEqual(out, "Hello Alice! Age: 30, active: true.")
+
+        // 2. Single-pass non-recursive expansion
+        let tpl2 = "Value: {{a}}"
+        let out2 = try renderPrompt(tpl2, variables: ["a": "{{b}}", "b": "final"])
+        XCTAssertEqual(out2, "Value: {{b}}")
+
+        // 3. Metacharacter safety ($1, $&, escapes)
+        let tpl3 = "Price: {{price}}, Path: {{path}}"
+        let out3 = try renderPrompt(tpl3, variables: ["price": "$100", "path": "C:\\test\\1"])
+        XCTAssertEqual(out3, "Price: $100, Path: C:\\test\\1")
+
+        // 4. Non-strict preserves missing tokens
+        let tpl4 = "Greeting: {{hello}}, missing: {{world}}"
+        let out4 = try renderPrompt(tpl4, variables: ["hello": "hi"])
+        XCTAssertEqual(out4, "Greeting: hi, missing: {{world}}")
+
+        // 5. Strict throws error on missing tokens
+        XCTAssertThrowsError(try renderPrompt(tpl4, variables: ["hello": "hi"], options: NRouterRenderPromptOptions(strict: true)))
+
+        // 6. System variables override
+        let tpl5 = "Model: {{model}}, User: {{user}}"
+        let out5 = try renderPrompt(
+            tpl5,
+            variables: ["model": "caller-model", "user": "alice"],
+            options: NRouterRenderPromptOptions(systemVariables: ["model": "claude-3-7-sonnet"])
+        )
+        XCTAssertEqual(out5, "Model: claude-3-7-sonnet, User: alice")
+    }
+
 
     func testResponseMetaHelpers() {
         var meta = NRouterResponseMeta()
@@ -764,6 +876,9 @@ final class ContractTests: XCTestCase {
 
     func testSamplingPolicy() throws {
         XCTAssertTrue(isClaudeModel("claude-3-opus", provider: nil))
+        XCTAssertTrue(isClaudeModel("sonnet-4-5", provider: nil))
+        XCTAssertTrue(isClaudeModel("haiku-3-5", provider: nil))
+        XCTAssertTrue(isClaudeModel("opus-4", provider: nil))
         XCTAssertTrue(isClaudeModel("custom-model", provider: "anthropic"))
         XCTAssertFalse(isClaudeModel("gpt-4o", provider: "openai"))
 
@@ -782,6 +897,21 @@ final class ContractTests: XCTestCase {
 
         XCTAssertThrowsError(try buildSamplingParams(advanced: true, model: "gpt-4o", temperature: -1.0))
         XCTAssertThrowsError(try buildSamplingParams(advanced: true, model: "gpt-4o", topP: 1.5))
+
+        let normalized = NRouter.normalizeAnthropicMessages([
+            "model": "claude-sonnet-4-5",
+            "system": "Initial system",
+            "messages": [
+                ["role": "system", "content": "Turn system"],
+                ["role": "user", "content": "Hello"]
+            ],
+            "max_completion_tokens": 1024,
+            "stop": "Human:"
+        ])
+        XCTAssertEqual(normalized["system"] as? String, "Initial system\n\nTurn system")
+        XCTAssertEqual((normalized["messages"] as? [[String: Any]])?.count, 1)
+        XCTAssertEqual(normalized["max_tokens"] as? Int, 1024)
+        XCTAssertEqual(normalized["stop_sequences"] as? [String], ["Human:"])
     }
 
     func testDiagnoseReasoningExhaustion() {
@@ -816,6 +946,31 @@ final class ContractTests: XCTestCase {
         let pastDate = Date(timeIntervalSince1970: 1769999900)
         let pastString = formatter.string(from: pastDate)
         XCTAssertEqual(parseRetryAfter(pastString, now: now), 0)
+    }
+
+    func testComputeJitteredBackoff() {
+        // Base delay exponential
+        let d0 = computeJitteredBackoff(attempt: 0, baseDelay: 1.0, maxDelay: 10.0, jitterFactor: 0.0)
+        XCTAssertEqual(d0, 1.0)
+
+        let d2 = computeJitteredBackoff(attempt: 2, baseDelay: 1.0, maxDelay: 10.0, jitterFactor: 0.0)
+        XCTAssertEqual(d2, 4.0)
+
+        // Attempt clamp prevents overflow
+        let dHuge = computeJitteredBackoff(attempt: 100, baseDelay: 1.0, maxDelay: 8.0, jitterFactor: 0.0)
+        XCTAssertEqual(dHuge, 8.0)
+
+        // Retry-After priority
+        let dRetry = computeJitteredBackoff(attempt: 0, retryAfterSeconds: 5, maxDelay: 10.0, jitterFactor: 0.0)
+        XCTAssertEqual(dRetry, 5.0)
+
+        // Retry-After capped by maxDelay
+        let dRetryCapped = computeJitteredBackoff(attempt: 0, retryAfterSeconds: 50, maxDelay: 10.0, jitterFactor: 0.0)
+        XCTAssertEqual(dRetryCapped, 10.0)
+
+        // Jitter bounds
+        let dJitter = computeJitteredBackoff(attempt: 1, baseDelay: 1.0, jitterFactor: 0.4)
+        XCTAssertTrue(dJitter >= 1.2 && dJitter <= 2.0, "dJitter \(dJitter) out of range [1.2, 2.0]")
     }
 }
 

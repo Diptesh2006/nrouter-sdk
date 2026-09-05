@@ -91,7 +91,31 @@ public class NRouter @JvmOverloads constructor(
         }
 
     /** The gateway this client talks to, with any trailing slash removed. */
-    public val baseURL: String = baseURL.trimEnd('/')
+    public val baseURL: String = run {
+        val trimmed = baseURL.trim()
+        if (trimmed.contains('\r') || trimmed.contains('\n') || trimmed.contains('\t')) {
+            throw NRouterError.Configuration("baseURL contains invalid whitespace or control characters")
+        }
+        val uri = try {
+            java.net.URI(trimmed)
+        } catch (e: Exception) {
+            throw NRouterError.Configuration("invalid nRouter gateway URL: ${e.message}")
+        }
+        val scheme = uri.scheme?.lowercase(java.util.Locale.ROOT)
+        if (scheme != "http" && scheme != "https") {
+            throw NRouterError.Configuration("invalid nRouter gateway URL scheme '$scheme'")
+        }
+        if (uri.userInfo != null) {
+            throw NRouterError.Configuration("nRouter gateway URL must not contain credentials")
+        }
+        val host = uri.host?.trim('[', ']')?.lowercase(java.util.Locale.ROOT)
+            ?: throw NRouterError.Configuration("nRouter gateway URL must include a host")
+        val isLoopback = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0" || host.endsWith(".local")
+        if (scheme == "http" && !isLoopback) {
+            throw NRouterError.Configuration("nRouter gateway URL must use HTTPS; HTTP is allowed only for loopback development")
+        }
+        trimmed.trimEnd('/')
+    }
 
     /**
      * Never the key. A plain `class` already has an identity `toString`, but
@@ -126,7 +150,7 @@ public class NRouter @JvmOverloads constructor(
     public suspend fun embeddings(body: JSONObject): Response = post("/embeddings", body)
 
     /** `POST /messages` — the Anthropic wire format the gateway also serves. */
-    public suspend fun messages(body: JSONObject): Response = post("/messages", body)
+    public suspend fun messages(body: JSONObject): Response = post("/messages", normalizeAnthropicMessages(body))
 
     /** `POST /responses` */
     public suspend fun responses(body: JSONObject): Response = post("/responses", body)
@@ -141,7 +165,7 @@ public class NRouter @JvmOverloads constructor(
 
     /** Incremental native Anthropic `POST /messages`. */
     public fun messagesStream(body: JSONObject): Flow<StreamChunk> =
-        stream("/messages", body)
+        stream("/messages", normalizeAnthropicMessages(body))
 
     /** Incremental `POST /responses`. */
     public fun responsesStream(body: JSONObject): Flow<StreamChunk> =
@@ -314,7 +338,26 @@ public class NRouter @JvmOverloads constructor(
                                 "data" -> data += value
                             }
                         }
-                        if (!terminated) {
+                        if (!terminated && data.isNotEmpty()) {
+                            when (val frame = parseStreamFrame(event, data.joinToString("\n"), meta)) {
+                                is ParsedStreamFrame.Chunk -> {
+                                    trySend(frame.value)
+                                }
+                                is ParsedStreamFrame.Error -> {
+                                    close(frame.value)
+                                    return@use
+                                }
+                                ParsedStreamFrame.Done -> {
+                                    terminated = true
+                                    close()
+                                    return@use
+                                }
+                                ParsedStreamFrame.Skip -> Unit
+                            }
+                        }
+                        if (terminated) {
+                            close()
+                        } else {
                             close(NRouterError.Transport("the stream ended before its terminal event"))
                         }
                     }
@@ -513,6 +556,91 @@ public class NRouter @JvmOverloads constructor(
         }
 
         /**
+         * Normalizes an Anthropic Messages request payload:
+         * - Extracts system/developer turns from `messages` into top-level `system`
+         * - Maps `max_completion_tokens` to `max_tokens` (with fallback to 4096)
+         * - Normalizes `stop` to `stop_sequences` array
+         */
+        @JvmStatic
+        public fun normalizeAnthropicMessages(body: JSONObject): JSONObject {
+            val out = normalizedObject(body)
+            if (out.has("messages")) {
+                val rawMessages = out.optJSONArray("messages")
+                if (rawMessages != null) {
+                    val cleaned = JSONArray()
+                    val systemChunks = mutableListOf<String>()
+
+                    val existingSys = out.optString("system", "")
+                    if (existingSys.isNotEmpty()) {
+                        systemChunks.add(existingSys)
+                    }
+
+                    for (i in 0 until rawMessages.length()) {
+                        val turn = rawMessages.optJSONObject(i)
+                        if (turn != null) {
+                            val role = turn.optString("role", "").lowercase()
+                            if (role == "system" || role == "developer") {
+                                val content = turn.opt("content")
+                                if (content is String && content.isNotEmpty()) {
+                                    systemChunks.add(content)
+                                } else if (content is JSONArray) {
+                                    for (j in 0 until content.length()) {
+                                        val part = content.optJSONObject(j)
+                                        if (part != null && part.optString("type") == "text") {
+                                            val txt = part.optString("text", "")
+                                            if (txt.isNotEmpty()) {
+                                                systemChunks.add(txt)
+                                            }
+                                        }
+                                    }
+                                }
+                                continue
+                            }
+                            cleaned.put(turn)
+                        } else {
+                            cleaned.put(rawMessages.get(i))
+                        }
+                    }
+
+                    out.put("messages", cleaned)
+                    if (systemChunks.isNotEmpty()) {
+                        out.put("system", systemChunks.joinToString("\n\n"))
+                    }
+                }
+            }
+
+            if (out.has("max_completion_tokens")) {
+                val maxComp = out.remove("max_completion_tokens")
+                if (!out.has("max_tokens")) {
+                    out.put("max_tokens", maxComp)
+                }
+            }
+            if (!out.has("max_tokens")) {
+                out.put("max_tokens", 4096)
+            }
+
+            if (out.has("stop")) {
+                val stopVal = out.remove("stop")
+                if (!out.has("stop_sequences")) {
+                    if (stopVal is String && stopVal.isNotEmpty()) {
+                        out.put("stop_sequences", JSONArray().put(stopVal))
+                    } else if (stopVal is JSONArray) {
+                        val valid = JSONArray()
+                        for (i in 0 until stopVal.length()) {
+                            val s = stopVal.optString(i, "")
+                            if (s.isNotEmpty()) valid.put(s)
+                        }
+                        if (valid.length() > 0) {
+                            out.put("stop_sequences", valid)
+                        }
+                    }
+                }
+            }
+
+            return out
+        }
+
+        /**
          * TCP and TLS handshake with the gateway.
          *
          * The gateway allows itself 10s to connect to a PROVIDER; reaching our
@@ -646,7 +774,19 @@ private fun parseStreamFrame(
     if (trimmed == "[DONE]") return ParsedStreamFrame.Done
     val raw = runCatching { JSONObject(trimmed) }.getOrElse {
         return if (event == "error") {
-            ParsedStreamFrame.Error(NRouterError.Other(NRouterErrorBody(trimmed, status = 200, requestId = meta.requestId)))
+            val code = trimmed.takeIf(::isKnownStreamErrorCode)
+            ParsedStreamFrame.Error(
+                NRouterError.fromCode(
+                    NRouterErrorBody(
+                        message = trimmed,
+                        code = code,
+                        status = 200,
+                        requestId = meta.requestId,
+                        limitSource = meta.limitSource,
+                        authReason = meta.authReason,
+                    )
+                )
+            )
         } else {
             ParsedStreamFrame.Skip
         }

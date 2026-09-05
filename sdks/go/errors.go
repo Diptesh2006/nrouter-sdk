@@ -141,6 +141,9 @@ func (e *Error) IsRetryable() bool {
 	if errors.Is(e.Cause, context.Canceled) || errors.Is(e.Cause, context.DeadlineExceeded) {
 		return false
 	}
+	if e.Status == 408 || e.Status == 425 {
+		return true
+	}
 	return e.Kind == KindRateLimit || e.Kind == KindService || e.Kind == KindTransport
 }
 
@@ -210,6 +213,10 @@ func classify(code, message string, status int) Kind {
 			return KindNotFound
 		}
 		return KindOther
+	case 408:
+		return KindTransport
+	case 425:
+		return KindService
 	case 429:
 		return KindRateLimit
 	case 502, 504:

@@ -27,7 +27,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createMemory, createArrayStore } = require('../dist/memory');
+const { createMemory, createArrayStore, slidingWindow } = require('../dist/memory');
 const { isRetryable, nRouterConfigurationError, nRouterError } = require('../dist/index');
 
 // ---------------------------------------------------------------------------
@@ -587,4 +587,85 @@ test('memory documents that history GROWS UNBOUNDED and is re-billed every turn'
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'memory.ts'), 'utf8');
   assert.match(src, /GROWS WITHOUT BOUND/);
   assert.match(src, /re-?bill/i);
+});
+
+// ---------------------------------------------------------------------------
+// Case 10 — tool & developer roles, and assistant with tool_calls
+// ---------------------------------------------------------------------------
+
+test('accepts developer and tool roles in memory', async () => {
+  const mem = createMemory();
+  await mem.add({ role: 'developer', content: 'developer instruction' });
+  await mem.add({ role: 'user', content: 'run tool' });
+  await mem.add({ role: 'tool', tool_call_id: 'call_abc', content: 'tool output' });
+
+  const msgs = await mem.messages();
+  assert.equal(msgs.length, 3);
+  assert.equal(msgs[0].role, 'developer');
+  assert.equal(msgs[1].role, 'user');
+  assert.equal(msgs[2].role, 'tool');
+});
+
+test('accepts assistant message with null content when tool_calls is present', async () => {
+  const mem = createMemory();
+  await mem.add({
+    role: 'assistant',
+    content: null,
+    tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'query', arguments: '{}' } }],
+  });
+
+  const msgs = await mem.messages();
+  assert.equal(msgs.length, 1);
+  assert.equal(msgs[0].role, 'assistant');
+  assert.equal(msgs[0].content, null);
+  assert.ok(Array.isArray(msgs[0].tool_calls));
+});
+
+// ---------------------------------------------------------------------------
+// Case 11 — sliding window pruning with system prompt preservation
+// ---------------------------------------------------------------------------
+
+test('slidingWindow keeps latest N messages and preserves system at index 0', () => {
+  const msgs = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: '1' },
+    { role: 'assistant', content: '2' },
+    { role: 'user', content: '3' },
+    { role: 'assistant', content: '4' },
+  ];
+
+  const pruned = slidingWindow(msgs as any, 3, true);
+  assert.equal(pruned.length, 3);
+  assert.equal(pruned[0].role, 'system');
+  assert.equal(pruned[0].content, 'sys');
+  assert.equal(pruned[1].content, '3');
+  assert.equal(pruned[2].content, '4');
+});
+
+test('slidingWindow without preserveSystem takes strictly last N messages', () => {
+  const msgs = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: '1' },
+    { role: 'assistant', content: '2' },
+  ];
+
+  const pruned = slidingWindow(msgs as any, 2, false);
+  assert.equal(pruned.length, 2);
+  assert.equal(pruned[0].content, '1');
+  assert.equal(pruned[1].content, '2');
+});
+
+test('memory.messages({ maxMessages: 2 }) prunes output without mutating store', async () => {
+  const mem = createMemory();
+  await mem.add({ role: 'system', content: 'sys' });
+  await mem.add({ role: 'user', content: '1' });
+  await mem.add({ role: 'assistant', content: '2' });
+
+  const windowed = await mem.messages({ maxMessages: 2, preserveSystem: true });
+  assert.equal(windowed.length, 2);
+  assert.equal(windowed[0].role, 'system');
+  assert.equal(windowed[1].content, '2');
+
+  const full = await mem.messages();
+  assert.equal(full.length, 3);
 });

@@ -27,6 +27,7 @@ const {
   isRetryable,
   parseErrorBody,
   parseRetryAfter,
+  computeJitteredBackoff,
   ERROR_CLASS_BY_CODE,
   ERROR_STATUS_BY_CODE,
 } = errors;
@@ -341,6 +342,35 @@ test('a parsed Retry-After reaches the error object', () => {
   assert.equal(err.retryAfter, 30);
   assert.equal(createError('slow', { status: 429 }).retryAfter, null,
     'an absent Retry-After must be null, never a 0-second "retry now"');
+});
+
+test('computeJitteredBackoff adheres to bounds, clamps attempts, and prioritizes Retry-After', () => {
+  // Base delay without retry-after
+  const delay0 = computeJitteredBackoff({ attempt: 0, baseDelayMs: 1000, maxDelayMs: 10000, jitterFactor: 0 });
+  assert.equal(delay0, 1000);
+
+  const delay2 = computeJitteredBackoff({ attempt: 2, baseDelayMs: 1000, maxDelayMs: 10000, jitterFactor: 0 });
+  assert.equal(delay2, 4000);
+
+  // Attempt clamp prevents overflow
+  const delayHuge = computeJitteredBackoff({ attempt: 100, baseDelayMs: 1000, maxDelayMs: 8000, jitterFactor: 0 });
+  assert.equal(delayHuge, 8000);
+
+  // Negative attempt handled safely
+  const delayNeg = computeJitteredBackoff({ attempt: -5, baseDelayMs: 500, jitterFactor: 0 });
+  assert.equal(delayNeg, 500);
+
+  // Retry-After prioritization
+  const delayRetry = computeJitteredBackoff({ attempt: 0, retryAfterSeconds: 5, maxDelayMs: 10000, jitterFactor: 0 });
+  assert.equal(delayRetry, 5000);
+
+  // Retry-After capped by maxDelayMs
+  const delayRetryCapped = computeJitteredBackoff({ attempt: 0, retryAfterSeconds: 20, maxDelayMs: 10000, jitterFactor: 0 });
+  assert.equal(delayRetryCapped, 10000);
+
+  // Jitter distribution produces value within [min, max]
+  const jittered = computeJitteredBackoff({ attempt: 1, baseDelayMs: 1000, jitterFactor: 0.4 });
+  assert.ok(jittered >= 1200 && jittered <= 2000, `jittered ${jittered} should be within [1200, 2000]`);
 });
 
 // ---------------------------------------------------------------------------

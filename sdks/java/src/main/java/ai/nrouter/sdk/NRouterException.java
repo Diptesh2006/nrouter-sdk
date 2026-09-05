@@ -32,6 +32,10 @@ public final class NRouterException extends RuntimeException {
         return new NRouterException(Kind.TRANSPORT, message, null, status, meta);
     }
 
+    static NRouterException configuration(String message) {
+        return new NRouterException(Kind.CONFIGURATION, message, "configuration_error", 400, null);
+    }
+
     private static Kind classify(String code, String message, int status) {
         if (code != null) {
             switch (code) {
@@ -53,6 +57,8 @@ public final class NRouterException extends RuntimeException {
             case 401: return Kind.AUTHENTICATION;
             case 402: return lower.startsWith("budget") ? Kind.BUDGET_EXCEEDED : Kind.CREDIT;
             case 404: return lower.contains("model") ? Kind.NOT_FOUND : Kind.OTHER;
+            case 408: return Kind.TRANSPORT;
+            case 425: return Kind.SERVICE;
             case 429: return Kind.RATE_LIMIT;
             case 502:
             case 503:
@@ -66,6 +72,9 @@ public final class NRouterException extends RuntimeException {
     public int status() { return status; }
     public NRouterResponseMeta meta() { return meta; }
     public boolean isRetryable() {
+        if (status == 408 || status == 425) {
+            return true;
+        }
         return kind == Kind.RATE_LIMIT || kind == Kind.SERVICE || kind == Kind.TRANSPORT;
     }
 }

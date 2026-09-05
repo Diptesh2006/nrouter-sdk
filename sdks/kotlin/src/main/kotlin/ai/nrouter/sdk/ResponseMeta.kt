@@ -61,12 +61,15 @@ public data class NRouterResponseMeta(
     /** Parses structured budget warning information if present. */
     public fun parseBudgetWarning(): BudgetWarningInfo? {
         val warning = budgetWarning?.trim() ?: return null
-        val parts = warning.split(" ")
+        val parts = warning.split(Regex("\\s+"))
         if (parts.size != 3 || parts[1] != "soft_budget") return null
         val amounts = parts[2].split("/")
         if (amounts.size != 2) return null
         val spend = amounts[0].toDoubleOrNull() ?: return null
         val ceiling = amounts[1].toDoubleOrNull() ?: return null
+        if (spend < 0.0 || ceiling <= 0.0 || spend.isNaN() || spend.isInfinite() || ceiling.isNaN() || ceiling.isInfinite()) {
+            return null
+        }
         return BudgetWarningInfo(scope = parts[0], spend = spend, ceiling = ceiling)
     }
 

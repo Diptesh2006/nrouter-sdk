@@ -115,4 +115,48 @@ class NRouterResponseMeta {
 
   /// True when the gateway priced this request exactly.
   bool get isPriced => costStatus == 'exact' && cost != null;
+
+  bool get isCacheHit => responseCache == 'hit';
+  bool get isCacheMiss => responseCache == 'miss';
+  int get cacheAgeSeconds => responseCacheAge ?? 0;
+
+  BudgetWarningInfo? parseBudgetWarning() {
+    final raw = budgetWarning?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    final parts = raw.split(RegExp(r'\s+'));
+    if (parts.length != 3 || parts[1] != 'soft_budget') return null;
+    final scope = parts[0];
+    final amounts = parts[2].split('/');
+    if (amounts.length != 2) return null;
+    final spend = double.tryParse(amounts[0]);
+    final ceiling = double.tryParse(amounts[1]);
+    if (spend == null || ceiling == null || spend < 0 || ceiling <= 0 || !spend.isFinite || !ceiling.isFinite) {
+      return null;
+    }
+    return BudgetWarningInfo(scope: scope, spend: spend, ceiling: ceiling);
+  }
+}
+
+class BudgetWarningInfo {
+  final String scope;
+  final double spend;
+  final double ceiling;
+
+  const BudgetWarningInfo({
+    required this.scope,
+    required this.spend,
+    required this.ceiling,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BudgetWarningInfo &&
+          runtimeType == other.runtimeType &&
+          scope == other.scope &&
+          spend == other.spend &&
+          ceiling == other.ceiling;
+
+  @override
+  int get hashCode => scope.hashCode ^ spend.hashCode ^ ceiling.hashCode;
 }

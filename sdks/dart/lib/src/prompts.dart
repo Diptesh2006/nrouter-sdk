@@ -57,3 +57,59 @@ List<String> systemVariableConflicts(Map<String, dynamic>? variables) {
   }
   return conflicts;
 }
+
+class RenderPromptOptions {
+  const RenderPromptOptions({
+    this.strict = false,
+    this.systemVariables,
+  });
+
+  final bool strict;
+  final Map<String, String>? systemVariables;
+}
+
+/// Safely renders a prompt template by interpolating `{{variable}}` or `{{ variable }}` tokens.
+///
+/// Security & resiliency features:
+/// - Single-pass replacement prevents recursive variable expansion loops.
+/// - `replaceAllMapped` avoids regex replacement metacharacter injection ($1, $&).
+/// - Strict mode: throws `NRouterConfigurationError` when any template variable is missing.
+/// - System variables: take precedence over caller variables matching gateway rules.
+String renderPrompt(
+  String template, [
+  Map<String, dynamic>? variables,
+  RenderPromptOptions options = const RenderPromptOptions(),
+]) {
+  if (template.isEmpty) {
+    return '';
+  }
+  final missingKeys = <String>[];
+  final regex = RegExp(r'\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}');
+
+  final result = template.replaceAllMapped(regex, (match) {
+    final key = match.group(1)!;
+
+    if (options.systemVariables != null &&
+        options.systemVariables!.containsKey(key)) {
+      return options.systemVariables![key] ?? '';
+    }
+
+    if (variables != null && variables.containsKey(key)) {
+      final val = variables[key];
+      return val == null ? '' : '$val';
+    }
+
+    if (options.strict) {
+      missingKeys.add(key);
+    }
+    return match.group(0)!;
+  });
+
+  if (options.strict && missingKeys.isNotEmpty) {
+    throw NRouterConfigurationError(
+        'Missing required prompt template variables: ${missingKeys.join(', ')}');
+  }
+
+  return result;
+}
+

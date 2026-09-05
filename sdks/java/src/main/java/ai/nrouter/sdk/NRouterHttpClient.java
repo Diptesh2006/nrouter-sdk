@@ -19,10 +19,12 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.Spliterator;
@@ -132,6 +134,35 @@ public final class NRouterHttpClient {
         if (bodyIdleTimeout == null || bodyIdleTimeout.isZero() || bodyIdleTimeout.isNegative()) {
             throw new IllegalArgumentException("bodyIdleTimeout must be a positive duration");
         }
+        if (baseUrl.contains("\r") || baseUrl.contains("\n") || baseUrl.contains("\t")) {
+            throw new IllegalArgumentException("baseUrl contains invalid whitespace or control characters");
+        }
+        java.net.URI parsedUri;
+        try {
+            parsedUri = java.net.URI.create(baseUrl);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("invalid nRouter gateway URL: " + e.getMessage());
+        }
+        String scheme = parsedUri.getScheme() != null ? parsedUri.getScheme().toLowerCase(java.util.Locale.ROOT) : "";
+        if (!"http".equals(scheme) && !"https".equals(scheme)) {
+            throw new IllegalArgumentException("invalid nRouter gateway URL scheme '" + scheme + "'");
+        }
+        if (parsedUri.getUserInfo() != null) {
+            throw new IllegalArgumentException("nRouter gateway URL must not contain credentials");
+        }
+        String host = parsedUri.getHost();
+        if (host == null || host.isEmpty()) {
+            throw new IllegalArgumentException("nRouter gateway URL must include a host");
+        }
+        String normalizedHost = host.replaceAll("^\\[|\\]$", "").toLowerCase(java.util.Locale.ROOT);
+        boolean isLoopback = "localhost".equals(normalizedHost)
+                || "127.0.0.1".equals(normalizedHost)
+                || "::1".equals(normalizedHost)
+                || "0.0.0.0".equals(normalizedHost)
+                || normalizedHost.endsWith(".local");
+        if ("http".equals(scheme) && !isLoopback) {
+            throw new IllegalArgumentException("nRouter gateway URL must use HTTPS; HTTP is allowed only for loopback development");
+        }
         this.apiKey = apiKey;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.http = http;
@@ -178,7 +209,91 @@ public final class NRouterHttpClient {
     }
     public NRouterHttpResponse models() { return get("/models"); }
     public NRouterHttpResponse model(String modelId) { return get("/models/" + encodeModelId(modelId)); }
-    public NRouterHttpResponse messages(Map<String, ?> body) { return post("/messages", body); }
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> normalizeAnthropicMessages(Map<String, ?> body) {
+        if (body == null) {
+            return Collections.emptyMap();
+        }
+        Map<String, Object> out = new LinkedHashMap<>(body);
+
+        Object rawMessages = out.get("messages");
+        if (rawMessages instanceof List<?>) {
+            List<?> messages = (List<?>) rawMessages;
+            List<Object> cleaned = new ArrayList<>();
+            List<String> systemChunks = new ArrayList<>();
+
+            Object existingSys = out.get("system");
+            if (existingSys instanceof String && !((String) existingSys).isEmpty()) {
+                systemChunks.add((String) existingSys);
+            }
+
+            for (Object turnObj : messages) {
+                if (turnObj instanceof Map<?, ?>) {
+                    Map<?, ?> turn = (Map<?, ?>) turnObj;
+                    Object roleObj = turn.get("role");
+                    String role = roleObj instanceof String ? ((String) roleObj).toLowerCase(Locale.ROOT) : "";
+                    if ("system".equals(role) || "developer".equals(role)) {
+                        Object content = turn.get("content");
+                        if (content instanceof String && !((String) content).isEmpty()) {
+                            systemChunks.add((String) content);
+                        } else if (content instanceof List<?>) {
+                            for (Object part : (List<?>) content) {
+                                if (part instanceof Map<?, ?>) {
+                                    Map<?, ?> partMap = (Map<?, ?>) part;
+                                    if ("text".equals(partMap.get("type"))) {
+                                        Object txt = partMap.get("text");
+                                        if (txt instanceof String && !((String) txt).isEmpty()) {
+                                            systemChunks.add((String) txt);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+                cleaned.add(turnObj);
+            }
+
+            out.put("messages", cleaned);
+            if (!systemChunks.isEmpty()) {
+                out.put("system", String.join("\n\n", systemChunks));
+            }
+        }
+
+        if (out.containsKey("max_completion_tokens")) {
+            Object maxComp = out.remove("max_completion_tokens");
+            if (!out.containsKey("max_tokens")) {
+                out.put("max_tokens", maxComp);
+            }
+        }
+        if (!out.containsKey("max_tokens")) {
+            out.put("max_tokens", 4096);
+        }
+
+        if (out.containsKey("stop")) {
+            Object stopVal = out.remove("stop");
+            if (!out.containsKey("stop_sequences")) {
+                if (stopVal instanceof String && !((String) stopVal).isEmpty()) {
+                    out.put("stop_sequences", List.of(stopVal));
+                } else if (stopVal instanceof List<?>) {
+                    List<String> valid = new ArrayList<>();
+                    for (Object item : (List<?>) stopVal) {
+                        if (item instanceof String && !((String) item).isEmpty()) {
+                            valid.add((String) item);
+                        }
+                    }
+                    if (!valid.isEmpty()) {
+                        out.put("stop_sequences", valid);
+                    }
+                }
+            }
+        }
+
+        return out;
+    }
+
+    public NRouterHttpResponse messages(Map<String, ?> body) { return post("/messages", normalizeAnthropicMessages(body)); }
     public NRouterHttpResponse countTokens(Map<String, ?> body) { return post("/messages/count_tokens", body); }
     public NRouterHttpResponse responses(Map<String, ?> body) { return post("/responses", body); }
     public NRouterHttpResponse audioTranslations(String filename, byte[] file, Map<String, ?> fields) {
@@ -188,6 +303,12 @@ public final class NRouterHttpClient {
     public NRouterBinaryResponse downloadVideoContent(String videoId) {
         return getBinary("/videos/" + encodeSegment(videoId, "videoId") + "/content");
     }
+    public NRouterHttpResponse waitForVideo(String videoId) {
+        return NRouterMedia.waitForVideo(this, videoId, Duration.ofMillis(50), Duration.ofSeconds(30));
+    }
+    public NRouterHttpResponse waitForVideo(String videoId, Duration pollInterval, Duration timeout) {
+        return NRouterMedia.waitForVideo(this, videoId, pollInterval, timeout);
+    }
 
     public NRouterStreamResponse chatCompletionsStream(Map<String, ?> body) {
         return postStream("/chat/completions", body);
@@ -196,7 +317,7 @@ public final class NRouterHttpClient {
         return postStream("/completions", body);
     }
     public NRouterStreamResponse messagesStream(Map<String, ?> body) {
-        return postStream("/messages", body);
+        return postStream("/messages", normalizeAnthropicMessages(body));
     }
     public NRouterStreamResponse responsesStream(Map<String, ?> body) {
         return postStream("/responses", body);
@@ -554,22 +675,29 @@ public final class NRouterHttpClient {
         return StreamSupport.stream(guarded, false).onClose(raw::close);
     }
 
-    private void inspectSseEvent(List<String> lines, int status, NRouterResponseMeta meta) {
+    void inspectSseEvent(List<String> lines, int status, NRouterResponseMeta meta) {
+        boolean hasErrorEvent = lines.stream().anyMatch(l -> l.equals("event: error") || l.startsWith("event: error"));
         String payload = lines.stream()
                 .filter(line -> line.startsWith("data:"))
-                .map(line -> line.substring("data:".length()).stripLeading())
+                .map(line -> {
+                    String sub = line.substring("data:".length());
+                    return sub.startsWith(" ") ? sub.substring(1) : sub;
+                })
                 .collect(Collectors.joining("\n"));
         if (payload.isEmpty() || "[DONE]".equals(payload)) {
             return;
         }
         try {
             JsonNode parsed = json.readTree(payload);
-            if (parsed != null && parsed.has("error")) {
+            if (hasErrorEvent || (parsed != null && parsed.has("error"))) {
                 throw gatewayFailure(payload.getBytes(StandardCharsets.UTF_8), status, meta);
             }
         } catch (NRouterException error) {
             throw error;
         } catch (IOException ignored) {
+            if (hasErrorEvent) {
+                throw NRouterException.gateway(redact(payload), "gateway_error", status, meta);
+            }
             // Provider delta payloads need not be JSON; only complete error envelopes matter here.
         }
     }

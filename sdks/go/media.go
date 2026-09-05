@@ -62,6 +62,12 @@ func (c *Client) WaitForVideo(ctx context.Context, id string, pollInterval time.
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	for {
 		resp, err := c.RetrieveVideo(ctx, id)
 		if err != nil {
@@ -74,7 +80,7 @@ func (c *Client) WaitForVideo(ctx context.Context, id string, pollInterval time.
 			case "completed", "succeeded":
 				return resp, nil
 			case "failed", "cancelled":
-				return resp, fmt.Errorf("video job %s terminated with status %s", id, status)
+				return nil, fmt.Errorf("video job %s terminated with status %s", id, status)
 			}
 		}
 

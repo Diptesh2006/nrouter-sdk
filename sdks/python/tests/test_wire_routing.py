@@ -22,3 +22,13 @@ def test_uses_messages_wire_returns_false_for_openai_and_other_families():
     assert uses_messages_wire("meta-llama/llama-3-70b") is False
     assert uses_messages_wire("mistralai/mistral-large") is False
     assert uses_messages_wire("bedrock/amazon.titan-text-express-v1", provider="bedrock") is False
+
+
+def test_is_claude_model_aliases():
+    from nroutersdk.sampling import is_claude_model
+    assert is_claude_model("sonnet-4-5") is True
+    assert is_claude_model("haiku-3-5") is True
+    assert is_claude_model("opus-4") is True
+    assert is_claude_model("us.anthropic.claude-sonnet-4-6-v1:0") is True
+    assert is_claude_model("gpt-4o") is False
+

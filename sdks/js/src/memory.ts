@@ -72,7 +72,14 @@ export interface MemoryStore {
   save(messages: ChatMessage[]): void | Promise<void>;
 }
 
-export interface MemoryOptions {
+export interface WindowOptions {
+  /** Maximum number of messages to keep. Non-positive returns empty. */
+  maxMessages?: number;
+  /** Keep the leading system/developer message (at index 0) even when window truncates. Defaults to true. */
+  preserveSystem?: boolean;
+}
+
+export interface MemoryOptions extends WindowOptions {
   /** Defaults to `createArrayStore()` — in-process, never written anywhere. */
   store?: MemoryStore;
 }
@@ -82,7 +89,7 @@ export interface Memory {
   /** Append one turn. Rejects a malformed message or a tenancy field. */
   add(message: ChatMessage): Promise<void>;
   /** The history, in order, as a copy safe to mutate and to pass as `messages`. */
-  messages(): Promise<ChatMessage[]>;
+  messages(options?: WindowOptions): Promise<ChatMessage[]>;
   /** Forget everything. Reaches the store, not just a local view. */
   clear(): Promise<void>;
 }
@@ -105,6 +112,40 @@ export function createArrayStore(seed: ChatMessage[] = []): MemoryStore {
       rows = messages.map(cloneMessage);
     },
   };
+}
+
+/**
+ * Prune a message array to the most recent `maxMessages`, preserving the index 0
+ * system/developer message by default.
+ */
+export function slidingWindow(
+  messages: ChatMessage[],
+  maxMessages?: number,
+  preserveSystem = true
+): ChatMessage[] {
+  if (maxMessages === undefined || maxMessages === null) {
+    return messages.map(cloneMessage);
+  }
+  if (!Number.isFinite(maxMessages) || maxMessages <= 0) {
+    return [];
+  }
+  const limit = Math.floor(maxMessages);
+  if (messages.length <= limit) {
+    return messages.map(cloneMessage);
+  }
+  if (
+    preserveSystem &&
+    messages.length > 0 &&
+    (messages[0].role === 'system' || messages[0].role === 'developer')
+  ) {
+    if (limit === 1) {
+      return [cloneMessage(messages[messages.length - 1])];
+    }
+    const tailCount = limit - 1;
+    const tail = messages.slice(messages.length - tailCount).map(cloneMessage);
+    return [cloneMessage(messages[0]), ...tail];
+  }
+  return messages.slice(messages.length - limit).map(cloneMessage);
 }
 
 /**
@@ -187,13 +228,21 @@ export function createMemory(options: MemoryOptions = {}): Memory {
         await write(current);
       });
     },
-    messages() {
+    messages(callOptions?: WindowOptions) {
       // `read()` already rebuilds every message through `validateMessage`,
       // which clones. The caller therefore gets a copy: pushing to the array,
       // sorting it, or editing a message in place cannot reach back into the
       // store. Handing out the live array is how a caller's ordinary
       // `msgs.push(...)` before a call silently adds a turn nobody wrote.
-      return serialize(read);
+      return serialize(async () => {
+        const msgs = await read();
+        const max = callOptions?.maxMessages ?? options.maxMessages;
+        const preserve = callOptions?.preserveSystem ?? options.preserveSystem ?? true;
+        if (max !== undefined) {
+          return slidingWindow(msgs, max, preserve);
+        }
+        return msgs;
+      });
     },
     clear() {
       return serialize(() => write([]));
@@ -209,7 +258,7 @@ export function createMemory(options: MemoryOptions = {}): Memory {
  * Mirrors the `ChatRole` union in types.ts. Widening one without the other is
  * how a role this SDK's body builders cannot emit gets into a history.
  */
-const ROLES: readonly ChatRole[] = ['system', 'user', 'assistant'];
+const ROLES: readonly ChatRole[] = ['system', 'user', 'assistant', 'tool', 'developer'];
 
 /**
  * Keys that would place a tenancy identifier in a request body.
@@ -265,7 +314,14 @@ function validateMessage(message: unknown, where: string): ChatMessage {
   }
 
   const content = record.content;
-  if (typeof content !== 'string' && !Array.isArray(content)) {
+  const hasToolCalls = Array.isArray(record.tool_calls) && record.tool_calls.length > 0;
+  if (content === null || content === undefined) {
+    if (!hasToolCalls && record.role !== 'assistant') {
+      throw configurationError(
+        `${where}: content must be a string or an array of content parts, got ${describe(content)}.`
+      );
+    }
+  } else if (typeof content !== 'string' && !Array.isArray(content)) {
     throw configurationError(
       `${where}: content must be a string or an array of content parts, got ${describe(content)}.`
     );

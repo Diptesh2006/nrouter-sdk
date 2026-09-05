@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import re
+import time
+import ipaddress
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 try:
     import openai._base_client as _oai_base
@@ -33,6 +37,7 @@ from nroutersdk._errors import (
     nRouterRateLimitError,
     nRouterRequestError,
     nRouterServiceError,
+    parse_retry_after,
 )
 from nroutersdk._options import build_extra_body, vet_extra
 from nroutersdk._response import nRouterResponseMeta
@@ -211,7 +216,26 @@ def _resolve_api_key(api_key: str | None) -> str:
 
 def _resolve_base_url(base_url: str | None) -> str:
     """Resolve API base URL from parameter, NROUTER_BASE_URL env, or default."""
-    return base_url or os.environ.get(_ENV_BASE_URL) or _DEFAULT_BASE_URL
+    raw = (base_url or os.environ.get(_ENV_BASE_URL) or _DEFAULT_BASE_URL).strip()
+    if any(c in raw for c in "\r\n\t"):
+        raise ValueError("Base URL contains invalid control characters or whitespace")
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"invalid nRouter gateway URL scheme '{parsed.scheme}'")
+    if parsed.username or parsed.password:
+        raise ValueError("nRouter gateway URL must not contain credentials")
+    host = (parsed.hostname or "").strip("[]").lower()
+    if not host:
+        raise ValueError("nRouter gateway URL must include a host")
+    is_loopback = host in ("localhost", "0.0.0.0") or host.endswith(".local")
+    if not is_loopback:
+        try:
+            is_loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            pass
+    if parsed.scheme == "http" and not is_loopback:
+        raise ValueError("nRouter gateway URL must use HTTPS; HTTP is allowed only for loopback development")
+    return raw.rstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -303,9 +327,7 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             message,
             request_id=request_id,
             limit_source=headers.get("x-nr-limit-source"),
-            retry_after=(
-                int(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
-            ),
+            retry_after=parse_retry_after(retry_after_hdr),
             code=gateway_code,
         ) from err
     if gateway_code:
@@ -357,7 +379,7 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             # GATE 7: read the source the gateway measured. `None` when it could
             # not attribute the refusal — never a guessed "rpm".
             limit_source=headers.get("x-nr-limit-source"),
-            retry_after=int(retry_after) if retry_after and retry_after.isdigit() else None,
+            retry_after=parse_retry_after(retry_after),
             # `tpm_limit_exceeded` and `rate_limit_exceeded` share this status;
             # keep whichever the gateway named rather than the class default.
             code=gateway_code,
@@ -387,7 +409,7 @@ def _messages_payload(
     *,
     model: str,
     messages: list[dict[str, Any]],
-    max_tokens: int,
+    max_tokens: int | None = None,
     prompt_template_id: str | None,
     prompt_variables: dict[str, str] | None,
     kwargs: dict[str, Any],
@@ -423,13 +445,67 @@ def _messages_payload(
     mean different things on this wire.
     """
     vet_extra(kwargs)
+
+    # Normalize messages and extract system/developer prompt into top-level system field
+    cleaned_messages: list[dict[str, Any]] = []
+    system_chunks: list[str] = []
+    existing_system = kwargs.pop("system", None)
+    if isinstance(existing_system, str) and existing_system:
+        system_chunks.append(existing_system)
+    elif isinstance(existing_system, list):
+        for part in existing_system:
+            if isinstance(part, str) and part:
+                system_chunks.append(part)
+            elif isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                system_chunks.append(part["text"])
+
+    for msg in messages:
+        if isinstance(msg, dict):
+            role = msg.get("role", "")
+            if role in ("system", "developer"):
+                content = msg.get("content", "")
+                if isinstance(content, str) and content:
+                    system_chunks.append(content)
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, str) and part:
+                            system_chunks.append(part)
+                        elif isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                            system_chunks.append(part["text"])
+                continue
+        cleaned_messages.append(msg)
+
+    # Normalize max_completion_tokens if present in kwargs
+    max_comp_tokens = kwargs.pop("max_completion_tokens", None)
+    if max_tokens is not None and max_tokens > 0:
+        effective_max_tokens = max_tokens
+    elif isinstance(max_comp_tokens, int) and max_comp_tokens > 0:
+        effective_max_tokens = max_comp_tokens
+    else:
+        effective_max_tokens = 4096
+
+    # Normalize stop vs stop_sequences
+    stop_raw = kwargs.pop("stop", None)
+    if stop_raw is not None and "stop_sequences" not in kwargs:
+        if isinstance(stop_raw, str) and stop_raw:
+            kwargs["stop_sequences"] = [stop_raw]
+        elif isinstance(stop_raw, list):
+            valid_stops = [s for s in stop_raw if isinstance(s, str) and s]
+            if valid_stops:
+                kwargs["stop_sequences"] = valid_stops
+    elif isinstance(kwargs.get("stop_sequences"), list):
+        kwargs["stop_sequences"] = [s for s in kwargs["stop_sequences"] if isinstance(s, str) and s]
+
     payload: dict[str, Any] = {
         "model": model,
-        "messages": messages,
-        "max_tokens": max_tokens,
+        "messages": cleaned_messages,
+        "max_tokens": effective_max_tokens,
         "stream": False,
         **kwargs,
     }
+    if system_chunks:
+        payload["system"] = "\n\n".join(system_chunks)
+
     payload.update(
         build_extra_body(
             prompt_template_id=prompt_template_id,
@@ -456,7 +532,7 @@ class _Messages:
         *,
         model: str,
         messages: list[dict[str, Any]],
-        max_tokens: int,
+        max_tokens: int | None = None,
         stream: bool = False,
         prompt_template_id: str | None = None,
         prompt_variables: dict[str, str] | None = None,
@@ -467,7 +543,7 @@ class _Messages:
         Args:
             model: Model id served on `/v1/messages`.
             messages: Anthropic-shaped turns.
-            max_tokens: Required by this wire.
+            max_tokens: Required by this wire (defaults to 4096).
             stream: Refused; see the class docstring.
             prompt_template_id: Override the org/team/key prompt assignment.
             prompt_variables: Jinja2 variables. Meaningful WITHOUT a template
@@ -517,7 +593,7 @@ class _AsyncMessages:
         *,
         model: str,
         messages: list[dict[str, Any]],
-        max_tokens: int,
+        max_tokens: int | None = None,
         stream: bool = False,
         prompt_template_id: str | None = None,
         prompt_variables: dict[str, str] | None = None,
@@ -579,6 +655,33 @@ class _Videos:
             self._c._nrouter_get_bytes(f"/v1/videos/{quote(video_id, safe='')}/content"),
         )
 
+    def wait_for(
+        self,
+        video_id: str,
+        poll_interval: float = 0.5,
+        timeout: float = 60.0,
+    ) -> dict:
+        video_id = (video_id or "").strip()
+        if not video_id:
+            raise nRouterRequestError("video_id must not be empty")
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            resp = self.retrieve(video_id)
+            status = getattr(resp, "status", None)
+            if status is None and isinstance(resp, dict):
+                status = resp.get("status")
+            status_str = str(status or "").lower()
+            if status_str in ("completed", "succeeded"):
+                return resp
+            if status_str in ("failed", "cancelled"):
+                raise nRouterServiceError(
+                    f"Video job {video_id} ended with status: {status_str}",
+                    status_code=500,
+                    code="video_failed",
+                )
+            time.sleep(poll_interval)
+        raise nRouterError(f"Timeout waiting for video job {video_id}")
+
 
 class _AsyncVideos:
     """Async video generation collection."""
@@ -606,6 +709,33 @@ class _AsyncVideos:
             bytes,
             await self._c._nrouter_get_bytes(f"/v1/videos/{quote(video_id, safe='')}/content"),
         )
+
+    async def wait_for(
+        self,
+        video_id: str,
+        poll_interval: float = 0.5,
+        timeout: float = 60.0,
+    ) -> dict:
+        video_id = (video_id or "").strip()
+        if not video_id:
+            raise nRouterRequestError("video_id must not be empty")
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            resp = await self.retrieve(video_id)
+            status = getattr(resp, "status", None)
+            if status is None and isinstance(resp, dict):
+                status = resp.get("status")
+            status_str = str(status or "").lower()
+            if status_str in ("completed", "succeeded"):
+                return resp
+            if status_str in ("failed", "cancelled"):
+                raise nRouterServiceError(
+                    f"Video job {video_id} ended with status: {status_str}",
+                    status_code=500,
+                    code="video_failed",
+                )
+            await asyncio.sleep(poll_interval)
+        raise nRouterError(f"Timeout waiting for video job {video_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -859,6 +989,15 @@ class nRouter(_OpenAI):
         self._raise_for_status(r)
         return r.content
 
+    def wait_for_video(
+        self,
+        video_id: str,
+        poll_interval: float = 0.5,
+        timeout: float = 60.0,
+    ) -> dict:
+        """Poll a video generation job until completed or failed."""
+        return self.videos.wait_for(video_id, poll_interval=poll_interval, timeout=timeout)
+
 
 # ---------------------------------------------------------------------------
 # Async client
@@ -1007,3 +1146,50 @@ class AsyncnRouter(_AsyncOpenAI):
         r = await self._client.get(f"{self._nrouter_base}{path}", headers=self._nrouter_headers)
         self._raise_for_status(r)
         return r.content
+
+    async def wait_for_video(
+        self,
+        video_id: str,
+        poll_interval: float = 0.5,
+        timeout: float = 60.0,
+    ) -> dict:
+        """Poll a video generation job until completed or failed."""
+        return await self.videos.wait_for(video_id, poll_interval=poll_interval, timeout=timeout)
+
+
+def parse_sse(raw: str) -> list[dict[str, str]]:
+    """Parse a block of SSE text into its events.
+
+    - Handles \\r\\n, \\n, and \\r line endings and event boundaries (\\r\\n\\r\\n, \\n\\n, \\r\\r).
+    - Drops comments (: keep-alive) and unhandled fields (id:, retry:).
+    - Joins multi-line data: fields with \\n.
+    - Strips exactly one leading space after the colon, preserving code indentation.
+    - Preserves trailing events if input ends without a trailing blank line.
+    """
+    clean = re.split(r"\r\n\r\n|\n\n|\r\r", raw)
+    events: list[dict[str, str]] = []
+    for block in clean:
+        lines = re.split(r"\r\n|\n|\r", block)
+        event_type: str | None = None
+        data_lines: list[str] = []
+        for line in lines:
+            if not line or line.startswith(":"):
+                continue
+            if ":" in line:
+                field, value = line.split(":", 1)
+            else:
+                field, value = line, ""
+            if value.startswith(" "):
+                value = value[1:]
+            if field == "data":
+                data_lines.append(value)
+            elif field == "event":
+                event_type = value
+        if not data_lines:
+            continue
+        data = "\n".join(data_lines)
+        if event_type:
+            events.append({"event": event_type, "data": data})
+        else:
+            events.append({"data": data})
+    return events

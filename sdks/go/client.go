@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -222,7 +223,7 @@ type Option func(*Client)
 
 // WithBaseURL points the client at a different gateway.
 func WithBaseURL(baseURL string) Option {
-	return func(c *Client) { c.baseURL = strings.TrimRight(baseURL, "/") }
+	return func(c *Client) { c.baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/") }
 }
 
 // WithHTTPClient overrides the transport — proxy, timeout, connection pool.
@@ -266,6 +267,27 @@ func New(apiKey string, opts ...Option) (*Client, error) {
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	if strings.ContainsAny(c.baseURL, "\r\n\t") {
+		return nil, configErr("baseURL contains invalid whitespace or control characters")
+	}
+	parsedURL, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, configErr(fmt.Sprintf("invalid nRouter gateway URL: %v", err))
+	}
+	if parsedURL.User != nil {
+		return nil, configErr("nRouter gateway URL must not contain credentials")
+	}
+	host := strings.ToLower(parsedURL.Hostname())
+	if host == "" {
+		return nil, configErr("nRouter gateway URL must include a host")
+	}
+	isLoopback := host == "localhost" || host == "0.0.0.0" || strings.HasSuffix(host, ".local")
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		isLoopback = true
+	}
+	if parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && isLoopback) {
+		return nil, configErr("nRouter gateway URL must use HTTPS; HTTP is allowed only for loopback development")
 	}
 	if c.bodyIdleTimeout <= 0 {
 		return nil, configErr("body idle timeout must be positive")
@@ -329,10 +351,107 @@ func (c *Client) Embeddings(ctx context.Context, body any) (*Response[map[string
 	return c.Post(ctx, "/embeddings", body)
 }
 
+// NormalizeAnthropicMessages extracts system messages into top-level system parameter,
+// normalizes stop/stop_sequences, and handles max_completion_tokens for /messages.
+func NormalizeAnthropicMessages(body any) any {
+	m, ok := body.(map[string]any)
+	if !ok {
+		return body
+	}
+	out := make(map[string]any, len(m)+2)
+	for k, v := range m {
+		out[k] = v
+	}
+
+	if rawMsgs, exists := out["messages"]; exists {
+		var cleaned []any
+		var systemChunks []string
+
+		if existingSys, hasSys := out["system"].(string); hasSys && existingSys != "" {
+			systemChunks = append(systemChunks, existingSys)
+		}
+
+		if msgSlice, isSlice := rawMsgs.([]any); isSlice {
+			for _, item := range msgSlice {
+				if turn, isMap := item.(map[string]any); isMap {
+					role, _ := turn["role"].(string)
+					if strings.EqualFold(role, "system") || strings.EqualFold(role, "developer") {
+						if contentStr, isStr := turn["content"].(string); isStr && contentStr != "" {
+							systemChunks = append(systemChunks, contentStr)
+						} else if contentArr, isArr := turn["content"].([]any); isArr {
+							for _, part := range contentArr {
+								if partMap, isPartMap := part.(map[string]any); isPartMap {
+									if partMap["type"] == "text" {
+										if t, isT := partMap["text"].(string); isT && t != "" {
+											systemChunks = append(systemChunks, t)
+										}
+									}
+								}
+							}
+						}
+						continue
+					}
+				}
+				cleaned = append(cleaned, item)
+			}
+			out["messages"] = cleaned
+		} else if typedSlice, isTyped := rawMsgs.([]ChatMessage); isTyped {
+			for _, turn := range typedSlice {
+				role, _ := turn["role"].(string)
+				if strings.EqualFold(role, "system") || strings.EqualFold(role, "developer") {
+					if contentStr, isStr := turn["content"].(string); isStr && contentStr != "" {
+						systemChunks = append(systemChunks, contentStr)
+					}
+					continue
+				}
+				cleaned = append(cleaned, turn)
+			}
+			out["messages"] = cleaned
+		}
+
+		if len(systemChunks) > 0 {
+			out["system"] = strings.Join(systemChunks, "\n\n")
+		}
+	}
+
+	if maxComp, hasMaxComp := out["max_completion_tokens"]; hasMaxComp {
+		delete(out, "max_completion_tokens")
+		if _, hasMax := out["max_tokens"]; !hasMax {
+			out["max_tokens"] = maxComp
+		}
+	}
+	if _, hasMax := out["max_tokens"]; !hasMax {
+		out["max_tokens"] = 4096
+	}
+
+	if stopVal, hasStop := out["stop"]; hasStop {
+		delete(out, "stop")
+		if _, hasStopSeq := out["stop_sequences"]; !hasStopSeq {
+			if s, isStr := stopVal.(string); isStr && s != "" {
+				out["stop_sequences"] = []string{s}
+			} else if arr, isArr := stopVal.([]string); isArr && len(arr) > 0 {
+				out["stop_sequences"] = arr
+			} else if arrAny, isArrAny := stopVal.([]any); isArrAny {
+				var valid []string
+				for _, item := range arrAny {
+					if str, isS := item.(string); isS && str != "" {
+						valid = append(valid, str)
+					}
+				}
+				if len(valid) > 0 {
+					out["stop_sequences"] = valid
+				}
+			}
+		}
+	}
+
+	return out
+}
+
 // Messages posts to /messages — the Anthropic wire format the gateway also
 // serves natively.
 func (c *Client) Messages(ctx context.Context, body any) (*Response[map[string]any], error) {
-	return c.Post(ctx, "/messages", body)
+	return c.Post(ctx, "/messages", NormalizeAnthropicMessages(body))
 }
 
 // CountTokens posts to /messages/count_tokens.
@@ -677,17 +796,23 @@ func gatewayError(res *http.Response, meta ResponseMeta, raw []byte) *Error {
 	return err
 }
 
-// parseRetryAfter accepts BOTH RFC 9110 forms. Upstreams send the HTTP-date
+// MaxRetryAfterSeconds is the ceiling for backoff (24 hours).
+const MaxRetryAfterSeconds uint64 = 86400
+
+// ParseRetryAfter accepts BOTH RFC 9110 forms. Upstreams send the HTTP-date
 // form and the gateway relays it unchanged, so a delta-seconds-only parse
 // silently yields nil and the caller retries before the provider said to.
 //
 // `now` is a parameter so the date branch is testable without a clock.
-func parseRetryAfter(raw string, now time.Time) *uint64 {
+func ParseRetryAfter(raw string, now time.Time) *uint64 {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
 	}
 	if seconds, err := strconv.ParseUint(raw, 10, 64); err == nil {
+		if seconds > MaxRetryAfterSeconds {
+			seconds = MaxRetryAfterSeconds
+		}
 		return &seconds
 	}
 	when, err := http.ParseTime(raw)
@@ -702,7 +827,50 @@ func parseRetryAfter(raw string, now time.Time) *uint64 {
 		return &zero
 	}
 	seconds := uint64(delta.Round(time.Second) / time.Second)
+	if seconds > MaxRetryAfterSeconds {
+		seconds = MaxRetryAfterSeconds
+	}
 	return &seconds
+}
+
+func parseRetryAfter(raw string, now time.Time) *uint64 {
+	return ParseRetryAfter(raw, now)
+}
+
+// ComputeJitteredBackoff calculates a bounded jittered exponential backoff.
+//
+// Honors retryAfterSeconds when non-nil and > 0, bounded by maxDelay.
+// Attempt is clamped to [0, 30] to prevent arithmetic bitshift overflow.
+// Full jitter spreads backoff between 50% and 100% of the computed window.
+func ComputeJitteredBackoff(attempt int, baseDelay, maxDelay time.Duration, retryAfterSeconds *uint64) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	} else if attempt > 30 {
+		attempt = 30
+	}
+	if baseDelay <= 0 {
+		baseDelay = 500 * time.Millisecond
+	}
+	if maxDelay <= 0 {
+		maxDelay = 30 * time.Second
+	}
+
+	if retryAfterSeconds != nil && *retryAfterSeconds > 0 {
+		retryDur := time.Duration(*retryAfterSeconds) * time.Second
+		if retryDur > maxDelay {
+			retryDur = maxDelay
+		}
+		factor := 0.5 + 0.5*rand.Float64()
+		return time.Duration(float64(retryDur) * factor)
+	}
+
+	exp := time.Duration(1 << uint(attempt))
+	delay := baseDelay * exp
+	if delay > maxDelay || delay < 0 {
+		delay = maxDelay
+	}
+	factor := 0.5 + 0.5*rand.Float64()
+	return time.Duration(float64(delay) * factor)
 }
 
 // withResponse stamps what the response already told us onto a failure raised

@@ -185,6 +185,29 @@ func TestStreamTurnsGuardrailErrorEventIntoTypedFailure(t *testing.T) {
 	}
 }
 
+func TestStreamHandlesKeepalivesCrBoundariesAndTrailingEvent(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("x-nr-request-id", "req_robust")
+		_, _ = fmt.Fprint(w, ": keep-alive\r\rdata: ping\r\rdata: {\"choices\":[{\"delta\":{\"content\":\"  def foo():\"}}]}\n\ndata: [DONE]")
+	})
+
+	stream, err := c.ChatCompletionsStream(context.Background(), map[string]any{"model": "gpt-4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if !stream.Next() || stream.Chunk().Delta != "  def foo():" {
+		t.Fatalf("first chunk = %#v, err = %v", stream.Chunk(), stream.Err())
+	}
+	if stream.Next() {
+		t.Fatal("[DONE] is terminal")
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A single %+v in a caller's log must not print the key. Go's fmt reflects
 // over unexported fields, so this holds only because String/GoString exist.
 func TestClientNeverPrintsTheKey(t *testing.T) {
@@ -729,13 +752,17 @@ func TestParseRetryAfterAcceptsBothRFC9110Forms(t *testing.T) {
 		{"absent", "", nil},
 		{"delta seconds", "30", ptr(uint64(30))},
 		{"delta seconds padded", "  45  ", ptr(uint64(45))},
+		{"delta seconds clamped to ceiling", "999999", ptr(MaxRetryAfterSeconds)},
 		{"http date in the future", now.Add(90 * time.Second).Format(http.TimeFormat), ptr(uint64(90))},
 		{"http date in the past means now", now.Add(-time.Hour).Format(http.TimeFormat), ptr(uint64(0))},
+		{"http date clamped to ceiling", now.Add(100000 * time.Second).Format(http.TimeFormat), ptr(MaxRetryAfterSeconds)},
+		{"negative delta", "-10", nil},
+		{"float delta", "12.5", nil},
 		{"garbage", "soon-ish", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := parseRetryAfter(tc.raw, now)
+			got := ParseRetryAfter(tc.raw, now)
 			switch {
 			case tc.want == nil && got != nil:
 				t.Fatalf("want nil, got %d", *got)
@@ -745,6 +772,45 @@ func TestParseRetryAfterAcceptsBothRFC9110Forms(t *testing.T) {
 				t.Fatalf("want %d, got %d", *tc.want, *got)
 			}
 		})
+	}
+}
+
+func TestComputeJitteredBackoff(t *testing.T) {
+	// Base backoff without retry-after
+	d0 := ComputeJitteredBackoff(0, 1000*time.Millisecond, 10*time.Second, nil)
+	if d0 < 500*time.Millisecond || d0 > 1000*time.Millisecond {
+		t.Fatalf("d0 out of range: %v", d0)
+	}
+
+	d2 := ComputeJitteredBackoff(2, 1000*time.Millisecond, 10*time.Second, nil)
+	if d2 < 2000*time.Millisecond || d2 > 4000*time.Millisecond {
+		t.Fatalf("d2 out of range: %v", d2)
+	}
+
+	// Attempt clamp prevents overflow
+	dhuge := ComputeJitteredBackoff(100, 1000*time.Millisecond, 8*time.Second, nil)
+	if dhuge < 4*time.Second || dhuge > 8*time.Second {
+		t.Fatalf("dhuge out of range: %v", dhuge)
+	}
+
+	// Negative attempt safe
+	dneg := ComputeJitteredBackoff(-5, 500*time.Millisecond, 10*time.Second, nil)
+	if dneg < 250*time.Millisecond || dneg > 500*time.Millisecond {
+		t.Fatalf("dneg out of range: %v", dneg)
+	}
+
+	// Retry-After priority
+	ra := uint64(5)
+	dretry := ComputeJitteredBackoff(0, 1000*time.Millisecond, 10*time.Second, &ra)
+	if dretry < 2500*time.Millisecond || dretry > 5000*time.Millisecond {
+		t.Fatalf("dretry out of range: %v", dretry)
+	}
+
+	// Retry-After capped by maxDelay
+	raHuge := uint64(100)
+	dretryCapped := ComputeJitteredBackoff(0, 1000*time.Millisecond, 10*time.Second, &raHuge)
+	if dretryCapped < 5*time.Second || dretryCapped > 10*time.Second {
+		t.Fatalf("dretryCapped out of range: %v", dretryCapped)
 	}
 }
 
@@ -1296,6 +1362,31 @@ func TestResponseMetaHelpers(t *testing.T) {
 	}
 	if meta.CacheAgeSeconds() != 42 {
 		t.Errorf("expected cache age 42, got %d", meta.CacheAgeSeconds())
+	}
+}
+
+func TestCleartextIsLimitedToLoopbackAndRejectsCredentials(t *testing.T) {
+	for _, allowed := range []string{
+		"http://127.0.0.1:4000/v1",
+		"http://[::1]:4000/v1",
+		"http://localhost:4000/v1",
+		"https://api.nrouter.ai/v1",
+	} {
+		if _, err := New(testKey, WithBaseURL(allowed)); err != nil {
+			t.Errorf("expected %q to be accepted, got %v", allowed, err)
+		}
+	}
+
+	for _, refused := range []string{
+		"http://api.nrouter.ai/v1",
+		"http://192.0.2.10:4000/v1",
+		"ftp://127.0.0.1/v1",
+		"https://user:pass@api.nrouter.ai/v1",
+		"not-a-url",
+	} {
+		if _, err := New(testKey, WithBaseURL(refused)); err == nil {
+			t.Errorf("expected %q to be refused, got nil", refused)
+		}
 	}
 }
 

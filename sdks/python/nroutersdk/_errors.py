@@ -9,10 +9,15 @@ The class names here are a PUBLISHED contract: `api-contract.ts` in
 table with no class behind it is a documented lie. `tests/test_errors.py` pins
 the pairing in both directions.
 """
-
 from __future__ import annotations
 
+import datetime
+import email.utils
+import math
+import random
 import re
+import time
+from typing import Any
 
 _KEY_RE = re.compile(r"(sk-nrouter-)[A-Za-z0-9._-]{6,}")
 _GENERIC_KEY_RE = re.compile(r"(sk-)(?!nrouter-)[A-Za-z0-9._-]{6,}")
@@ -211,6 +216,83 @@ class nRouterServiceError(nRouterError):
     status_code = None
 
 
+def is_retryable(err: Exception | Any) -> bool:
+    """Whether retrying could plausibly succeed.
+
+    True for rate limits, service errors, and transient HTTP status codes (408, 425, 429, 502, 503, 504).
+    """
+    if isinstance(err, (nRouterRateLimitError, nRouterServiceError)):
+        return True
+    status = getattr(err, "status_code", None)
+    if status in (408, 425, 429, 502, 503, 504):
+        return True
+    return False
+
+
+MAX_RETRY_AFTER_SECONDS: int = 86400
+
+
+def parse_retry_after(value: str | None, now: float | None = None) -> int | None:
+    """Parse an RFC 9110 Retry-After header value (delta-seconds or HTTP-date).
+
+    Dates in the past clamp to 0 seconds. Values exceeding 24 hours (86400s) clamp to 86400.
+    Invalid, negative, or unparseable values return None.
+    """
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+
+    if trimmed.isdigit():
+        try:
+            sec = int(trimmed)
+            return min(max(0, sec), MAX_RETRY_AFTER_SECONDS)
+        except ValueError:
+            return None
+
+    try:
+        dt = email.utils.parsedate_to_datetime(trimmed)
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        current_epoch = time.time() if now is None else now
+        current_dt = datetime.datetime.fromtimestamp(current_epoch, tz=datetime.timezone.utc)
+        diff = (dt - current_dt).total_seconds()
+        if diff <= 0:
+            return 0
+        return min(int(math.ceil(diff)), MAX_RETRY_AFTER_SECONDS)
+    except (ValueError, TypeError, IndexError, OverflowError):
+        return None
+
+
+def compute_jittered_backoff(
+    attempt: int,
+    base_delay_ms: float = 500.0,
+    max_delay_ms: float = 30000.0,
+    retry_after_seconds: float | None = None,
+    jitter_factor: float = 0.5,
+) -> float:
+    """Compute jittered exponential backoff in milliseconds.
+
+    Honors Retry-After when present and positive, capped at max_delay_ms.
+    Clamps attempt to [0, 30] to prevent exponential numeric overflow.
+    Applies jitter factor to avoid thundering herd.
+    """
+    safe_attempt = max(0, min(attempt, 30))
+    jitter_factor = max(0.0, min(jitter_factor, 1.0))
+
+    if retry_after_seconds is not None and math.isfinite(retry_after_seconds) and retry_after_seconds > 0:
+        retry_ms = min(retry_after_seconds * 1000.0, max_delay_ms)
+        multiplier = (1.0 - jitter_factor) + random.random() * jitter_factor
+        return max(0.0, retry_ms * multiplier)
+
+    raw_delay = min(max_delay_ms, base_delay_ms * (2.0 ** safe_attempt))
+    multiplier = (1.0 - jitter_factor) + random.random() * jitter_factor
+    return max(0.0, raw_delay * multiplier)
+
+
 __all__ = [
     "nRouterAuthenticationError",
     "nRouterBudgetExceededError",
@@ -221,6 +303,11 @@ __all__ = [
     "nRouterRateLimitError",
     "nRouterRequestError",
     "nRouterServiceError",
+    "is_retryable",
     "redact_keys",
+    "parse_retry_after",
+    "compute_jittered_backoff",
+    "MAX_RETRY_AFTER_SECONDS",
 ]
+
 

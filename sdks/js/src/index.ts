@@ -25,6 +25,7 @@ export {
   DEFAULT_REQUEST_TIMEOUT_MS,
   ENV_KEY,
   KEY_PREFIX,
+  validateGatewayBaseUrl,
 } from './client';
 
 // The contract: metadata, options and the wire shapes.
@@ -75,6 +76,8 @@ export {
   parseErrorBody,
   parseRetryAfter,
   MAX_RETRY_AFTER_SECONDS,
+  computeJitteredBackoff,
+  type BackoffOptions,
   withResponse,
   ERROR_CLASS_BY_CODE,
   ERROR_STATUS_BY_CODE,
@@ -121,9 +124,11 @@ export {
 export {
   createMemory,
   createArrayStore,
+  slidingWindow,
   type Memory,
   type MemoryStore,
   type MemoryOptions,
+  type WindowOptions,
 } from './memory';
 
 // Prompt templates. Ergonomics over the two wire fields that DO exist and are
@@ -141,8 +146,10 @@ export {
   promptExtraBody,
   applyPrompt,
   systemVariableConflicts,
+  renderPrompt,
   type PromptSelection,
   type SystemVariableName,
+  type RenderPromptOptions,
 } from './prompts';
 
 // chatTextDiagnostic is re-exported here deliberately: index.ts uses an explicit named
@@ -171,6 +178,10 @@ export {
   Multimodal,
   dataUrlToPart,
   MULTIMODAL_ENDPOINTS,
+  VALID_AUDIO_FORMATS,
+  validateAudioFormat,
+  type AudioFormat,
+  type WaitForVideoOptions,
   type Transport,
   type TransportRequest,
   type TransportResponse,

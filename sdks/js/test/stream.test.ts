@@ -562,6 +562,15 @@ test('message_stop ends a Claude stream WITHOUT the truncation refusal', async (
   assert.equal(await result.text(), 'Hello');
 });
 
+test('response.completed ends a Responses stream WITHOUT the truncation refusal', async () => {
+  const runner = chunkRunner([
+    'data: {"choices":[{"text":"Hello completions"}]}\n\n',
+    'data: {"type":"response.completed"}\n\n',
+  ]);
+  const result = await streamChat(runner, { model: 'gpt-4o', prompt: 'hi' });
+  assert.equal(await result.text(), 'Hello completions');
+});
+
 test('a Claude stream cut before message_stop is still reported as truncated', async () => {
   // The refusal must narrow to Anthropic's real terminator, not disappear:
   // a dropped upstream still hands back a partial answer that reads as whole.

@@ -234,3 +234,207 @@ test_that("the nrouter_chat default model is callable on the wire it posts to", 
     )
   )
 })
+
+test_that("nrouter_create_memory stores messages and validates tenancy/roles", {
+  mem <- nrouter_create_memory()
+  mem$add(list(role = "user", content = "Hello"))
+  mem$add(list(role = "assistant", content = "Hi!"))
+  msgs <- mem$messages()
+  expect_equal(length(msgs), 2L)
+
+  # Rejects tenancy field
+  expect_error(
+    mem$add(list(role = "user", content = "evil", organization_id = "org_1")),
+    class = "nrouter_configuration_error"
+  )
+
+  # Rejects unknown role
+  expect_error(
+    mem$add(list(role = "unknown_role", content = "text")),
+    class = "nrouter_configuration_error"
+  )
+
+  # Accepts developer and tool roles
+  mem$add(list(role = "developer", content = "system instructions"))
+  mem$add(list(role = "tool", content = "tool result"))
+
+  # Accepts assistant with tool_calls and null content
+  mem$add(list(role = "assistant", content = NULL, tool_calls = list(list(id = "c1"))))
+
+  all_msgs <- mem$messages()
+  expect_equal(length(all_msgs), 5L)
+  expect_equal(all_msgs[[3]]$role, "developer")
+  expect_equal(all_msgs[[4]]$role, "tool")
+  expect_equal(all_msgs[[5]]$role, "assistant")
+
+  # Clear
+  mem$clear()
+  expect_equal(length(mem$messages()), 0L)
+})
+
+test_that("nrouter_sliding_window prunes and preserves system prompt", {
+  msgs <- list(
+    list(role = "system", content = "sys"),
+    list(role = "user", content = "1"),
+    list(role = "assistant", content = "2"),
+    list(role = "user", content = "3"),
+    list(role = "assistant", content = "4")
+  )
+
+  pruned <- nrouter_sliding_window(msgs, max_messages = 3, preserve_system = TRUE)
+  expect_equal(length(pruned), 3L)
+  expect_equal(pruned[[1]]$role, "system")
+  expect_equal(pruned[[2]]$content, "3")
+  expect_equal(pruned[[3]]$content, "4")
+
+  no_preserve <- nrouter_sliding_window(msgs, max_messages = 2, preserve_system = FALSE)
+  expect_equal(length(no_preserve), 2L)
+  expect_equal(no_preserve[[1]]$content, "3")
+  expect_equal(no_preserve[[2]]$content, "4")
+})
+
+test_that("nrouter prompt helpers and system variable conflicts", {
+  sel <- nrouter_prompt_template("tpl_123", list(customer = "Acme"))
+  expect_equal(sel$template_id, "tpl_123")
+  expect_equal(sel$variables$customer, "Acme")
+
+  expect_error(nrouter_prompt_template("   "))
+
+  merged <- nrouter_with_variables(sel, list(customer = "Beta", user = "Alice"))
+  expect_equal(merged$variables$customer, "Beta")
+  expect_equal(merged$variables$user, "Alice")
+
+  conflicts <- nrouter_system_variable_conflicts(list(
+    user_id = "u1",
+    custom = "val",
+    org_name = "orgX",
+    timestamp = 123
+  ))
+  expect_equal(conflicts, c("org_name", "timestamp", "user_id"))
+})
+
+test_that("nrouter_render_prompt safely interpolates variables", {
+  # 1. Whitespace tolerance & type formatting
+  tpl <- "Hello {{name}}! Age: {{  age  }}, active: {{ active }}."
+  out <- nrouter_render_prompt(tpl, list(name = "Alice", age = 30, active = TRUE))
+  expect_equal(out, "Hello Alice! Age: 30, active: TRUE.")
+
+  # 2. Single pass non-recursive
+  tpl2 <- "Value: {{a}}"
+  out2 <- nrouter_render_prompt(tpl2, list(a = "{{b}}", b = "final"))
+  expect_equal(out2, "Value: {{b}}")
+
+  # 3. Metacharacter safety ($1, escapes)
+  tpl3 <- "Price: {{price}}, Path: {{path}}"
+  out3 <- nrouter_render_prompt(tpl3, list(price = "$100", path = "C:\\test\\1"))
+  expect_equal(out3, "Price: $100, Path: C:\\test\\1")
+
+  # 4. Non-strict preserves missing tokens
+  tpl4 <- "Greeting: {{hello}}, missing: {{world}}"
+  out4 <- nrouter_render_prompt(tpl4, list(hello = "hi"))
+  expect_equal(out4, "Greeting: hi, missing: {{world}}")
+
+  # 5. Strict throws error on missing tokens
+  expect_error(nrouter_render_prompt(tpl4, list(hello = "hi"), strict = TRUE))
+
+  # 6. System variables override
+  tpl5 <- "Model: {{model}}, User: {{user}}"
+  out5 <- nrouter_render_prompt(
+    tpl5,
+    list(model = "caller-model", user = "alice"),
+    system_variables = list(model = "claude-3-7-sonnet")
+  )
+  expect_equal(out5, "Model: claude-3-7-sonnet, User: alice")
+})
+
+test_that("Claude model detection and sampling parameter policy match spec", {
+  expect_true(nrouter_is_claude_model("claude-3-5-sonnet"))
+  expect_true(nrouter_is_claude_model("anthropic/claude-3-haiku"))
+  expect_true(nrouter_is_claude_model("haiku-20240307"))
+  expect_true(nrouter_is_claude_model("sonnet-3.7"))
+  expect_true(nrouter_is_claude_model("opus-4"))
+  expect_true(nrouter_is_claude_model("my-model", "anthropic"))
+  expect_false(nrouter_is_claude_model("gpt-4o"))
+  expect_false(nrouter_is_claude_model("meta-llama/llama-3"))
+
+  # Non-advanced returns empty
+  expect_equal(nrouter_build_sampling_params(FALSE, "claude-3-5-sonnet", temperature = 0.7), list())
+
+  # Claude suppresses temperature when top_p is set and non-neutral
+  params <- nrouter_build_sampling_params(TRUE, "claude-3-5-sonnet", temperature = 0.7, top_p = 0.9)
+  expect_null(params$temperature)
+  expect_equal(params$top_p, 0.9)
+
+  # Claude keeps temperature when top_p is neutral (1.0)
+  params_neutral <- nrouter_build_sampling_params(TRUE, "claude-3-5-sonnet", temperature = 0.7, top_p = 1.0)
+  expect_equal(params_neutral$temperature, 0.7)
+  expect_null(params_neutral$top_p)
+
+  # Non-Claude keeps both
+  params_gpt <- nrouter_build_sampling_params(TRUE, "gpt-4o", temperature = 0.7, top_p = 0.9)
+  expect_equal(params_gpt$temperature, 0.7)
+  expect_equal(params_gpt$top_p, 0.9)
+})
+
+test_that("nrouter_normalize_anthropic_messages normalizes payload correctly", {
+  body <- list(
+    model = "claude-3-5-sonnet",
+    system = "Base prompt.",
+    max_completion_tokens = 1000L,
+    stop = "STOP_HERE",
+    messages = list(
+      list(role = "system", content = "Extra system instructions."),
+      list(role = "user", content = "Hello Claude")
+    )
+  )
+
+  norm <- nrouter_normalize_anthropic_messages(body)
+
+  expect_equal(norm$system, "Base prompt.\n\nExtra system instructions.")
+  expect_equal(norm$max_tokens, 1000L)
+  expect_false("max_completion_tokens" %in% names(norm))
+  expect_equal(norm$stop_sequences, list("STOP_HERE"))
+  expect_false("stop" %in% names(norm))
+  expect_null(norm[["stop"]])
+  expect_equal(length(norm$messages), 1L)
+  expect_equal(norm$messages[[1]]$role, "user")
+  expect_equal(norm$messages[[1]]$content, "Hello Claude")
+})
+
+test_that("media audio validation and video polling match spec", {
+  for (fmt in VALID_AUDIO_FORMATS) {
+    expect_equal(nrouter_validate_audio_format(fmt), fmt)
+    expect_equal(nrouter_validate_audio_format(paste0("  ", toupper(fmt), "  ")), fmt)
+  }
+  expect_error(nrouter_validate_audio_format("unsupported_fmt"), class = "nrouter_configuration_error")
+  expect_error(nrouter_validate_audio_format(""), class = "nrouter_configuration_error")
+  expect_error(nrouter_validate_audio_format(123), class = "nrouter_configuration_error")
+
+  expect_error(nrouter_wait_for_video(list(), ""), class = "nrouter_configuration_error")
+})
+
+test_that("cleartext is limited to loopback development gateways and rejects credentials", {
+  for (allowed in c(
+    "http://127.0.0.1:4000/v1",
+    "http://[::1]:4000/v1",
+    "http://localhost:4000/v1",
+    "https://api.nrouter.ai/v1"
+  )) {
+    client <- nrouter_client(api_key = "sk-nrouter-abc", base_url = allowed)
+    expect_equal(client$base_url, sub("/+$", "", allowed))
+  }
+
+  for (refused in c(
+    "http://api.nrouter.ai/v1",
+    "http://192.0.2.10:4000/v1",
+    "ftp://127.0.0.1/v1",
+    "https://user:pass@api.nrouter.ai/v1",
+    "not-a-url"
+  )) {
+    expect_error(
+      nrouter_client(api_key = "sk-nrouter-abc", base_url = refused),
+      class = "nrouter_configuration_error"
+    )
+  }
+})
+

@@ -111,6 +111,9 @@ public enum NRouterError: Error, Equatable {
     /// False for every permanent 4xx: retrying there burns quota and cannot
     /// change the answer.
     public var isRetryable: Bool {
+        if let status = body?.status, status == 408 || status == 425 {
+            return true
+        }
         switch self {
         case .rateLimit, .service, .transport: return true
         default: return false
@@ -177,6 +180,33 @@ public func parseRetryAfter(_ raw: String?, now: Date = Date()) -> UInt64? {
         return min(seconds, maxRetryAfterSeconds)
     }
     return nil
+}
+
+/// Computes a bounded jittered exponential backoff duration in seconds.
+///
+/// Honors `retryAfterSeconds` when present and > 0, bounded by `maxDelay`.
+/// Clamps `attempt` to 30 to avoid floating point overflow.
+/// Jitter factor spreads backoff between (1 - jitterFactor) and 1.0 of the computed delay.
+public func computeJitteredBackoff(
+    attempt: UInt32,
+    baseDelay: TimeInterval = 0.5,
+    maxDelay: TimeInterval = 30.0,
+    retryAfterSeconds: UInt64? = nil,
+    jitterFactor: Double = 0.5
+) -> TimeInterval {
+    let safeAttempt = min(attempt, 30)
+    let safeJitter = max(0.0, min(jitterFactor, 1.0))
+
+    if let ra = retryAfterSeconds, ra > 0 {
+        let retryDelay = min(Double(ra), maxDelay)
+        let multiplier = (1.0 - safeJitter) + Double.random(in: 0.0...1.0) * safeJitter
+        return max(0.0, retryDelay * multiplier)
+    }
+
+    let exponentialMultiplier = Double(1 << safeAttempt)
+    let rawDelay = min(maxDelay, baseDelay * exponentialMultiplier)
+    let multiplier = (1.0 - safeJitter) + Double.random(in: 0.0...1.0) * safeJitter
+    return max(0.0, rawDelay * multiplier)
 }
 
 extension NRouterError: LocalizedError {

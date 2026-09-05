@@ -12,9 +12,9 @@ _NEUTRAL_TOP_P = 1.0
 
 def is_claude_model(model: str, provider: str | None = None) -> bool:
     """Return true when the model belongs to the Claude family."""
-    return bool(re.search("claude", model or "", re.IGNORECASE)) or bool(
-        re.search("anthropic", provider or "", re.IGNORECASE)
-    )
+    m = (model or "").lower()
+    p = (provider or "").lower()
+    return any(k in m for k in ("claude", "anthropic", "haiku", "sonnet", "opus")) or "anthropic" in p
 
 
 def _require_usable(name: str, value: float, maximum: float | None = None) -> None:

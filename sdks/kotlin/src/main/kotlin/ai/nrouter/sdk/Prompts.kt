@@ -47,3 +47,52 @@ public fun systemVariableConflicts(variables: Map<String, Any?>?): List<String> 
     }
     return conflicts
 }
+
+public data class RenderPromptOptions(
+    val strict: Boolean = false,
+    val systemVariables: Map<String, String>? = null,
+)
+
+private val PROMPT_VARIABLE_REGEX: Regex = Regex("""\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}""")
+
+/**
+ * Safely renders a prompt template by interpolating `{{variable}}` or `{{ variable }}` tokens.
+ *
+ * Security & resiliency features:
+ * - Single-pass replacement prevents recursive variable expansion loops.
+ * - Regex.replace transform avoids regex backreference and format injection ($1, $&).
+ * - Strict mode: throws NRouterError.Configuration if any template variable is missing.
+ * - System variables: take precedence over caller variables matching gateway rules.
+ */
+public fun renderPrompt(
+    template: String,
+    variables: Map<String, Any?> = emptyMap(),
+    options: RenderPromptOptions = RenderPromptOptions(),
+): String {
+    if (template.isEmpty()) return ""
+    val missingKeys = mutableListOf<String>()
+
+    val result = PROMPT_VARIABLE_REGEX.replace(template) { match ->
+        val key = match.groupValues[1]
+        if (options.systemVariables != null && options.systemVariables.containsKey(key)) {
+            options.systemVariables[key] ?: ""
+        } else if (variables.containsKey(key)) {
+            val v = variables[key]
+            v?.toString() ?: ""
+        } else {
+            if (options.strict) {
+                missingKeys.add(key)
+            }
+            match.value
+        }
+    }
+
+    if (options.strict && missingKeys.isNotEmpty()) {
+        throw NRouterError.Configuration(
+            "Missing required prompt template variables: ${missingKeys.joinToString(", ")}"
+        )
+    }
+
+    return result
+}
+

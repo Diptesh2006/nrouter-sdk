@@ -27,6 +27,9 @@ test('the Claude family is matched by FAMILY, not by host cloud', () => {
     'us.anthropic.claude-sonnet-4-6-v1:0',
     'publishers/anthropic/models/claude-3-7-sonnet',
     'CLAUDE-OPUS-4',
+    'sonnet-4-5',
+    'haiku-3-5',
+    'opus-4',
   ]) {
     assert.equal(isClaudeModel(model), true, `${model} must be recognised as Claude`);
   }

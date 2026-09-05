@@ -75,3 +75,98 @@ pub fn system_variable_conflicts(variables: &Map<String, Value>) -> Vec<&'static
         .filter(|name| variables.contains_key(*name))
         .collect()
 }
+
+/// Options for client-side prompt template rendering.
+#[derive(Debug, Clone, Default)]
+pub struct RenderPromptOptions {
+    /// If true, returns an error when a template variable is missing.
+    pub strict: bool,
+    /// System variables that take precedence over caller variables.
+    pub system_variables: Option<Map<String, Value>>,
+}
+
+/// Safely renders a prompt template by interpolating `{{variable}}` or `{{ variable }}` tokens.
+///
+/// Security & resiliency features:
+/// - Single-pass replacement: prevents recursive variable expansion loops.
+/// - Escape-safe: string scanning avoids regex backreference and format-string exploits.
+/// - Strict mode: returns `NRouterError::Configuration` on missing variables.
+/// - System variables: take precedence over caller variables matching gateway rules.
+pub fn render_prompt(
+    template: &str,
+    variables: Option<&Map<String, Value>>,
+    options: Option<RenderPromptOptions>,
+) -> Result<String, NRouterError> {
+    if template.is_empty() {
+        return Ok(String::new());
+    }
+    let opts = options.unwrap_or_default();
+    let mut result = String::with_capacity(template.len());
+    let mut missing_keys = Vec::new();
+    let mut cursor = 0;
+
+    while let Some(start_idx) = template[cursor..].find("{{") {
+        let abs_start = cursor + start_idx;
+        result.push_str(&template[cursor..abs_start]);
+        cursor = abs_start + 2;
+
+        if let Some(end_idx) = template[cursor..].find("}}") {
+            let abs_end = cursor + end_idx;
+            let raw_key = &template[cursor..abs_end];
+            let trimmed_key = raw_key.trim();
+
+            if trimmed_key.is_empty()
+                || !trimmed_key
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
+                // Preserve non-variable token syntax
+                result.push_str("{{");
+                result.push_str(raw_key);
+                result.push_str("}}");
+            } else {
+                let sys_val = opts
+                    .system_variables
+                    .as_ref()
+                    .and_then(|sys| sys.get(trimmed_key));
+
+                if let Some(val) = sys_val {
+                    match val {
+                        Value::String(s) => result.push_str(s),
+                        Value::Null => {}
+                        other => result.push_str(&other.to_string()),
+                    }
+                } else if let Some(val) = variables.and_then(|v| v.get(trimmed_key)) {
+                    match val {
+                        Value::String(s) => result.push_str(s),
+                        Value::Null => {}
+                        other => result.push_str(&other.to_string()),
+                    }
+                } else if opts.strict {
+                    missing_keys.push(trimmed_key.to_string());
+                    result.push_str("{{");
+                    result.push_str(raw_key);
+                    result.push_str("}}");
+                } else {
+                    result.push_str("{{");
+                    result.push_str(raw_key);
+                    result.push_str("}}");
+                }
+            }
+            cursor = abs_end + 2;
+        } else {
+            result.push_str("{{");
+            break;
+        }
+    }
+    result.push_str(&template[cursor..]);
+
+    if opts.strict && !missing_keys.is_empty() {
+        return Err(NRouterError::Configuration(format!(
+            "Missing required prompt template variables: {}",
+            missing_keys.join(", ")
+        )));
+    }
+
+    Ok(result)
+}

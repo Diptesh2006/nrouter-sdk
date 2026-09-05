@@ -114,13 +114,14 @@ public struct NRouterResponseMeta: Equatable, Sendable {
 
     public func parseBudgetWarning() -> BudgetWarningInfo? {
         guard let bw = budgetWarning else { return nil }
-        let parts = bw.components(separatedBy: " ")
+        let parts = bw.split(whereSeparator: \.isWhitespace).map(String.init)
         guard parts.count == 3, parts[1] == "soft_budget" else { return nil }
         let scope = parts[0]
         let amounts = parts[2].components(separatedBy: "/")
         guard amounts.count == 2,
               let spend = Double(amounts[0]),
-              let ceiling = Double(amounts[1]) else { return nil }
+              let ceiling = Double(amounts[1]),
+              spend >= 0, ceiling > 0, spend.isFinite, ceiling.isFinite else { return nil }
         return BudgetWarningInfo(scope: scope, spend: spend, ceiling: ceiling)
     }
 

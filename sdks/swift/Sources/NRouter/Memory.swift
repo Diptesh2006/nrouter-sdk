@@ -49,12 +49,38 @@ public actor ArrayMemoryStore: MemoryStore {
     }
 }
 
-/// Manages conversation history with tenancy validation.
+/// Prune messages to the most recent maxMessages, preserving index 0 system/developer message.
+public func slidingWindow(messages: [ChatMessage], maxMessages: Int, preserveSystem: Bool = true) -> [ChatMessage] {
+    if maxMessages <= 0 {
+        return []
+    }
+    if messages.count <= maxMessages {
+        return messages
+    }
+    if preserveSystem, let first = messages.first,
+       let role = first["role"] as? String,
+       role == "system" || role == "developer" {
+        if maxMessages == 1 {
+            return [messages[messages.count - 1]]
+        }
+        let tailCount = maxMessages - 1
+        var out = [first]
+        out.append(contentsOf: messages.suffix(tailCount))
+        return out
+    }
+    return Array(messages.suffix(maxMessages))
+}
+
+/// Manages conversation history with tenancy validation and optional windowing.
 public struct NRouterMemory: Sendable {
     private let store: any MemoryStore
 
     private static let tenancyKeys: Set<String> = [
         "organizationid", "orgid", "teamid", "userid", "nrouterorg"
+    ]
+
+    private static let validRoles: Set<String> = [
+        "system", "user", "assistant", "tool", "developer"
     ]
 
     public init(store: any MemoryStore = ArrayMemoryStore()) {
@@ -74,9 +100,19 @@ public struct NRouterMemory: Sendable {
                 throw NRouterError.configuration("\(context): message contains forbidden tenancy key '\(key)'")
             }
         }
-        guard let role = message["role"] as? String,
-              ["system", "user", "assistant", "tool"].contains(role) else {
-            throw NRouterError.configuration("\(context): message must contain a valid role (system, user, assistant, tool)")
+        guard let role = message["role"] as? String, validRoles.contains(role) else {
+            throw NRouterError.configuration("\(context): message must contain a valid role (system, user, assistant, tool, developer)")
+        }
+
+        let content = message["content"]
+        let hasToolCalls = message["tool_calls"] != nil
+        let isNilOrNSNull = content == nil || content is NSNull
+        if isNilOrNSNull {
+            if !hasToolCalls && role != "assistant" {
+                throw NRouterError.configuration("\(context): content must be a string or array of parts")
+            }
+        } else if !(content is String) && !(content is [Any]) {
+            throw NRouterError.configuration("\(context): content must be a string or array of parts")
         }
         return message
     }
@@ -88,12 +124,15 @@ public struct NRouterMemory: Sendable {
         try await store.save(current)
     }
 
-    public func messages() async throws -> [ChatMessage] {
+    public func messages(maxMessages: Int? = nil, preserveSystem: Bool = true) async throws -> [ChatMessage] {
         let raw = try await store.load()
         var out: [ChatMessage] = []
         for (i, msg) in raw.enumerated() {
             let clean = try Self.validateMessage(msg, context: "MemoryStore.load()[\(i)]")
             out.append(clean)
+        }
+        if let max = maxMessages, max > 0 {
+            return slidingWindow(messages: out, maxMessages: max, preserveSystem: preserveSystem)
         }
         return out
     }

@@ -54,3 +54,9 @@ sdks/r/..Rcheck/
 # without this line the first one to follow that advice commits it.
 .venv/
 venv/
+
+# Environment files & secrets (public repo protection)
+.env
+.env.*
+!.env.example
+

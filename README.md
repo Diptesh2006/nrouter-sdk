@@ -86,16 +86,71 @@ small `max_tokens` is spent on hidden reasoning and the reply comes back empty.
 `conformance/doc_wires.py` gates every snippet in this repository against that
 table.
 
-## Authentication & API Keys
+## Why Use the nRouter SDK?
 
-All nRouter SDKs automatically read your API key from the `NROUTER_API_KEY` environment variable:
+Rather than juggling separate provider SDKs (OpenAI, Anthropic, Bedrock, Vertex AI, Azure Foundry), nRouter provides:
 
+1. **One API Key Across 6 Provider Clouds**: Call OpenAI, Claude, Vertex, Bedrock, and Azure models with a single client and unified billing.
+2. **Built-in Spend & Observability**: Every response captures exact latency, model ID, and request cost (`x-nr-request-cost`) with no extra telemetry instrumentation needed.
+3. **Automated Guardrails & Compliance**: PII redaction, prompt injection protection, and keyword scanning configured once in the dashboard apply automatically.
+4. **Smart Routing & Automatic Failover**: Route across provider clouds by real-time latency, price, or availability using router aliases.
+5. **Universal Enterprise Features**: Unified conversation memory, Jinja2 prompt variable injection, and RFC 9110 retry-after exponential backoff across all 10 SDKs.
+
+---
+
+## Authentication, Environment & `.env` Setup
+
+All nRouter SDKs automatically read your API key from the `NROUTER_API_KEY` environment variable.
+
+### 1. Where to Get Your API Key
+1. Sign in to your dashboard: [nrouter.ai/dashboard](https://nrouter.ai/dashboard).
+2. Go to **API Keys / Virtual Keys**: [nrouter.ai/dashboard/keys](https://nrouter.ai/dashboard/keys).
+3. Click **Create Key**. Virtual keys start with `sk-nrouter-`. Assign key budgets, rate limits, and guardrails directly in the dashboard.
+
+### 2. Configure Local `.env`
+Copy `.env.example` to `.env`:
 ```bash
-# 1. Get your API key from https://nrouter.ai/dashboard/keys
-export NROUTER_API_KEY="sk-nrouter-your-api-key-here"
+cp .env.example .env
 ```
 
-All API keys must start with the `sk-nrouter-` prefix. You can also pass the key explicitly in code via the `apiKey` / `api_key` parameter in any SDK constructor.
+Edit `.env` and set your key:
+```bash
+NROUTER_API_KEY="sk-nrouter-your-api-key-here"
+NROUTER_BASE_URL="https://api.nrouter.ai/v1"
+```
+
+### 3. How to Source `.env`
+- **Shell (Bash / Zsh)**:
+  ```bash
+  export $(grep -v '^#' .env | xargs)
+  ```
+- **Node.js / TypeScript**:
+  ```bash
+  npm install dotenv
+  ```
+  ```typescript
+  import "dotenv/config";
+  import { nRouter } from "@nrouter_ai/sdk";
+  const client = new nRouter(); // reads process.env.NROUTER_API_KEY
+  ```
+- **Python**:
+  ```bash
+  pip install python-dotenv
+  ```
+  ```python
+  from dotenv import load_dotenv
+  load_dotenv()
+  from nroutersdk import nRouter
+  client = nRouter() # reads os.environ["NROUTER_API_KEY"]
+  ```
+- **Go**:
+  ```go
+  import "github.com/joho/godotenv"
+  _ = godotenv.Load()
+  client, err := nrouter.NewFromEnv()
+  ```
+
+All API keys must start with the `sk-nrouter-` prefix. You can also pass the key explicitly in code via `apiKey` / `api_key` in any SDK constructor.
 
 ---
 

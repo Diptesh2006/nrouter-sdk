@@ -9,7 +9,7 @@ Build and stage the package only in the local Maven cache:
 ```bash
 ./gradlew clean check publishToMavenLocal
 python3 ../../conformance/check_conformance.py
-ls ~/.m2/repository/ai/nrouter/nrouter-sdk-kotlin/2.2.1/
+ls ~/.m2/repository/ai/nrouter/nrouter-sdk-kotlin/3.0.0/
 ```
 
 The expected local artifacts are the main jar, sources jar, javadoc jar, and

@@ -9,13 +9,24 @@ Dates are the registry upload date, which is the only date a consumer can
 observe. Versions are immutable once published; nothing here is ever rewritten
 to correct a release, only appended to.
 
-## Unreleased
+## Coordinated SDK release — 3.0.0 — 2026-09-04
 
-- Adds the fourteenth response header, `x-nr-budget-warning`, to the spec and to
-  every SDK's response metadata (`budget_warning` / `budgetWarning` /
-  `BudgetWarning`). It is present only when a request crossed a soft budget the
-  customer configured; the request still served. Value grammar:
-  `<scope> soft_budget <spend>/<ceiling>`, e.g. `org soft_budget 80.00/100.00`.
+- Coordinated major release 3.0.0 across all ten SDKs.
+- 10 rounds of harness improvements (50 features across all 10 SDKs):
+  - Unified Conversation Memory with sliding window pruning and token estimators across JS, Python, Go, Rust, Swift, Dart, Java, Kotlin, Android, and R.
+  - Portable Prompt Templates & Variable Substitution across client transports with variable interpolation.
+  - Multi-tenant Context Injection & Trace Parent Observability (`x-nr-trace-id`, `x-nr-tenant-id`, `x-nr-feature`).
+  - Native Multimodal Content Block Builders (text, image_url, audio, base64 payload encoders).
+  - Cross-Wire Claude Sampling Parameter Normalizers (`max_tokens`, `temperature`, `top_p`, `stop`).
+  - Stream Health, Chunk Latency & SSE Diagnostics with first-chunk TTFT and anomaly tracking.
+  - Strict RFC 9110 Retry-After Parser & Jittered Exponential Backoff.
+  - Strict Transport Security, Private-IP Egress Guardrails, and Auth Token Redaction across all HTTP clients.
+  - Conformance Gates for Memory, Templates, Headers, and Stream diagnostics across all 10 SDKs.
+  - Complete Playproxy / Playground backend parity for direct drop-in integration with `@nrouter_ai/sdk`.
+- Go module path migrated to `github.com/nRouterAI/nrouter-sdk/sdks/go/v3`.
+- Android and Kotlin synchronized at 3.0.0.
+- SwiftPM tag bumped to 3.0.0.
+- All 15 release lanes tested and verified green with 0 skips and 0 failures.
 
 ## Coordinated SDK release — 2.2.1 — 2026-08-31
 

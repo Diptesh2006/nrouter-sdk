@@ -678,7 +678,7 @@ async fn main() {
 ```kotlin
 // build.gradle.kts
 repositories { mavenLocal() }
-implementation("ai.nrouter:nrouter-sdk-kotlin:2.2.1")
+implementation("ai.nrouter:nrouter-sdk-kotlin:3.0.0")
 ```
 
 ```kotlin
@@ -730,7 +730,7 @@ println(response.choices[0].message.content)
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.2.1")
+.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "3.0.0")
 ```
 
 ```swift

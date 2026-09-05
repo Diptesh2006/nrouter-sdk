@@ -10,8 +10,8 @@ This module lives in a subdirectory of a multi-module repo, so Go requires the
 tag to carry the subdirectory prefix:
 
 ```
-sdks/go/v2.2.1        ✅  resolves github.com/nRouterAI/nrouter-sdk/sdks/go/v2@v2.2.1
-v2.2.1                ❌  resolves the repo ROOT, which is not a Go module
+sdks/go/v3.0.0        ✅  resolves github.com/nRouterAI/nrouter-sdk/sdks/go/v3@v3.0.0
+v3.0.0                ❌  resolves the repo ROOT, which is not a Go module
 ```
 
 Getting this wrong does not fail loudly — `go get` reports the module as
@@ -29,7 +29,7 @@ go test ./... -race -count=1
 python3 ../../conformance/check_conformance.py
 
 # 2. Confirm the module path matches the repo, or the proxy 404s.
-grep '^module' go.mod             # github.com/nRouterAI/nrouter-sdk/sdks/go/v2
+grep '^module' go.mod             # github.com/nRouterAI/nrouter-sdk/sdks/go/v3
 
 # 3. Tag from a clean main that is already pushed.
 git -C ../.. status --short       # expect empty
@@ -39,7 +39,7 @@ git -C ../.. push origin "sdks/go/v$VERSION"
 
 # 4. Prove the proxy actually serves it — this is the only real check.
 #    Allow a minute; the proxy fetches lazily on first request.
-curl -s https://proxy.golang.org/github.com/n!router!a!i/nrouter-sdk/sdks/go/v2/@v/list
+curl -s https://proxy.golang.org/github.com/n!router!a!i/nrouter-sdk/sdks/go/v3/@v/list
 ```
 
 Step 4's URL is case-encoded: the proxy lowercases paths and escapes each
@@ -63,5 +63,5 @@ oldest release still receiving security fixes at the time of writing.
 
 ```bash
 cd "$(mktemp -d)" && go mod init probe
-go get github.com/nRouterAI/nrouter-sdk/sdks/go/v2@latest
+go get github.com/nRouterAI/nrouter-sdk/sdks/go/v3@latest
 ```

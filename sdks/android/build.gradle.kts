@@ -35,7 +35,7 @@ android {
 dependencies {
     // The wire behaviour is the shared JVM artifact — deliberately not a second
     // copy. A duplicated client is how two SDKs drift apart on the same gateway.
-    api("ai.nrouter:nrouter-sdk-kotlin:2.2.1") {
+    api("ai.nrouter:nrouter-sdk-kotlin:3.0.0") {
         // Android ships org.json inside the platform. The JVM artifact has to
         // declare a real dependency on it, but letting that reach an APK is a
         // DuplicatePlatformClasses lint ERROR and, unlinted, a a runtime class

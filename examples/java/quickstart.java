@@ -1,5 +1,5 @@
 // nRouter Java SDK — Claude Messages, metadata, managed prompts and SSE.
-// Maven: ai.nrouter:nrouter-sdk:2.2.1
+// Maven: ai.nrouter:nrouter-sdk:3.0.0
 
 import ai.nrouter.sdk.NRouter;
 import ai.nrouter.sdk.NRouterHttpClient;

@@ -5,7 +5,7 @@ Generated from local checks after pulling `origin/main` on 2026-09-01.
 ## Environment
 
 - Package: `@nrouter_ai/sdk`
-- Local package version: `2.2.1`
+- Local package version: `3.0.0`
 - Local Node version: `22.16.0`
 - SDK import path used by demos: built `dist/`
 - API key source: `NROUTER_API_KEY` from local environment or repo-root `.env`

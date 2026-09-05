@@ -16,7 +16,7 @@ cd ../android && ./gradlew clean build publishToMavenLocal
 // app/build.gradle.kts
 repositories { mavenLocal() }
 dependencies {
-    implementation("ai.nrouter:nrouter-sdk-android:2.2.1")
+    implementation("ai.nrouter:nrouter-sdk-android:3.0.0")
 }
 ```
 

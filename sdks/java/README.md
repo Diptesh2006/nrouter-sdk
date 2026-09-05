@@ -9,7 +9,7 @@ around the official `openai-java` client — same API surface, pre-configured fo
 <dependency>
     <groupId>ai.nrouter</groupId>
     <artifactId>nrouter-sdk</artifactId>
-    <version>2.2.1</version>
+    <version>3.0.0</version>
 </dependency>
 ```
 

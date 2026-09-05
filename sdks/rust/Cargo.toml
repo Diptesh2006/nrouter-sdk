@@ -1,6 +1,6 @@
 [package]
 name = "nrouter"
-version = "2.2.1"
+version = "3.0.0"
 publish = false
 edition = "2021"
 # The EFFECTIVE floor of the transitive graph, not an aspiration. `cargo

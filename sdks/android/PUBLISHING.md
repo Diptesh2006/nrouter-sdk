@@ -11,7 +11,7 @@ cache before consuming the Android coordinate:
 cd ../kotlin && ./gradlew clean check publishToMavenLocal
 cd ../android && ./gradlew clean build publishToMavenLocal
 python3 ../../conformance/check_conformance.py
-ls ~/.m2/repository/ai/nrouter/nrouter-sdk-android/2.2.1/
+ls ~/.m2/repository/ai/nrouter/nrouter-sdk-android/3.0.0/
 ```
 
 `build.gradle.kts` intentionally configures no remote publication repository.

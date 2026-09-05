@@ -60,8 +60,8 @@ test -f Package.swift
 
 ```bash
 git ls-remote --tags origin
-git tag 2.2.1                  # bare semver, no `v` — see the trap below
-git push origin 2.2.1
+git tag 3.0.0                  # bare semver, no `v` — see the trap below
+git push origin 3.0.0
 ```
 
 The `test -f Package.swift` is the guard for exactly the mistake above: it fails
@@ -72,7 +72,7 @@ Use SSH URLs throughout. HTTPS git fails from the nRouter workspace.
 ## Consumers
 
 ```swift
-.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "2.2.1")
+.package(url: "https://github.com/nRouterAI/nrouter-sdk.git", from: "3.0.0")
 ```
 
 Or in Xcode: **File → Add Package Dependencies** and paste that URL.
@@ -91,7 +91,7 @@ swift package resolve
 
 ## Traps
 
-- **`from: "2.2.1"` matches the tag `2.2.1`, not `v2.2.1`.** SwiftPM accepts a
+- **`from: "3.0.0"` matches the tag `3.0.0`, not `v3.0.0`.** SwiftPM accepts a
   `v` prefix, but mixing the two across releases makes version ranges resolve in
   ways nobody expects. Pick bare semver and keep it.
 - **Tag only clean, pushed `main`.** SwiftPM resolves the immutable tag, not

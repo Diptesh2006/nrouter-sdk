@@ -29,9 +29,9 @@ install snippets.
 | Android | Maven Central `ai.nrouter:nrouter-sdk-android` ([central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-android)) | `2.1.0` | **No — frozen.** `publish-android.yml` builds and `publishToMavenLocal` only |
 | Rust | crates.io `nrouter` ([crates.io/crates/nrouter](https://crates.io/crates/nrouter)) | `2.1.0` | **No — frozen.** `Cargo.toml` declares `publish = false` |
 | Dart / Flutter | pub.dev `nrouter` ([pub.dev/packages/nrouter](https://pub.dev/packages/nrouter)) | `2.1.1` | **No — frozen.** `pubspec.yaml` declares `publish_to: none` |
-| R | [R-universe](https://nrouterai.r-universe.dev/nrouter) | `2.2.1` | Yes — R-universe rebuilds from `main` |
-| Swift | bare SemVer git tag, resolved by SwiftPM | `2.2.1` | Yes — tag the release commit |
-| Go | `sdks/go/v*` git tag, resolved by `proxy.golang.org` | `v2.2.1` | Yes — tag the release commit |
+| R | [R-universe](https://nrouterai.r-universe.dev/nrouter) | `3.0.0` | Yes — R-universe rebuilds from `main` |
+| Swift | bare SemVer git tag, resolved by SwiftPM | `3.0.0` | Yes — tag the release commit |
+| Go | `sdks/go/v*` git tag, resolved by `proxy.golang.org` | `v3.0.0` | Yes — tag the release commit |
 
 🛑 **The four frozen rows are a DELIBERATE decision, not a broken pipeline, and
 the freeze is test-enforced.** `tests/test_release_versions.py::test_sdk_version_3_source_only_workflows_cannot_publish`
@@ -43,7 +43,7 @@ which is the point: a preview must not acquire release credentials by accident.
 The consequence to state plainly to a user: **those four registry artifacts are
 stuck at the version above and will not follow the source version.** That is why
 the README pins its install snippets to what each registry actually serves
-instead of to `2.2.1`. Advancing one is a scoped decision that moves the SDK out
+instead of to `3.0.0`. Advancing one is a scoped decision that moves the SDK out
 of preview — bump the support scope, the test, and the workflow together, or not
 at all.
 
@@ -54,10 +54,10 @@ The shared gate makes a partial bump impossible. After all hosted workflows are
 green, create the Swift and Go tags from that exact commit.
 
 ```bash
-$EDITOR spec/nrouter-sdk-spec.json    # "version": "2.2.1"
-$EDITOR sdks/js/package.json          # "version": "2.2.1"
-$EDITOR sdks/python/pyproject.toml    # version = "2.2.1"
-$EDITOR sdks/java/pom.xml             # <version>2.2.1</version>
+$EDITOR spec/nrouter-sdk-spec.json    # "version": "3.0.0"
+$EDITOR sdks/js/package.json          # "version": "3.0.0"
+$EDITOR sdks/python/pyproject.toml    # version = "3.0.0"
+$EDITOR sdks/java/pom.xml             # <version>3.0.0</version>
 # ...open a PR, get it merged...
 ```
 
@@ -186,12 +186,12 @@ cd sdks/python && python -m pytest -q
 python3 ../../conformance/check_conformance.py
 python -m build && python -m twine check dist/*
 python -m twine upload dist/*
-curl -s -o /dev/null -w '%{http_code}\n' https://pypi.org/pypi/nrouter-sdk/2.2.1/json
+curl -s -o /dev/null -w '%{http_code}\n' https://pypi.org/pypi/nrouter-sdk/3.0.0/json
 ```
 
 ```bash
 cd sdks/java && mvn -B clean verify
 python3 ../../conformance/check_conformance.py
 mvn -B clean deploy -P release
-curl -s -o /dev/null -w '%{http_code}\n' https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk/2.2.1/nrouter-sdk-2.2.1.pom
+curl -s -o /dev/null -w '%{http_code}\n' https://repo1.maven.org/maven2/ai/nrouter/nrouter-sdk/3.0.0/nrouter-sdk-3.0.0.pom
 ```

@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.0
+
+- Advances Dart to the coordinated 3.0.0 major release train.
+- Unified conversation memory with sliding window token pruning.
+- Prompt template variable substitution and multi-tenant trace header injection.
+- RFC 9110 Retry-After backoff and stream latency diagnostic tracking.
+
 ## 2.2.1
 
 - Keeps Dart aligned with the coordinated nRouter SDK patch release; Dart wire

@@ -130,6 +130,29 @@ public sealed class NRouterError(
             }
             else -> Other(body)
         }
+
+        public const val MAX_RETRY_AFTER_SECONDS: Long = 86400L
+
+        /**
+         * Parses an RFC 9110 Retry-After header value (delta-seconds or HTTP-date).
+         */
+        @JvmStatic
+        public fun parseRetryAfter(raw: String?, nowEpochSeconds: Long = System.currentTimeMillis() / 1000): Long? {
+            if (raw.isNullOrBlank()) return null
+            val trimmed = raw.trim()
+            if (trimmed.all { it.isDigit() }) {
+                val seconds = trimmed.toLongOrNull() ?: return MAX_RETRY_AFTER_SECONDS
+                return seconds.coerceIn(0L, MAX_RETRY_AFTER_SECONDS)
+            }
+            return try {
+                val formatter = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
+                val parsed = java.time.ZonedDateTime.parse(trimmed, formatter)
+                val diff = parsed.toEpochSecond() - nowEpochSeconds
+                if (diff <= 0) 0L else diff.coerceAtMost(MAX_RETRY_AFTER_SECONDS)
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 }
 
@@ -147,6 +170,9 @@ public data class NRouterErrorBody(
     val limitSource: String? = null,
     /** On a 401: the gateway's stable reason, e.g. `key_route_not_allowed`. */
     val authReason: String? = null,
+    /** On a 429: duration in whole seconds to wait before retrying. */
+    val retryAfter: Long? = null,
 ) {
     internal fun describe(): String = if (code != null) "$message ($code)" else message
 }
+

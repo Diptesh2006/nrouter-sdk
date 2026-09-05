@@ -12,6 +12,19 @@ the pairing in both directions.
 
 from __future__ import annotations
 
+import re
+
+_KEY_RE = re.compile(r"(sk-nrouter-)[A-Za-z0-9._-]{6,}")
+_GENERIC_KEY_RE = re.compile(r"(sk-)(?!nrouter-)[A-Za-z0-9._-]{6,}")
+
+
+def redact_keys(message: str) -> str:
+    """Mask nRouter and provider API keys in error strings to prevent credential leaks."""
+    if not isinstance(message, str):
+        return str(message)
+    out = _KEY_RE.sub(r"\g<1>***", message)
+    return _GENERIC_KEY_RE.sub(r"\g<1>***", out)
+
 
 class nRouterError(Exception):
     """Base error for all nRouter SDK errors."""
@@ -29,8 +42,9 @@ class nRouterError(Exception):
         request_id: str | None = None,
         status_code: int | None = None,
     ) -> None:
-        super().__init__(message)
-        self.message = message
+        sanitized = redact_keys(message)
+        super().__init__(sanitized)
+        self.message = sanitized
         if code is not None:
             self.code = code
         if status_code is not None:
@@ -39,6 +53,7 @@ class nRouterError(Exception):
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.message
+
 
 
 class nRouterRequestError(nRouterError):
@@ -206,4 +221,6 @@ __all__ = [
     "nRouterRateLimitError",
     "nRouterRequestError",
     "nRouterServiceError",
+    "redact_keys",
 ]
+

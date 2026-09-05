@@ -1,6 +1,7 @@
 package nrouter
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 )
@@ -143,6 +144,49 @@ func MetaFromLookup(get func(string) string) ResponseMeta {
 // contradiction the caller should not bill against.
 func (m ResponseMeta) IsPriced() bool {
 	return m.CostStatus == "exact" && m.Cost != nil
+}
+
+// BudgetWarningInfo contains structured soft budget warning details.
+type BudgetWarningInfo struct {
+	Scope   string
+	Spend   float64
+	Ceiling float64
+}
+
+// ParseBudgetWarning parses BudgetWarning into scope, spend, and ceiling.
+func (m ResponseMeta) ParseBudgetWarning() *BudgetWarningInfo {
+	if m.BudgetWarning == "" {
+		return nil
+	}
+	var scope string
+	var spend, ceiling float64
+	n, err := fmt.Sscanf(m.BudgetWarning, "%s soft_budget %f/%f", &scope, &spend, &ceiling)
+	if err != nil || n != 3 {
+		return nil
+	}
+	return &BudgetWarningInfo{
+		Scope:   scope,
+		Spend:   spend,
+		Ceiling: ceiling,
+	}
+}
+
+// IsCacheHit reports whether the response came from the response cache.
+func (m ResponseMeta) IsCacheHit() bool {
+	return m.ResponseCache == "hit"
+}
+
+// IsCacheMiss reports whether the response cache was queried but missed.
+func (m ResponseMeta) IsCacheMiss() bool {
+	return m.ResponseCache == "miss"
+}
+
+// CacheAgeSeconds returns the cached age in seconds, or 0 if absent.
+func (m ResponseMeta) CacheAgeSeconds() uint64 {
+	if m.ResponseCacheAge != nil {
+		return *m.ResponseCacheAge
+	}
+	return 0
 }
 
 // isBillableAmount rejects the values that are syntactically valid floats but

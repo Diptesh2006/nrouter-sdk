@@ -775,6 +775,14 @@ class nRouter(_OpenAI):
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
+    def __repr__(self) -> str:
+        key = getattr(self, "api_key", "") or ""
+        tail = key[-4:] if len(key) >= 4 else "..."
+        return f"{self.__class__.__name__}(apiKey='sk-nrouter-...{tail}', baseURL='{self.base_url}')"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
     def _capture_nrouter_headers(self, response: httpx.Response) -> None:
         """Capture canonical x-nr-* headers from every response."""
         headers = dict(response.headers)
@@ -923,6 +931,14 @@ class AsyncnRouter(_AsyncOpenAI):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.close()
+
+    def __repr__(self) -> str:
+        key = getattr(self, "api_key", "") or ""
+        tail = key[-4:] if len(key) >= 4 else "..."
+        return f"{self.__class__.__name__}(apiKey='sk-nrouter-...{tail}', baseURL='{self.base_url}')"
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     async def _capture_nrouter_headers(self, response: httpx.Response) -> None:
         """Capture canonical x-nr-* headers from every response."""

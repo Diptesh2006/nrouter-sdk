@@ -111,3 +111,34 @@ class nRouterResponseMeta:
             response_cache=headers.get("x-nr-response-cache"),
             response_cache_age=optional_int("x-nr-response-cache-age"),
         )
+
+    @property
+    def is_cache_hit(self) -> bool:
+        return self.response_cache == "hit"
+
+    @property
+    def is_cache_miss(self) -> bool:
+        return self.response_cache == "miss"
+
+    def parse_budget_warning(self) -> BudgetWarningInfo | None:
+        if not self.budget_warning:
+            return None
+        parts = self.budget_warning.strip().split(" ")
+        if len(parts) != 3 or parts[1] != "soft_budget":
+            return None
+        scope = parts[0]
+        amounts = parts[2].split("/")
+        if len(amounts) != 2:
+            return None
+        try:
+            return BudgetWarningInfo(scope=scope, spend=float(amounts[0]), ceiling=float(amounts[1]))
+        except ValueError:
+            return None
+
+
+@dataclass(frozen=True)
+class BudgetWarningInfo:
+    scope: str
+    spend: float
+    ceiling: float
+

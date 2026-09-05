@@ -171,15 +171,14 @@ function vetExtra(extra: Record<string, unknown>): void {
           'an unrecognized argument that fails the request.',
       );
     }
-    if (key === '__proto__') {
+    if (key === '__proto__' || key === 'prototype' || key === 'constructor') {
       throw configurationError(
-        'extra must not carry a "__proto__" key: it is never serialized onto the wire ' +
-          "and instead replaces the request body's prototype, which makes unrelated " +
-          'fields appear to be set. Remove it.',
+        `extra must not carry a "${key}" key: it can pollute object prototypes or tamper with instantiation. Remove it.`,
       );
     }
   }
 }
+
 
 export function buildFeatureBody(
   body: Record<string, unknown>,

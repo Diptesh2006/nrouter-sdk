@@ -85,3 +85,16 @@ def test_sync_and_async_clients_expose_the_same_nrouter_surface():
         n for n in ("nrouter", "nrouter_models", "messages", "videos") if hasattr(c, n)
     }
     assert surface(sync) == surface(async_)
+
+
+@pytest.mark.parametrize("cls", [nRouter, AsyncnRouter])
+def test_repr_and_str_never_print_full_api_key(cls):
+    secret_key = "sk-nrouter-TOPSECRET123456"
+    client = cls(api_key=secret_key)
+    rep = repr(client)
+    st = str(client)
+    assert "TOPSECRET" not in rep
+    assert "TOPSECRET" not in st
+    assert "sk-nrouter-...3456" in rep
+    assert "sk-nrouter-...3456" in st
+

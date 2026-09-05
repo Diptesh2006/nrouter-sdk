@@ -21,12 +21,14 @@ from __future__ import annotations
 
 try:
     import openai._base_client as _obc
-    httpx = _obc.httpx
+    httpx = getattr(_obc, "httpx2", getattr(_obc, "httpx", None))
+    if httpx is None:
+        import httpx2 as httpx
 except (ImportError, AttributeError):
     try:
-        import httpx
-    except ImportError:
         import httpx2 as httpx
+    except ImportError:
+        import httpx
 import pytest
 
 from nroutersdk import AsyncnRouter, nRouter, nRouterBudgetExceededError

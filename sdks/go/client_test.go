@@ -1275,3 +1275,27 @@ func TestUsesMessagesWire(t *testing.T) {
 	}
 }
 
+func TestResponseMetaHelpers(t *testing.T) {
+	age := uint64(42)
+	meta := ResponseMeta{
+		BudgetWarning:    "org soft_budget 80.50/100.00",
+		ResponseCache:    "hit",
+		ResponseCacheAge: &age,
+	}
+
+	bw := meta.ParseBudgetWarning()
+	if bw == nil || bw.Scope != "org" || bw.Spend != 80.50 || bw.Ceiling != 100.00 {
+		t.Fatalf("unexpected budget warning parse: %+v", bw)
+	}
+
+	if !meta.IsCacheHit() {
+		t.Error("expected IsCacheHit to be true")
+	}
+	if meta.IsCacheMiss() {
+		t.Error("expected IsCacheMiss to be false")
+	}
+	if meta.CacheAgeSeconds() != 42 {
+		t.Errorf("expected cache age 42, got %d", meta.CacheAgeSeconds())
+	}
+}
+

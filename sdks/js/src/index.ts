@@ -41,7 +41,16 @@ export {
   type ChatRole,
 } from './types';
 
-export { metaFromHeaders, metaFromLookup, isPriced, EMPTY_META } from './meta';
+export {
+  metaFromHeaders,
+  metaFromLookup,
+  isPriced,
+  EMPTY_META,
+  parseBudgetWarning,
+  isCacheHit,
+  isCacheMiss,
+  type BudgetWarningInfo,
+} from './meta';
 export { jsonRequest } from './json';
 
 // Typed errors. Catch `nRouterError` for all of them, a subclass for one.
@@ -166,5 +175,10 @@ export {
   type TransportRequest,
   type TransportResponse,
 } from './multimodal';
+
+export {
+  diagnoseReasoningExhaustion,
+  type ReasoningExhaustionReport,
+} from './diagnostics';
 
 export { nRouter as default } from './client';

@@ -52,6 +52,24 @@ public data class NRouterResponseMeta(
     /** True when the gateway priced this request exactly. */
     val isPriced: Boolean get() = costStatus == "exact" && cost != null
 
+    /** True when the response was served from the response cache. */
+    val isCacheHit: Boolean get() = responseCache == "hit"
+
+    /** True when the response was a cache miss. */
+    val isCacheMiss: Boolean get() = responseCache == "miss"
+
+    /** Parses structured budget warning information if present. */
+    public fun parseBudgetWarning(): BudgetWarningInfo? {
+        val warning = budgetWarning?.trim() ?: return null
+        val parts = warning.split(" ")
+        if (parts.size != 3 || parts[1] != "soft_budget") return null
+        val amounts = parts[2].split("/")
+        if (amounts.size != 2) return null
+        val spend = amounts[0].toDoubleOrNull() ?: return null
+        val ceiling = amounts[1].toDoubleOrNull() ?: return null
+        return BudgetWarningInfo(scope = parts[0], spend = spend, ceiling = ceiling)
+    }
+
     public companion object {
         /** Every header this SDK reads, exactly as the spec names them. */
         @JvmField
@@ -102,3 +120,13 @@ public data class NRouterResponseMeta(
         }
     }
 }
+
+/**
+ * Structured details parsed from an `x-nr-budget-warning` response header.
+ */
+public data class BudgetWarningInfo(
+    val scope: String,
+    val spend: Double,
+    val ceiling: Double,
+)
+

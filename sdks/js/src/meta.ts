@@ -228,6 +228,33 @@ export function isPriced(meta: ResponseMeta): boolean {
   return meta.costStatus === 'exact' && meta.cost !== null;
 }
 
+export interface BudgetWarningInfo {
+  scope: string;
+  spend: number;
+  ceiling: number;
+}
+
+export function parseBudgetWarning(budgetWarning: string | null | undefined): BudgetWarningInfo | null {
+  if (!budgetWarning) return null;
+  const parts = budgetWarning.trim().split(' ');
+  if (parts.length !== 3 || parts[1] !== 'soft_budget') return null;
+  const scope = parts[0];
+  const amounts = parts[2].split('/');
+  if (amounts.length !== 2) return null;
+  const spend = parseFloat(amounts[0]);
+  const ceiling = parseFloat(amounts[1]);
+  if (!Number.isFinite(spend) || !Number.isFinite(ceiling)) return null;
+  return { scope, spend, ceiling };
+}
+
+export function isCacheHit(meta: ResponseMeta): boolean {
+  return meta.responseCache === 'hit';
+}
+
+export function isCacheMiss(meta: ResponseMeta): boolean {
+  return meta.responseCache === 'miss';
+}
+
 /**
  * Re-exported so a caller can forward exactly the headers this parser reads —
  * into their own logging or tracing layer — without retyping the list and

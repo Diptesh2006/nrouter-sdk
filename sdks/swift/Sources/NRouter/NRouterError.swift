@@ -129,7 +129,10 @@ public struct NRouterErrorBody: Equatable, Sendable {
     /// wrong limit.
     public var limitSource: String?
     /// On a 401: the gateway's stable reason, e.g. `key_route_not_allowed`.
+    /// On a 401: the gateway's stable reason, e.g. `key_route_not_allowed`.
     public var authReason: String?
+    /// On a 429: wait duration in seconds from Retry-After header.
+    public var retryAfter: UInt64?
 
     public init(
         message: String,
@@ -137,7 +140,8 @@ public struct NRouterErrorBody: Equatable, Sendable {
         status: Int? = nil,
         requestID: String? = nil,
         limitSource: String? = nil,
-        authReason: String? = nil
+        authReason: String? = nil,
+        retryAfter: UInt64? = nil
     ) {
         self.message = message
         self.code = code
@@ -145,7 +149,34 @@ public struct NRouterErrorBody: Equatable, Sendable {
         self.requestID = requestID
         self.limitSource = limitSource
         self.authReason = authReason
+        self.retryAfter = retryAfter
     }
+}
+
+/// Max Retry-After ceiling (24 hours).
+public let maxRetryAfterSeconds: UInt64 = 86400
+
+/// Parses an RFC 9110 Retry-After header value (delta-seconds or IMF-fixdate HTTP-date).
+public func parseRetryAfter(_ raw: String?, now: Date = Date()) -> UInt64? {
+    guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+        return nil
+    }
+    if let seconds = UInt64(raw) {
+        return min(seconds, maxRetryAfterSeconds)
+    }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+    if let date = formatter.date(from: raw) {
+        let delta = date.timeIntervalSince(now)
+        if delta <= 0 {
+            return 0
+        }
+        let seconds = UInt64(delta.rounded())
+        return min(seconds, maxRetryAfterSeconds)
+    }
+    return nil
 }
 
 extension NRouterError: LocalizedError {
@@ -162,3 +193,4 @@ extension NRouterError: LocalizedError {
         }
     }
 }
+

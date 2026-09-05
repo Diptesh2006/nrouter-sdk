@@ -15,7 +15,15 @@ const assert = require('node:assert/strict');
 const meta = require('../dist/meta');
 const { HEADER_NAMES } = require('../dist/types');
 
-const { metaFromHeaders, metaFromLookup, isPriced, EMPTY_META } = meta;
+const {
+  metaFromHeaders,
+  metaFromLookup,
+  isPriced,
+  EMPTY_META,
+  parseBudgetWarning,
+  isCacheHit,
+  isCacheMiss,
+} = meta;
 
 /**
  * One plausible value for every header the SDK claims to read.
@@ -246,3 +254,19 @@ test('a cost that underflows to zero is unknown, not free', () => {
     assert.equal(typeof meta.cost, 'number', `a real value was rejected: ${raw}`);
   }
 });
+
+test('parseBudgetWarning, isCacheHit, isCacheMiss helpers', () => {
+  const bw = parseBudgetWarning('org soft_budget 80.50/100.00');
+  assert.deepEqual(bw, { scope: 'org', spend: 80.5, ceiling: 100 });
+  assert.equal(parseBudgetWarning('garbage'), null);
+  assert.equal(parseBudgetWarning(null), null);
+
+  const hitMeta = { ...EMPTY_META, responseCache: 'hit' };
+  assert.equal(isCacheHit(hitMeta), true);
+  assert.equal(isCacheMiss(hitMeta), false);
+
+  const missMeta = { ...EMPTY_META, responseCache: 'miss' };
+  assert.equal(isCacheHit(missMeta), false);
+  assert.equal(isCacheMiss(missMeta), true);
+});
+

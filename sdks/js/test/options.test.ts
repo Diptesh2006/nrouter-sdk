@@ -492,7 +492,19 @@ test('a __proto__ key in extra is REFUSED, not silently swallowed', () => {
       return true;
     },
   );
+
+  for (const dangerous of ['prototype', 'constructor']) {
+    assert.throws(
+      () => buildChatBody({ model: 'm', prompt: 'hi', extra: { [dangerous]: { injected: true } } }, {}),
+      (err: unknown) => {
+        assert.equal((err as { kind?: string }).kind, 'configuration');
+        assert.match(String((err as { message?: string }).message), new RegExp(dangerous));
+        return true;
+      },
+    );
+  }
 });
+
 
 test('maxTokens must be a positive integer, never coerced', () => {
   // `max_tokens: NaN` serializes as JSON `null` — a value the caller never

@@ -248,6 +248,30 @@ def test_auth_reason_reaches_the_metadata():
     assert meta.auth_reason == "key_route_not_allowed"
 
 
+def test_cache_hit_and_miss_and_budget_warning():
+    from nroutersdk import BudgetWarningInfo, nRouterResponseMeta
+
+    meta_hit = nRouterResponseMeta.from_headers(
+        {"x-nr-response-cache": "hit", "x-nr-response-cache-age": "42"}
+    )
+    assert meta_hit.is_cache_hit is True
+    assert meta_hit.is_cache_miss is False
+    assert meta_hit.response_cache_age == 42
+
+    meta_miss = nRouterResponseMeta.from_headers({"x-nr-response-cache": "miss"})
+    assert meta_miss.is_cache_hit is False
+    assert meta_miss.is_cache_miss is True
+
+    warning_meta = nRouterResponseMeta.from_headers(
+        {"x-nr-budget-warning": "org soft_budget 80.00/100.00"}
+    )
+    parsed = warning_meta.parse_budget_warning()
+    assert parsed == BudgetWarningInfo(scope="org", spend=80.0, ceiling=100.0)
+
+    no_warning = nRouterResponseMeta.from_headers({})
+    assert no_warning.parse_budget_warning() is None
+
+
 def test_a_service_error_keeps_the_code_the_gateway_named():
     """`credit_check_failed` and `service_unavailable` share one class.
 
@@ -259,3 +283,20 @@ def test_a_service_error_keeps_the_code_the_gateway_named():
             status_error(503, "credit system unavailable", code="credit_check_failed")
         )
     assert caught.value.code == "credit_check_failed"
+
+
+def test_redact_keys_in_error_messages():
+    from nroutersdk._errors import redact_keys, nRouterError
+
+    raw = "Failed call with key sk-nrouter-LIVE12345678 and upstream sk-ant-api03-SECRETKEY999"
+    redacted = redact_keys(raw)
+    assert "LIVE12345678" not in redacted
+    assert "SECRETKEY999" not in redacted
+    assert "sk-nrouter-***" in redacted
+    assert "sk-***" in redacted
+
+    err = nRouterError(f"Refused request with key sk-nrouter-CONFIDENTIAL99")
+    assert "CONFIDENTIAL99" not in str(err)
+    assert "CONFIDENTIAL99" not in err.message
+    assert "sk-nrouter-***" in str(err)
+

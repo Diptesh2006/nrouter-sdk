@@ -105,4 +105,26 @@ public struct NRouterResponseMeta: Equatable, Sendable {
 
     /// True when the gateway priced this request exactly.
     public var isPriced: Bool { costStatus == "exact" && cost != nil }
+
+    public struct BudgetWarningInfo: Equatable, Sendable {
+        public let scope: String
+        public let spend: Double
+        public let ceiling: Double
+    }
+
+    public func parseBudgetWarning() -> BudgetWarningInfo? {
+        guard let bw = budgetWarning else { return nil }
+        let parts = bw.components(separatedBy: " ")
+        guard parts.count == 3, parts[1] == "soft_budget" else { return nil }
+        let scope = parts[0]
+        let amounts = parts[2].components(separatedBy: "/")
+        guard amounts.count == 2,
+              let spend = Double(amounts[0]),
+              let ceiling = Double(amounts[1]) else { return nil }
+        return BudgetWarningInfo(scope: scope, spend: spend, ceiling: ceiling)
+    }
+
+    public var isCacheHit: Bool { responseCache == "hit" }
+    public var isCacheMiss: Bool { responseCache == "miss" }
+    public var cacheAgeSeconds: Int { responseCacheAge ?? 0 }
 }

@@ -183,3 +183,94 @@ impl fmt::Display for NRouterError {
 }
 
 impl std::error::Error for NRouterError {}
+
+/// Maximum allowable backoff in seconds (24 hours).
+pub const MAX_RETRY_AFTER_SECONDS: u64 = 86400;
+
+/// Parses an RFC 9110 Retry-After header value (delta-seconds or HTTP-date).
+pub fn parse_retry_after(raw: Option<&str>) -> Option<u64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    parse_retry_after_at(raw, now)
+}
+
+/// Parses an RFC 9110 Retry-After header value relative to a given epoch timestamp in seconds.
+pub fn parse_retry_after_at(raw: Option<&str>, now_epoch: u64) -> Option<u64> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Ok(seconds) = raw.parse::<u64>() {
+        return Some(seconds.min(MAX_RETRY_AFTER_SECONDS));
+    }
+    parse_http_date(raw).map(|epoch| {
+        if epoch <= now_epoch {
+            0
+        } else {
+            (epoch - now_epoch).min(MAX_RETRY_AFTER_SECONDS)
+        }
+    })
+}
+
+fn parse_http_date(s: &str) -> Option<u64> {
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    if parts.len() != 6 {
+        return None;
+    }
+    if !parts[0].ends_with(',') {
+        return None;
+    }
+    let day: u32 = parts[1].parse().ok()?;
+    let month: u32 = match parts[2].to_ascii_lowercase().as_str() {
+        "jan" => 1,
+        "feb" => 2,
+        "mar" => 3,
+        "apr" => 4,
+        "may" => 5,
+        "jun" => 6,
+        "jul" => 7,
+        "aug" => 8,
+        "sep" => 9,
+        "oct" => 10,
+        "nov" => 11,
+        "dec" => 12,
+        _ => return None,
+    };
+    let year: i64 = parts[3].parse().ok()?;
+    if year < 1970 {
+        return None;
+    }
+    let time_parts: Vec<&str> = parts[4].split(':').collect();
+    if time_parts.len() != 3 {
+        return None;
+    }
+    let hour: u32 = time_parts[0].parse().ok()?;
+    let min: u32 = time_parts[1].parse().ok()?;
+    let sec: u32 = time_parts[2].parse().ok()?;
+    if hour > 23 || min > 59 || sec > 60 || day == 0 || day > 31 {
+        return None;
+    }
+    let days = days_from_civil(year, month, day)?;
+    let total_secs = days as u64 * 86400 + hour as u64 * 3600 + min as u64 * 60 + sec as u64;
+    Some(total_secs)
+}
+
+fn days_from_civil(y: i64, m: u32, d: u32) -> Option<i64> {
+    let mut y = y;
+    if m <= 2 {
+        y -= 1;
+    }
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u32;
+    let m_adj = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * m_adj + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe as i64 - 719468;
+    if days >= 0 {
+        Some(days)
+    } else {
+        None
+    }
+}

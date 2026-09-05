@@ -3,7 +3,7 @@
 //! gateway works across every SDK" checkable rather than asserted.
 
 use nrouter::errors::{ErrorBody, NRouterError};
-use nrouter::meta::{ResponseMeta, HEADER_NAMES};
+use nrouter::meta::{BudgetWarningInfo, ResponseMeta, HEADER_NAMES};
 use nrouter::{resolve_api_key, DEFAULT_BASE_URL, ENV_KEY, KEY_PREFIX};
 
 fn body(code: &str) -> ErrorBody {
@@ -139,6 +139,8 @@ fn a_priced_response_parses_its_numbers() {
     });
     assert_eq!(meta.cost, Some(0.00042));
     assert!(meta.is_priced());
+    assert!(meta.is_cache_hit());
+    assert!(!meta.is_cache_miss());
     assert_eq!(meta.input_tokens, Some(11));
     assert_eq!(meta.output_tokens, Some(22));
     assert_eq!(meta.response_cache.as_deref(), Some("hit"));
@@ -146,6 +148,15 @@ fn a_priced_response_parses_its_numbers() {
     assert_eq!(
         meta.budget_warning.as_deref(),
         Some("org soft_budget 80.00/100.00")
+    );
+    let parsed_warning = meta.parse_budget_warning();
+    assert_eq!(
+        parsed_warning,
+        Some(BudgetWarningInfo {
+            scope: "org".into(),
+            spend: 80.0,
+            ceiling: 100.0,
+        })
     );
     assert_eq!(meta.guardrails.as_deref(), Some("pass"));
 }
@@ -288,4 +299,33 @@ fn debug_never_prints_the_api_key() {
         "the api key leaked into Debug: {rendered}"
     );
     assert!(rendered.contains("sk-nrouter-...T123"), "{rendered}");
+}
+
+#[test]
+fn parse_retry_after_accepts_delta_seconds_and_http_date() {
+    let now = 1770000000u64;
+    assert_eq!(nrouter::parse_retry_after_at(Some("120"), now), Some(120));
+    assert_eq!(nrouter::parse_retry_after_at(Some("0"), now), Some(0));
+    assert_eq!(nrouter::parse_retry_after_at(Some("  45  "), now), Some(45));
+    assert_eq!(
+        nrouter::parse_retry_after_at(Some("9999999999"), now),
+        Some(nrouter::MAX_RETRY_AFTER_SECONDS)
+    );
+    assert_eq!(nrouter::parse_retry_after_at(None, now), None);
+    assert_eq!(nrouter::parse_retry_after_at(Some(""), now), None);
+    assert_eq!(nrouter::parse_retry_after_at(Some("invalid"), now), None);
+
+    // IMF-fixdate future
+    // 1770000000 corresponds to: 2026-02-02 02:40:00 GMT
+    // +60s = 2026-02-02 02:41:00 GMT (Monday)
+    assert_eq!(
+        nrouter::parse_retry_after_at(Some("Mon, 02 Feb 2026 02:41:00 GMT"), now),
+        Some(60)
+    );
+
+    // Past date clamps to 0
+    assert_eq!(
+        nrouter::parse_retry_after_at(Some("Mon, 02 Feb 2026 02:30:00 GMT"), now),
+        Some(0)
+    );
 }

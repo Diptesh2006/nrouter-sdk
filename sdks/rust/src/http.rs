@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::net::IpAddr;
 use std::time::Duration;
 
-use crate::errors::{ErrorBody, NRouterError};
+use crate::errors::{parse_retry_after, ErrorBody, NRouterError};
 use crate::meta::ResponseMeta;
 use crate::{resolve_api_key, DEFAULT_BASE_URL};
 
@@ -457,8 +457,7 @@ impl Client {
             let retry_after = response
                 .headers()
                 .get(reqwest::header::RETRY_AFTER)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.trim().parse::<u64>().ok());
+                .and_then(|v| parse_retry_after(v.to_str().ok()));
             let raw = response
                 .bytes()
                 .await
@@ -520,8 +519,7 @@ impl Client {
         let retry_after = response
             .headers()
             .get(reqwest::header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.trim().parse::<u64>().ok());
+            .and_then(|v| parse_retry_after(v.to_str().ok()));
         let raw = response
             .bytes()
             .await
@@ -563,8 +561,7 @@ impl Client {
         let retry_after = response
             .headers()
             .get(reqwest::header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.trim().parse::<u64>().ok());
+            .and_then(|v| parse_retry_after(v.to_str().ok()));
         let content_type = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)

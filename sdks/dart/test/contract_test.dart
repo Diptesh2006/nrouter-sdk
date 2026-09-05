@@ -681,5 +681,93 @@ void main() {
       await client.downloadVideoContent('video/one');
       expect(seen.url.toString(), contains('/v1/videos/video%2Fone/content'));
     });
+
+    test('NRouterMemory manages messages and rejects forbidden tenancy keys', () async {
+      final mem = NRouterMemory();
+      await mem.add({'role': 'user', 'content': 'Hello'});
+      await mem.add({'role': 'assistant', 'content': 'Hi!'});
+      final msgs = await mem.messages();
+      expect(msgs.length, 2);
+
+      expect(
+        () => mem.add({'role': 'user', 'content': 'evil', 'organization_id': 'org_123'}),
+        throwsA(isA<NRouterConfigurationError>()),
+      );
+
+      await mem.clear();
+      final cleared = await mem.messages();
+      expect(cleared.length, 0);
+    });
+
+    test('prompt helpers and system variable conflicts', () {
+      final sel = promptTemplate('tpl_123', {'customer': 'Acme'});
+      expect(sel.templateId, 'tpl_123');
+      expect(sel.variables['customer'], 'Acme');
+
+      expect(() => promptTemplate('   '), throwsA(isA<NRouterConfigurationError>()));
+
+      final merged = sel.withVariables({'customer': 'Beta', 'user': 'Alice'});
+      expect(merged.variables['customer'], 'Beta');
+      expect(merged.variables['user'], 'Alice');
+
+      final conflicts = systemVariableConflicts({
+        'user_id': 'u1',
+        'custom': 'val',
+        'org_name': 'orgX',
+        'timestamp': 123,
+      });
+      expect(conflicts, ['org_name', 'timestamp', 'user_id']);
+    });
+
+    test('media audio validation and video polling', () async {
+      for (final fmt in ['mp3', 'opus', 'aac', 'flac', 'wav', 'pcm', 'MP3']) {
+        expect(() => validateAudioFormat(fmt), returnsNormally);
+      }
+      expect(
+        () => validateAudioFormat('unsupported_fmt'),
+        throwsA(isA<NRouterConfigurationError>()),
+      );
+
+      final client = NRouter(
+        apiKey: 'sk-nrouter-test',
+        baseUrl: 'http://127.0.0.1:9/v1',
+        httpClient: MockClient((req) async {
+          return http.Response(
+            '{"id":"vid_123","status":"completed"}',
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      final video = await client.waitForVideo('vid_123', pollInterval: const Duration(milliseconds: 10));
+      expect(video.body['status'], 'completed');
+    });
+
+    test('sampling policy adheres to Claude rules', () {
+      expect(isClaudeModel('claude-3-opus'), isTrue);
+      expect(isClaudeModel('custom-model', 'anthropic'), isTrue);
+      expect(isClaudeModel('gpt-4o', 'openai'), isFalse);
+
+      final empty = buildSamplingParams(advanced: false, model: 'claude-3', temperature: 0.7, topP: 0.9);
+      expect(empty.isEmpty, isTrue);
+
+      final claude = buildSamplingParams(advanced: true, model: 'claude-3-opus', temperature: 0.7, topP: 0.9);
+      expect(claude.containsKey('temperature'), isFalse);
+      expect(claude['top_p'], 0.9);
+
+      final gpt = buildSamplingParams(advanced: true, model: 'gpt-4o', provider: 'openai', temperature: 0.7, topP: 0.9);
+      expect(gpt['temperature'], 0.7);
+      expect(gpt['top_p'], 0.9);
+
+      expect(
+        () => buildSamplingParams(advanced: true, model: 'gpt-4o', temperature: -1.0),
+        throwsA(isA<NRouterConfigurationError>()),
+      );
+      expect(
+        () => buildSamplingParams(advanced: true, model: 'gpt-4o', topP: 1.5),
+        throwsA(isA<NRouterConfigurationError>()),
+      );
+    });
   });
 }

@@ -681,6 +681,142 @@ final class ContractTests: XCTestCase {
         )
         XCTAssertEqual(streaming.timeoutIntervalForRequest, buffered.timeoutIntervalForRequest)
     }
+
+    func testNRouterMemory() async throws {
+        let mem = NRouterMemory()
+        try await mem.add(["role": "user", "content": "Hello"])
+        try await mem.add(["role": "assistant", "content": "Hi!"])
+        let msgs = try await mem.messages()
+        XCTAssertEqual(msgs.count, 2)
+
+        // Forbidden tenancy keys rejected
+        do {
+            try await mem.add(["role": "user", "content": "evil", "organization_id": "org_123"])
+            XCTFail("expected error on tenancy key")
+        } catch {}
+
+        try await mem.clear()
+        let cleared = try await mem.messages()
+        XCTAssertEqual(cleared.count, 0)
+    }
+
+    func testPromptHelpersAndConflicts() throws {
+        let sel = try promptTemplate("tpl_123", variables: ["customer": "Acme"])
+        XCTAssertEqual(sel.templateID, "tpl_123")
+        XCTAssertEqual(sel.variables?["customer"] as? String, "Acme")
+
+        XCTAssertThrowsError(try promptTemplate("  "))
+
+        let merged = sel.withVariables(["customer": "Beta", "user": "Alice"])
+        XCTAssertEqual(merged.variables?["customer"] as? String, "Beta")
+        XCTAssertEqual(merged.variables?["user"] as? String, "Alice")
+
+        var body: [String: Any] = [:]
+        merged.apply(to: &body)
+        XCTAssertEqual(body[promptTemplateIDField] as? String, "tpl_123")
+        XCTAssertNotNil(body[promptVariablesField])
+
+        let conflicts = systemVariableConflicts([
+            "user_id": "u1",
+            "custom": "v",
+            "org_name": "orgX",
+            "timestamp": 123,
+        ])
+        XCTAssertEqual(conflicts, ["org_name", "timestamp", "user_id"])
+    }
+
+    func testResponseMetaHelpers() {
+        var meta = NRouterResponseMeta()
+        meta.budgetWarning = "org soft_budget 80.50/100.00"
+        meta.responseCache = "hit"
+        meta.responseCacheAge = 42
+
+        let bw = meta.parseBudgetWarning()
+        XCTAssertNotNil(bw)
+        XCTAssertEqual(bw?.scope, "org")
+        XCTAssertEqual(bw?.spend, 80.50)
+        XCTAssertEqual(bw?.ceiling, 100.00)
+
+        XCTAssertTrue(meta.isCacheHit)
+        XCTAssertFalse(meta.isCacheMiss)
+        XCTAssertEqual(meta.cacheAgeSeconds, 42)
+    }
+
+    func testMediaAudioAndVideoHelpers() async throws {
+        for fmt in ["mp3", "opus", "aac", "flac", "wav", "pcm"] {
+            XCTAssertNoThrow(try validateAudioFormat(fmt))
+        }
+        XCTAssertThrowsError(try validateAudioFormat("unsupported_fmt"))
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubProtocol.self]
+        let client = try NRouter(apiKey: "sk-nrouter-test", session: URLSession(configuration: config))
+        StubProtocol.response = (
+            200,
+            ["content-type": "application/json"],
+            """
+            {"id": "vid_abc", "status": "completed", "output": "https://example.com/video.mp4"}
+            """.data(using: .utf8)!
+        )
+        let video = try await client.waitForVideo("vid_abc", pollInterval: 0.01, timeout: 1.0)
+        XCTAssertEqual(video.body["status"] as? String, "completed")
+    }
+
+    func testSamplingPolicy() throws {
+        XCTAssertTrue(isClaudeModel("claude-3-opus", provider: nil))
+        XCTAssertTrue(isClaudeModel("custom-model", provider: "anthropic"))
+        XCTAssertFalse(isClaudeModel("gpt-4o", provider: "openai"))
+
+        let empty = try buildSamplingParams(advanced: false, model: "claude-3", temperature: 0.7, topP: 0.9)
+        XCTAssertTrue(empty.isEmpty)
+
+        // Claude model with topP suppresses temperature
+        let claude = try buildSamplingParams(advanced: true, model: "claude-3-opus", temperature: 0.7, topP: 0.9)
+        XCTAssertNil(claude["temperature"])
+        XCTAssertEqual(claude["top_p"], 0.9)
+
+        // GPT model keeps both
+        let gpt = try buildSamplingParams(advanced: true, model: "gpt-4o", provider: "openai", temperature: 0.7, topP: 0.9)
+        XCTAssertEqual(gpt["temperature"], 0.7)
+        XCTAssertEqual(gpt["top_p"], 0.9)
+
+        XCTAssertThrowsError(try buildSamplingParams(advanced: true, model: "gpt-4o", temperature: -1.0))
+        XCTAssertThrowsError(try buildSamplingParams(advanced: true, model: "gpt-4o", topP: 1.5))
+    }
+
+    func testDiagnoseReasoningExhaustion() {
+        let report = diagnoseReasoningExhaustion(finishReason: "length", outputTokens: 1000, reasoningTokens: 1000, content: "")
+        XCTAssertTrue(report.exhausted)
+        XCTAssertEqual(report.reasoningTokens, 1000)
+
+        let normal = diagnoseReasoningExhaustion(finishReason: "stop", outputTokens: 50, reasoningTokens: 10, content: "ok")
+        XCTAssertFalse(normal.exhausted)
+    }
+
+    func testParseRetryAfter() {
+        let now = Date(timeIntervalSince1970: 1770000000)
+        XCTAssertEqual(parseRetryAfter("120", now: now), 120)
+        XCTAssertEqual(parseRetryAfter("0", now: now), 0)
+        XCTAssertEqual(parseRetryAfter("  45  ", now: now), 45)
+        XCTAssertEqual(parseRetryAfter("9999999999", now: now), maxRetryAfterSeconds)
+        XCTAssertNil(parseRetryAfter(nil))
+        XCTAssertNil(parseRetryAfter(""))
+        XCTAssertNil(parseRetryAfter("invalid"))
+
+        // HTTP-date future
+        let futureDate = Date(timeIntervalSince1970: 1770000060)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        let futureString = formatter.string(from: futureDate)
+        XCTAssertEqual(parseRetryAfter(futureString, now: now), 60)
+
+        // HTTP-date past
+        let pastDate = Date(timeIntervalSince1970: 1769999900)
+        let pastString = formatter.string(from: pastDate)
+        XCTAssertEqual(parseRetryAfter(pastString, now: now), 0)
+    }
 }
 
 /// Captures the request the SDK actually builds, so assertions are about the

@@ -105,4 +105,42 @@ impl ResponseMeta {
     pub fn is_priced(&self) -> bool {
         self.cost_status.as_deref() == Some("exact") && self.cost.is_some()
     }
+
+    /// True when the response came from the nRouter response cache.
+    pub fn is_cache_hit(&self) -> bool {
+        self.response_cache.as_deref() == Some("hit")
+    }
+
+    /// True when the response was a cache miss.
+    pub fn is_cache_miss(&self) -> bool {
+        self.response_cache.as_deref() == Some("miss")
+    }
+
+    /// Parses structured budget warning information if present.
+    pub fn parse_budget_warning(&self) -> Option<BudgetWarningInfo> {
+        let warning = self.budget_warning.as_deref()?.trim();
+        let parts: Vec<&str> = warning.split_whitespace().collect();
+        if parts.len() != 3 || parts[1] != "soft_budget" {
+            return None;
+        }
+        let amounts: Vec<&str> = parts[2].split('/').collect();
+        if amounts.len() != 2 {
+            return None;
+        }
+        let spend = amounts[0].parse::<f64>().ok()?;
+        let ceiling = amounts[1].parse::<f64>().ok()?;
+        Some(BudgetWarningInfo {
+            scope: parts[0].to_string(),
+            spend,
+            ceiling,
+        })
+    }
+}
+
+/// Structured details from an `x-nr-budget-warning` header.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BudgetWarningInfo {
+    pub scope: String,
+    pub spend: f64,
+    pub ceiling: f64,
 }

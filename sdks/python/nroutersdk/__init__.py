@@ -22,7 +22,7 @@ from nroutersdk._errors import (
     nRouterRequestError,
     nRouterServiceError,
 )
-from nroutersdk._response import nRouterResponseMeta
+from nroutersdk._response import BudgetWarningInfo, nRouterResponseMeta
 from nroutersdk._unsupported import nRouterUnsupportedError
 from nroutersdk._version import __version__
 from nroutersdk.client import DEFAULT_MODEL, AsyncnRouter, nRouter, uses_messages_wire
@@ -38,6 +38,7 @@ from nroutersdk.prompts import (
     system_variable_conflicts,
     with_variables,
 )
+from nroutersdk.diagnostics import ReasoningExhaustionReport, diagnose_reasoning_exhaustion
 from nroutersdk.sampling import build_sampling_params, is_claude_model
 
 __all__ = [
@@ -45,14 +46,17 @@ __all__ = [
     "PROMPT_WIRE_FIELDS",
     "SYSTEM_VARIABLE_NAMES",
     "AsyncnRouter",
+    "BudgetWarningInfo",
     "Memory",
     "MemoryStore",
     "PromptSelection",
+    "ReasoningExhaustionReport",
     "__version__",
     "apply_prompt",
     "build_sampling_params",
     "create_array_store",
     "create_memory",
+    "diagnose_reasoning_exhaustion",
     "is_claude_model",
     "nRouter",
     "nRouterAuthenticationError",

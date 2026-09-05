@@ -14,6 +14,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -548,6 +549,13 @@ class ContractTest {
         assertEquals("org soft_budget 80.00/100.00", meta.budgetWarning)
         assertEquals("pass", meta.guardrails)
         assertTrue(meta.isPriced)
+        assertTrue(meta.isCacheHit)
+        assertFalse(meta.isCacheMiss)
+        val warning = meta.parseBudgetWarning()
+        assertNotNull(warning)
+        assertEquals("org", warning.scope)
+        assertEquals(80.0, warning.spend)
+        assertEquals(100.0, warning.ceiling)
     }
 
     // ---- timeouts -----------------------------------------------------------
@@ -713,9 +721,99 @@ class ContractTest {
         assertSame(injected, client.bufferedHttpClient)
         assertEquals(11_000, client.bufferedHttpClient.callTimeoutMillis)
 
-        // And it is the transport actually used, not merely stored.
         server.enqueue(MockResponse().setResponseCode(200).setHeader("content-type", "application/json").setBody("{}"))
         client.chatCompletions(JSONObject())
         assertEquals("/v1/chat/completions", server.takeRequest().path)
     }
+
+    @Test
+    fun `NRouterMemory stores messages and rejects forbidden tenancy keys`() {
+        val mem = NRouterMemory()
+        mem.add(mapOf("role" to "user", "content" to "Hello"))
+        mem.add(mapOf("role" to "assistant", "content" to "Hi!"))
+        val msgs = mem.messages()
+        assertEquals(2, msgs.size)
+
+        assertFailsWith<NRouterError.Configuration> {
+            mem.add(mapOf("role" to "user", "content" to "evil", "organization_id" to "org_123"))
+        }
+
+        mem.clear()
+        assertEquals(0, mem.messages().size)
+    }
+
+    @Test
+    fun `prompt helpers and system variable conflict resolution`() {
+        val sel = promptTemplate("tpl_123", mapOf("customer" to "Acme"))
+        assertEquals("tpl_123", sel.templateId)
+        assertEquals("Acme", sel.variables["customer"])
+
+        assertFailsWith<NRouterError.Configuration> {
+            promptTemplate("   ")
+        }
+
+        val merged = sel.withVariables(mapOf("customer" to "Beta", "user" to "Alice"))
+        assertEquals("Beta", merged.variables["customer"])
+        assertEquals("Alice", merged.variables["user"])
+
+        val conflicts = systemVariableConflicts(mapOf(
+            "user_id" to "u1",
+            "custom" to "val",
+            "org_name" to "orgX",
+            "timestamp" to 123
+        ))
+        assertEquals(listOf("org_name", "timestamp", "user_id"), conflicts)
+    }
+
+    @Test
+    fun `sampling policy adheres to Claude rules`() {
+        assertTrue(isClaudeModel("claude-3-opus", null))
+        assertTrue(isClaudeModel("custom-model", "anthropic"))
+        assertFalse(isClaudeModel("gpt-4o", "openai"))
+
+        val empty = buildSamplingParams(advanced = false, model = "claude-3", temperature = 0.7, topP = 0.9)
+        assertTrue(empty.isEmpty())
+
+        val claude = buildSamplingParams(advanced = true, model = "claude-3-opus", temperature = 0.7, topP = 0.9)
+        assertNull(claude["temperature"])
+        assertEquals(0.9, claude["top_p"])
+
+        val gpt = buildSamplingParams(advanced = true, model = "gpt-4o", provider = "openai", temperature = 0.7, topP = 0.9)
+        assertEquals(0.7, gpt["temperature"])
+        assertEquals(0.9, gpt["top_p"])
+
+        assertFailsWith<NRouterError.Configuration> {
+            buildSamplingParams(advanced = true, model = "gpt-4o", temperature = -1.0)
+        }
+        assertFailsWith<NRouterError.Configuration> {
+            buildSamplingParams(advanced = true, model = "gpt-4o", topP = 1.5)
+        }
+    }
+
+    @Test
+    fun `parseRetryAfter accepts delta-seconds and HTTP-date`() {
+        val now = 1770000000L
+        assertEquals(120L, NRouterError.parseRetryAfter("120", now))
+        assertEquals(0L, NRouterError.parseRetryAfter("0", now))
+        assertEquals(45L, NRouterError.parseRetryAfter("  45  ", now))
+        assertEquals(NRouterError.MAX_RETRY_AFTER_SECONDS, NRouterError.parseRetryAfter("9999999999", now))
+        assertNull(NRouterError.parseRetryAfter(null, now))
+        assertNull(NRouterError.parseRetryAfter("", now))
+        assertNull(NRouterError.parseRetryAfter("invalid", now))
+
+        // HTTP-date future
+        val future = java.time.ZonedDateTime.ofInstant(
+            java.time.Instant.ofEpochSecond(now + 60),
+            java.time.ZoneOffset.UTC,
+        ).format(java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
+        assertEquals(60L, NRouterError.parseRetryAfter(future, now))
+
+        // HTTP-date past
+        val past = java.time.ZonedDateTime.ofInstant(
+            java.time.Instant.ofEpochSecond(now - 100),
+            java.time.ZoneOffset.UTC,
+        ).format(java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
+        assertEquals(0L, NRouterError.parseRetryAfter(past, now))
+    }
 }
+

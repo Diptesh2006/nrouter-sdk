@@ -1,12 +1,46 @@
-# nRouter Cinematic Video Standard
+# nRouter Brand and Video Rules
 
-## Master Specifications
-- Resolution: 4K UHD (3840 × 2160) at 24fps film cadence
-- Look: ARRI Alexa 65 sensor, anamorphic 2.39:1 letterbox feel, subtle natural film grain, zero digital sharpness artifacts
-- Lighting: Motivated directional key light (5600K-6500K), volumetric ray dispersion, matte obsidian surfaces with controlled specular highlights
-- Color Grade: High-end commercial grade (clean blacks, natural saturation, controlled teal/mint accents on UI readouts, no oversaturated neons)
+These runtime rules are a curated copy of the frontend brand and video skills from
+nRouterGateway/nrouter-frontend-ui, reviewed at commit 150076c8. They keep generated
+prompts self-contained when the agent is installed from npm.
 
-## Content Rules
-- Present nRouter as the mission-critical gateway/control plane for enterprise AI.
-- Interfaces shown must reflect dark-mode minimalist latency and routing metrics.
-- Movement must have physical weight and inertia (dolly, crane, lateral track); zero random camera float.
+## Brand
+
+- Use only the canonical lowercase `n` gateway mark from the approved brand kit. Never redraw,
+  trace, invent, or AI-generate the logo. In the frontend source this is resolved from
+  `resources/brand-kit/Logos/`.
+- For video watermarks, use the supplied bottom-left wordmark asset on dark footage. Never make
+  a large replacement title or a screenshot-derived logo.
+- Choose the approved wordmark variant by background: black on light, white on dark, and the
+  brand light/dark lockup when both mark and wordmark are needed. Use the icon variant only for
+  icon-shaped surfaces.
+- Use Obsidian (#0a0a0b), white (#ffffff), and coral (#FF6C5E) for primary brand meaning.
+- Use mint (#90FCA6) sparingly as a hairline, underbar, or small UI accent; never as a large fill.
+- For video compositions, warm paper (#fffefa) and warm ink (#211f1b) are allowed as the light
+  editorial surface. Mint remains an accent, not a background.
+- Use Geist for display and body copy and Geist Mono for metrics, code, and numeric readouts.
+- Use restrained, legible product surfaces: dark-mode controls, routing, latency, cost, and
+  model information should look like a real operational interface.
+- Use sentence case and clear, factual language. Do not claim certifications, capabilities,
+  performance numbers, or provider support unless the input explicitly establishes them.
+- Do not expose API keys, private provider names, internal topology, private headers, or secrets.
+
+## Cinematic Direction
+
+- Prefer precise camera movement with physical weight: dolly, crane, lateral track, or locked-off
+  composition. Avoid random floating camera motion.
+- Default to 4K UHD, 24fps, clean blacks, natural saturation, controlled highlights, and subtle
+  film texture. Use motivated lighting and readable UI contrast.
+- Keep the nRouter product and its routing/observability value visible without turning the scene
+  into a generic abstract AI montage.
+
+## Video Delivery Rules
+
+- Keep the foundation clean and readable: one focal subject, one reading direction, generous
+  negative space, and captions planned for muted playback.
+- Show real product UI only from approved references or supplied captures. Label simulated UI,
+  routing states, and metrics as illustrative when they are not verified live data.
+- Do not show real API keys. Use `sk-nrouter-xxxx` in sample code. Do not expose private provider
+  names, internal headers, ports, topology, database details, or credentials.
+- Do not claim SOC 2 completion, guaranteed latency, universal provider support, or automatic
+  failover unless approved product facts are provided with the request.

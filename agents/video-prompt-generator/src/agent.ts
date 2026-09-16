@@ -7,6 +7,7 @@ export interface VideoPromptOptions {
   apiKey?: string;
   query: string;
   videoModel: string;
+  conversation?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
 export async function generateVideoPrompt(options: VideoPromptOptions): Promise<string> {
@@ -25,10 +26,15 @@ export async function generateVideoPrompt(options: VideoPromptOptions): Promise<
     modelSpecifics = 'Target Model: ' + options.videoModel; // Fallback if no specific markdown exists
   }
 
+  const messages = [
+    ...(options.conversation ?? []),
+    { role: 'user' as const, content: options.query },
+  ];
+
   const response = await client.nr.messages({
     model: process.env.NROUTER_MODEL || 'claude-haiku-4-5-20251001',
     system: instructions + '\n\n' + brand + '\n\n' + modelSpecifics,
-    messages: [{ role: 'user', content: options.query }],
+    messages,
     max_tokens: 1024,
   });
 

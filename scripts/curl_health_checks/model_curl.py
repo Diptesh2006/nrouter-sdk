@@ -367,7 +367,7 @@ def run_self_test() -> int:
     result = checker.run_all()
 
     assert result["passed"] is True, "Self-test failed: expected suite to pass"
-    assert result["summary"]["total_models"] == 11, f"Expected 11 models, got {result['summary']['total_models']}"
+    assert result["summary"]["total_models"] == 11, f"Expected 11 entries, got {result['summary']['total_models']}"
     assert result["summary"]["total_providers"] >= 7, f"Expected >= 7 providers, got {result['summary']['total_providers']}"
 
     # Verify markdown rendering

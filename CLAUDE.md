@@ -41,7 +41,7 @@ python3 conformance/check_conformance.py             # all ten agree on spec
 
 ## Traps & Invariants
 
-- **Error Format:** The gateway's error path sends `{"error":{"type":"gateway_error","message":...}}` without a `code` field. Classifying on `code` alone breaks `guardrail_blocked`.
+- **Error Format:** a refusal body is `{"error": {"type": "...", "message": "..."}}`, plus an **optional** `"code"` the gateway adds only where it can name a spec `errors` key — a guardrail refusal at either end (`guardrail_blocked`) and a guardrail-capacity 503 (`service_unavailable`). Model `code` as optional or a strict decoder breaks on a 401/404/429. Classify on `code`, then `type`, then status; never on `message` — except as the documented compatibility fallback for pre-spec gateways, which sent a pre-call block as `gateway_error` with no `code`.
 - **Pricing:** `x-nr-request-cost` is absent when unpriced; rendering it as `0` falsely reports a free request (violates Rule #28).
 - **Credentials:** Never print or serialize API keys in debug/logging output (all SDKs redact).
 - **Publishing:** Managed from `nrouter-infra-cicd` (`/deploy-nrouter-sdk`, skill `deploy-nrouter-sdk`). In-repo notes in `PUBLISHING.md`.

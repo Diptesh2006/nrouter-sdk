@@ -97,7 +97,8 @@
         "monitor",
         "pass",
         "partial",
-        "blocked"
+        "blocked",
+        "unavailable"
       ],
       "case_sensitive": true,
       "value_semantics": {
@@ -105,7 +106,8 @@
         "monitor": "A chain applied and nothing in it could have refused (warn/log trial modes only). It observed; it did not protect. Reporting this as `pass` would claim an enforcement that never existed.",
         "pass": "An enforcing chain inspected the whole request and allowed it.",
         "partial": "An enforcing chain ran but did not inspect the whole request. WHICH part went uninspected is deliberately withheld — see design_note. It is the ORDINARY answer on the two audio upload wires, `/v1/audio/transcriptions` and `/v1/audio/translations`, not an anomaly there: a client that alarms on `partial` will alarm on every speech-to-text request it makes.",
-        "blocked": "An enforcing chain refused the request. The one response that proves a control ran, so it is never silent about it."
+        "blocked": "An enforcing chain refused the request. The one response that proves a control ran, so it is never silent about it.",
+        "unavailable": "An enforcing chain could not run, so the request was refused WITHOUT being judged (HTTP 503, `error.type`/`error.code` \"service_unavailable\"). Distinct from `blocked` on purpose: the content was never assessed, so the correct client behaviour is to RETRY, not to rewrite the prompt. A 503 that reported `blocked` sent callers to change content that nothing had objected to. This header is what separates a guardrail-capacity 503 from any other one."
       },
       "design_note": "POSTURE ONLY, BY DESIGN (Rule #29; gateway rules 00-gateway-rules.md §4f gate 9). The token is the whole payload. Policy NAME, policy ID, detector family, RULE COUNT, and — for `partial` — WHICH channel went uninspected are all deliberately withheld, and widening this header to carry any of them is a security regression, not an improvement. A rule count moves when a policy moves, so a caller watching it maps a tenant's controls without ever tripping one; naming the uninspected channel hands an evader the smuggling route. That is why `partial` is a bare token and stays one. Match the value EXACTLY and case-sensitively (GuardrailStatus::from_wire is case-sensitive on purpose): an unrecognised token is unknown, never a guess at the nearest one."
     },
@@ -156,15 +158,18 @@
   "error_envelope": {
     "shape": {
       "error": {
-        "type": "string",
-        "message": "string"
+        "type": "string (always)",
+        "message": "string (always)",
+        "code": "string (OPTIONAL — absent on most refusals; model it as nullable/optional or a strict decoder will fail on a 401, 404 or 429)"
       }
     },
-    "no_code_field": true,
-    "description": "Every gateway refusal body is {\"error\":{\"type\",\"message\"}}. There is NO `code` field on any error response, so a client that classifies on `error.code` alone can never reach a typed code. Read `error.type`, then fall back to the HTTP status, then to the message.",
+    "no_code_field": false,
+    "code_optional": true,
+    "description": "A refusal body always carries `error.type` and `error.message`, and carries `error.code` only where the gateway can name one of the keys under `errors` — today that is a guardrail refusal at either end (`guardrail_blocked`) and a guardrail-capacity 503 (`service_unavailable`). It is ABSENT elsewhere rather than invented, because a code outside this spec is a code no client's table contains. Classify on `code` when present, then on `type`, then on the HTTP status. Never classify on `message`: it is prose written for a person and it changes.",
     "type_values": {
-      "gateway_error": "The gateway's own error type rendered this refusal. It is the literal `type` for EVERY such refusal — authentication, credits, model, rate limit, service, and a PRE-call guardrail block alike — so `type` alone does not identify the code here; the HTTP status does.",
-      "guardrail_blocked": "An OUTPUT (post-call) guardrail withheld an otherwise successful provider response. This is the one `type` that carries a stable code."
+      "gateway_error": "The gateway's own error type for a refusal that carries no more specific type — authentication, credits, model, rate limit. The HTTP status is the discriminator.",
+      "guardrail_blocked": "A guardrail refused this request: the PROMPT was refused pre-call (HTTP 400), or an OUTPUT guardrail withheld an otherwise successful provider response (HTTP 400, or a terminal SSE error frame inside a 200 on a stream). One `type` for both ends, so a client branches once.",
+      "service_unavailable": "A dependency the gateway needs was unavailable (HTTP 503), including an enforcing guardrail that could not run — `x-nr-guardrails: unavailable` distinguishes that case. NOT a content refusal: retry rather than rewriting the prompt."
     },
     "join_key": "x-nr-request-id",
     "join_key_note": "Always present on every response, success or refusal. It is the only join key between a refusal shown to a user and the request record behind it, so surface it wherever an error is displayed."
@@ -180,7 +185,7 @@
       "class": "nRouterGuardrailBlockedError",
       "description": "A guardrail denied the request (pre-call) or withheld the response (post-call)",
       "detection": {
-        "buffered": "HTTP 400 AND (`error.type` == \"guardrail_blocked\" OR the message contains \"guardrail\"). Both arms are required: a post-call block sends the stable `type`, while a pre-call block is rendered by the gateway's generic error path as `type` \"gateway_error\" with a message beginning \"request blocked by a guardrail\".",
+        "buffered": "HTTP 400 AND (`error.code` == \"guardrail_blocked\" OR `error.type` == \"guardrail_blocked\" OR the message contains \"guardrail\"). The first two arms are the contract: both ends of the request now send that one token, as `code` and as `type`. The message arm is a COMPATIBILITY fallback and is required for any gateway older than this spec version, where a pre-call block arrived as `type` \"gateway_error\" with a message beginning \"request blocked by a guardrail\" and no `code` at all. Use it only after the first two have missed — never as a general classification rule.",
         "streaming": "A stream's status line is already sent when an output guardrail decides, so the cut arrives INSIDE a 200 response as a terminal `event: error` SSE frame whose data is the same {\"error\":{\"type\":\"guardrail_blocked\",...}} document. A streaming client that only inspects the HTTP status will read a withheld response as a successful, empty one.",
         "not_2xx_buffered": "On a buffered route a post-call block over a successful upstream response is converted to 400 before the response is built, so it never arrives as a 2xx. A 2xx that nonetheless carries an error envelope is a provider-origin document passed through unchanged, not a guardrail verdict."
       }
@@ -218,7 +223,7 @@
     "service_unavailable": {
       "http": 503,
       "class": "nRouterServiceError",
-      "description": "A required gateway dependency is unavailable"
+      "description": "A required gateway dependency is unavailable. Also covers an enforcing GUARDRAIL that could not run, in which case `x-nr-guardrails: unavailable` is present: the request was refused WITHOUT being judged, so retry it rather than rewriting the prompt. Both are transient and nothing was charged."
     },
     "plan_allowance_exhausted": {
       "http": 402,

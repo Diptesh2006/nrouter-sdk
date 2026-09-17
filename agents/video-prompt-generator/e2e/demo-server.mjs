@@ -6,6 +6,7 @@ import { generateVideoPrompt } from '../dist/agent.js';
 
 const apiKey = process.env.NROUTER_API_KEY;
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4174;
+const conversation = [];
 
 const server = http.createServer(async (req, res) => {
   const host = req.headers.host || '127.0.0.1';
@@ -18,11 +19,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/favicon.ico') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (req.method === 'GET' && pathname === '/') {
     const indexPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'index.html');
     const html = await fs.promises.readFile(indexPath, 'utf-8');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/reset') {
+    conversation.length = 0;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ messages: [] }));
     return;
   }
 
@@ -35,10 +49,15 @@ const server = http.createServer(async (req, res) => {
         const result = await generateVideoPrompt({
           apiKey,
           query: body.query,
+          conversation,
           ...{"videoModel":"Google Veo"}
         });
+        conversation.push(
+          { role: 'user', content: body.query },
+          { role: 'assistant', content: result },
+        );
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ result }));
+        res.end(JSON.stringify({ result, messages: conversation }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));

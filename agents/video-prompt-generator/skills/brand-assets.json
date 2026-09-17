@@ -1,0 +1,27 @@
+{
+  "sourceRepository": "https://github.com/nRouterGateway/nrouter-frontend-ui",
+  "sourceRevision": "88eb78498cce51edd1d7d6fd9110f48a0f2919be",
+  "rule": "Generate footage without a logo. Apply a supplied canonical logo as a deterministic post-production overlay; do not ask an image or video model to reproduce it. Remote URLs are deliberately not used because they are not durable production assets.",
+  "overlays": {
+    "darkFootage": {
+      "label": "Light wordmark for dark footage",
+      "localAsset": "skills/assets/nrouter-wordmark-light.svg",
+      "canonicalPath": "resources/brand-kit/Logos/wordmark/nrouter-logo-white.svg",
+      "sha256": "f96d184d9b36f14b8075f6ab6dffb70e27028c91a0c5aa3e075e09d6a6e02801",
+      "placement": "bottom-left, small watermark, clear space equal to the wordmark cap height"
+    },
+    "lightFootage": {
+      "label": "Dark wordmark for light footage",
+      "localAsset": "skills/assets/nrouter-wordmark-dark.svg",
+      "canonicalPath": "resources/brand-kit/Logos/wordmark/nrouter-logo-black.svg",
+      "sha256": "6660f281f6497c462adfeb270315fedf835bc47f746986d0eb677871152c7519",
+      "placement": "bottom-left, small watermark, clear space equal to the wordmark cap height"
+    }
+  },
+  "canonicalVariants": {
+    "wordmarkOnLight": "resources/brand-kit/Logos/wordmark/nrouter-logo-black.svg",
+    "wordmarkOnDark": "resources/brand-kit/Logos/wordmark/nrouter-logo-white.svg",
+    "iconMint": "resources/brand-kit/Logos/icon/nrouter-icon-mint.svg",
+    "pressLockup": "resources/brand-kit/Logos/wordmark/nrouter-logo-brand-{light,dark}.svg"
+  }
+}

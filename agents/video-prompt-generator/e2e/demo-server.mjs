@@ -59,8 +59,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ result, messages: conversation }));
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        const status = Number.isInteger(err.status) ? err.status : 500;
+        const requestId = err.requestId ?? err.request_id ?? err.headers?.['x-nr-request-id'];
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message, requestId }));
       }
     });
     return;

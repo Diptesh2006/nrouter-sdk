@@ -21,7 +21,7 @@ export async function generateVideoPrompt(options: VideoPromptOptions): Promise<
   // Guardrail scoring is currently sensitive to large multi-turn payloads.
   const conversation = (options.conversation ?? []).slice(-2).map((message) => ({
     role: message.role,
-    content: message.content.slice(0, 120),
+    content: message.content.slice(0, 60),
   }));
   const messages = [
     ...conversation,
@@ -32,7 +32,7 @@ export async function generateVideoPrompt(options: VideoPromptOptions): Promise<
     model: process.env.NROUTER_MODEL || 'claude-haiku-4-5-20251001',
     system: runtimeSystem,
     messages,
-    max_tokens: 1024,
+    max_tokens: 768,
   });
 
   const body = response.body as any;

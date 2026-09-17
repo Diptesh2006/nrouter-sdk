@@ -1,0 +1,85 @@
+name: Health Checks
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # Daily once at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      notify_email:
+        description: 'Send daily health alert email to rama@nrouter.ai'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: health-check
+  cancel-in-progress: true
+
+jobs:
+  health-checks:
+    name: Curl Health Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NROUTER_API_KEY: ${{ secrets.NROUTER_API_KEY }}
+      NROUTER_BASE_URL: https://api.nrouter.ai/v1
+      SENTINEL_EMAIL_RECIPIENT: rama@nrouter.ai
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      SENTINEL_SMTP_HOST: ${{ secrets.SENTINEL_SMTP_HOST }}
+      SENTINEL_SMTP_PORT: ${{ secrets.SENTINEL_SMTP_PORT }}
+      SENTINEL_SMTP_USER: ${{ secrets.SENTINEL_SMTP_USER }}
+      SENTINEL_SMTP_PASSWORD: ${{ secrets.SENTINEL_SMTP_PASSWORD }}
+      SENTINEL_SMTP_FROM: ${{ secrets.SENTINEL_SMTP_FROM }}
+      SENTINEL_SMTP_TLS: ${{ secrets.SENTINEL_SMTP_TLS }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Pure-Curl Health Checks
+        run: |
+          mkdir -p dist
+          python3 scripts/curl_health_checks.py \
+            --step-summary \
+            --output-dir dist/ \
+            --email
+
+      - name: Upload Health Check Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: health-check-reports
+          path: |
+            dist/sentinel-report.json
+            dist/status.json
+            dist/index.html
+          retention-days: 30
+
+      - name: Deploy Status to GitHub Pages (gh-pages branch)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TMP_DEPLOY=$(mktemp -d)
+          git clone --branch gh-pages --depth 1 "https://x-access-token:${GITHUB_TOKEN}@github.com/nRouterGateway/nrouter-sdk.git" "$TMP_DEPLOY"
+          cp -r dist/* "$TMP_DEPLOY/"
+          cd "$TMP_DEPLOY"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          if ! git diff --staged --quiet; then
+            git commit -m "deploy: update health check status dashboard [skip ci]"
+            git push origin gh-pages
+            echo "Successfully updated gh-pages branch"
+          else
+            echo "No changes to deploy to gh-pages"
+          fi
+          rm -rf "$TMP_DEPLOY"

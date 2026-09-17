@@ -73,12 +73,16 @@ def format_email_html(report_data: Dict[str, Any], dashboard_url: str, actions_u
         status_color = "#15803d" if status_text == "PASSED" else "#b91c1c"
         req_id = r.get("request_id") or "N/A"
         trace_url = f"https://app.nrouter.ai/traces/{req_id}"
+        item_name = r.get("name") or r.get("sdk") or "Check"
+        lane_name = r.get("lane") or r.get("provider") or "General"
+        model_name = r.get("model_served") or r.get("model") or r.get("endpoint") or "N/A"
+        req_id_display = req_id[:12] + "..." if len(req_id) > 12 else req_id
 
         rows_html.append(f"""
         <tr style="border-bottom: 1px solid #e5e7eb;">
-          <td style="padding: 10px 14px; font-weight: 600; text-transform: capitalize; color: #111827;">{r.get('sdk')}</td>
-          <td style="padding: 10px 14px; color: #4b5563;">{r.get('provider')}</td>
-          <td style="padding: 10px 14px; font-family: monospace; font-size: 12px; color: #374151;">{r.get('model')}</td>
+          <td style="padding: 10px 14px; font-weight: 600; color: #111827;">{item_name}</td>
+          <td style="padding: 10px 14px; color: #4b5563;">{lane_name}</td>
+          <td style="padding: 10px 14px; font-family: monospace; font-size: 12px; color: #374151;">{model_name}</td>
           <td style="padding: 10px 14px;">
             <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; background: {status_bg}; color: {status_color};">
               {status_text}
@@ -86,7 +90,7 @@ def format_email_html(report_data: Dict[str, Any], dashboard_url: str, actions_u
           </td>
           <td style="padding: 10px 14px; font-family: monospace; font-size: 12px; color: #4b5563;">{r.get('latency_ms')}ms</td>
           <td style="padding: 10px 14px; font-family: monospace; font-size: 12px;">
-            <a href="{trace_url}" style="color: #2563eb; text-decoration: none;">{req_id[:12]}...</a>
+            <a href="{trace_url}" style="color: #2563eb; text-decoration: none;">{req_id_display}</a>
           </td>
         </tr>
         """)

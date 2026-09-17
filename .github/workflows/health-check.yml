@@ -44,6 +44,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Self-test the health-check harness (offline)
+        run: python3 scripts/curl_health_checks.py --self-test
+
       - name: Run Pure-Curl Health Checks
         run: |
           mkdir -p dist

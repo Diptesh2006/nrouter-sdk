@@ -67,6 +67,8 @@
   <button id="resetBtn">New chat</button>
   <script>
     const messages = document.getElementById('messages');
+    const sendButton = document.getElementById('genBtn');
+    let generating = false;
     const render = (items) => {
       messages.textContent = '';
       for (const item of items || []) {
@@ -75,20 +77,29 @@
         messages.appendChild(block);
       }
     };
-    document.getElementById('genBtn').onclick = async () => {
+    sendButton.onclick = async () => {
+      if (generating) return;
       const val = document.getElementById('queryInput').value;
       if (!val.trim()) return;
-      const res = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: val })
-      });
-      const data = await res.json();
-      if (data.messages) render(data.messages);
-      else render([{ role: 'assistant', content: data.error || 'Request failed' }]);
-      document.getElementById('queryInput').value = '';
+      generating = true;
+      sendButton.disabled = true;
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: val })
+        });
+        const data = await res.json();
+        if (data.messages) render(data.messages);
+        else render([{ role: 'assistant', content: data.error || 'Request failed' }]);
+        document.getElementById('queryInput').value = '';
+      } finally {
+        generating = false;
+        sendButton.disabled = false;
+      }
     };
     document.getElementById('resetBtn').onclick = async () => {
+      if (generating) return;
       const res = await fetch('/api/reset', { method: 'POST' });
       render((await res.json()).messages);
     };

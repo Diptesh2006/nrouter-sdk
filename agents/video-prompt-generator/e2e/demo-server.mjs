@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,7 +7,19 @@ import { generateVideoPrompt } from '../dist/agent.js';
 
 const apiKey = process.env.NROUTER_API_KEY;
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4174;
-const conversation = [];
+const sessions = new Map();
+
+function conversationFor(req, res) {
+  const cookie = req.headers.cookie || '';
+  const sessionId = cookie.match(/(?:^|;\s*)nrouter_video_session=([^;]+)/)?.[1];
+  if (sessionId && sessions.has(sessionId)) return sessions.get(sessionId);
+
+  const newSessionId = randomUUID();
+  const conversation = [];
+  sessions.set(newSessionId, conversation);
+  res.setHeader('Set-Cookie', `nrouter_video_session=${newSessionId}; Path=/; HttpOnly; SameSite=Lax`);
+  return conversation;
+}
 
 const server = http.createServer(async (req, res) => {
   const host = req.headers.host || '127.0.0.1';
@@ -34,6 +47,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && pathname === '/api/reset') {
+    const conversation = conversationFor(req, res);
     conversation.length = 0;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ messages: [] }));
@@ -41,6 +55,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && pathname === '/api/generate') {
+    const conversation = conversationFor(req, res);
     let rawBody = '';
     req.on('data', chunk => rawBody += chunk);
     req.on('end', async () => {

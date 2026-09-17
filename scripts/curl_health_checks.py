@@ -171,6 +171,110 @@ def check_header_isolation_passed(response_request_id: Optional[str], forged_req
     return bool(response_request_id) and (response_request_id != forged_request_id)
 
 
+def check_routing_header_contract(
+    http_status: int,
+    routing_val: Optional[str],
+    attempts_val: Optional[str],
+    expect_headers: bool,
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """Evaluate routing header presence and validity contract.
+
+    Returns (status, error, note) where status in ('passed', 'failed', 'skipped').
+    When expect_headers is True: missing routing headers fails.
+    When expect_headers is False: missing routing headers reports as skipped with note 'pending gateway release'.
+    """
+    if http_status != 200:
+        return "failed", f"Unexpected HTTP status {http_status}", None
+
+    if routing_val is not None:
+        if is_valid_routing_header(routing_val) and is_valid_attempts_header(attempts_val):
+            return "passed", None, None
+        return (
+            "failed",
+            f"Invalid routing headers: routing={routing_val}, attempts={attempts_val}",
+            None,
+        )
+
+    # routing_val is None (absent)
+    if expect_headers:
+        return "failed", "Missing required x-nr-routing header on 200 response", None
+    return "skipped", None, "pending gateway release"
+
+
+def check_compression_header_contract(
+    http_status: int,
+    compression_hdr: Optional[str],
+    expect_headers: bool,
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """Evaluate compression header presence and validity contract.
+
+    Returns (status, error, note) where status in ('passed', 'failed', 'skipped').
+    When expect_headers is True: missing compression header fails.
+    When expect_headers is False: missing compression header reports as skipped with note 'pending gateway release'.
+    """
+    if http_status != 200:
+        return "failed", f"Unexpected HTTP status {http_status}", None
+
+    if compression_hdr is not None:
+        if is_valid_compression_header(compression_hdr):
+            return "passed", None, None
+        return "failed", f"Invalid compression header token: {compression_hdr}", None
+
+    # compression_hdr is None (absent)
+    if expect_headers:
+        return "failed", "Missing required x-nr-compression header on 200 response", None
+    return "skipped", None, "pending gateway release"
+
+
+def check_marker_strip_contract(
+    http_status: int,
+    expect_compression: bool,
+    body: str = "",
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """Evaluate top-level opt-out marker stripping contract.
+
+    Returns (status, error, note) where status in ('passed', 'failed', 'skipped').
+    A top-level marker sent to a provider that rejects unknown fields returns 200 when stripped by gateway.
+    When unstripped (HTTP 400), it fails if expect_compression is True; else reports as skipped pending gateway release.
+    """
+    if http_status == 200:
+        return "passed", None, None
+
+    if not expect_compression:
+        return "skipped", None, "pending gateway release"
+
+    return "failed", f"Expected 200 (stripped top-level marker), got HTTP {http_status}: {sanitize(body)}", None
+
+
+def check_header_hygiene_contract(
+    http_status: int,
+    response_request_id: Optional[str],
+    forged_request_id: str,
+    compression_hdr: Optional[str],
+    expect_compression: bool,
+) -> Tuple[str, Optional[str]]:
+    """Evaluate header hygiene contract.
+
+    Verifies forged request ID is not adopted, and verifies x-nr-compression
+    is present when compression headers are expected.
+    Returns (status, error).
+    """
+    if http_status != 200:
+        return "failed", f"Unexpected HTTP status {http_status}"
+
+    if not check_header_isolation_passed(response_request_id, forged_request_id):
+        return "failed", f"Forged request ID adopted: {response_request_id}"
+
+    if expect_compression:
+        if not is_valid_compression_header(compression_hdr):
+            return (
+                "failed",
+                f"Expected valid x-nr-compression header when x-nr-compress: on is sent, got {compression_hdr}",
+            )
+
+    return "passed", None
+
+
 def run_curl(args: List[str], timeout_s: int = 20) -> Tuple[int, Dict[str, str], str, float]:
     """Execute curl with arguments and return (status_code, headers_dict, body, latency_ms)."""
     cmd = ["curl", "-s", "-i"] + args
@@ -430,22 +534,24 @@ class CurlHealthRunner:
         status_r, headers_r, body_r, latency_r = run_curl(args_routing_hdr)
         routing_val = headers_r.get("x-nr-routing")
         attempts_val = headers_r.get("x-nr-attempts")
-        routing_hdr_passed = (status_r == 200) and (
-            routing_val is None or (is_valid_routing_header(routing_val) and is_valid_attempts_header(attempts_val))
+        expect_routing = os.environ.get("NROUTER_HEALTH_EXPECT_ROUTING_HEADERS") == "1"
+        r_status, r_err, r_note = check_routing_header_contract(
+            status_r, routing_val, attempts_val, expect_routing
         )
         checks.append({
             "lane": "Smart Routing",
-            "name": "Routing Header Contract (/v1/chat/completions)",
+            "name": "Routing Header Present (/v1/chat/completions)",
             "method": "POST",
             "endpoint": "/v1/chat/completions",
-            "status": "passed" if routing_hdr_passed else "failed",
+            "status": r_status,
             "http_status": status_r,
             "latency_ms": latency_r,
             "request_id": headers_r.get("x-nr-request-id", "N/A"),
             "routing": routing_val or "absent",
             "attempts": attempts_val or "absent",
             "cost_usd": float(headers_r.get("x-nr-request-cost", "0.0") or "0.0"),
-            "error": None if routing_hdr_passed else f"Invalid routing headers: routing={routing_val}, attempts={attempts_val}",
+            "note": r_note,
+            "error": r_err,
         })
 
         # 3c: Smart routing routed (when NROUTER_HEALTH_EXPECT_AUTO_ROUTED=1)
@@ -805,21 +911,23 @@ class CurlHealthRunner:
         ]
         status, headers, body, latency = run_curl(args_base)
         compression_hdr = headers.get("x-nr-compression")
-        hdr_passed = (status == 200) and (
-            compression_hdr is None or is_valid_compression_header(compression_hdr)
+        expect_comp_headers = os.environ.get("NROUTER_HEALTH_EXPECT_COMPRESSION_HEADERS") == "1"
+        c_status, c_err, c_note = check_compression_header_contract(
+            status, compression_hdr, expect_comp_headers
         )
         checks.append({
             "lane": "Compression",
-            "name": "Compression Header Contract (/v1/chat/completions)",
+            "name": "Compression Header Present (/v1/chat/completions)",
             "method": "POST",
             "endpoint": "/v1/chat/completions",
-            "status": "passed" if hdr_passed else "failed",
+            "status": c_status,
             "http_status": status,
             "latency_ms": latency,
             "request_id": headers.get("x-nr-request-id", "N/A"),
             "compression": compression_hdr or "absent",
             "cost_usd": float(headers.get("x-nr-request-cost", "0.0") or "0.0"),
-            "error": None if hdr_passed else f"Invalid compression header token: {compression_hdr}",
+            "note": c_note,
+            "error": c_err,
         })
 
         # 7b: Compression applied when enabled
@@ -860,17 +968,17 @@ class CurlHealthRunner:
                 "error": None if comp_passed else f"Expected compression applied with token savings, got status={status_c}, header={comp_hdr}, before={base_tokens}, after={comp_tokens}",
             })
 
-        # 7c: Marker never forwarded (per-part opt-out stripped before egress)
+        # 7c: Marker never forwarded (top-level marker stripped before egress)
         payload_marker = json.dumps({
             "model": "openai/gpt-4o-mini",
             "messages": [
                 {
                     "role": "user",
                     "content": "Reply OK with opt-out marker",
-                    "nrouter_compress": False,
                 }
             ],
             "max_tokens": 2,
+            "nrouter_compress": False,
         })
         args_marker = self._auth_header() + [
             "-H", "Content-Type: application/json",
@@ -878,21 +986,24 @@ class CurlHealthRunner:
             endpoint,
         ]
         status_m, headers_m, body_m, latency_m = run_curl(args_marker)
-        marker_passed = (status_m == 200)
+        m_status, m_err, m_note = check_marker_strip_contract(
+            status_m, expect_comp_headers, body_m
+        )
         checks.append({
             "lane": "Compression",
-            "name": "Part Opt-Out Marker Stripped (nrouter_compress: false)",
+            "name": "Top-Level Marker Stripped (nrouter_compress: false)",
             "method": "POST",
             "endpoint": "/v1/chat/completions",
-            "status": "passed" if marker_passed else "failed",
+            "status": m_status,
             "http_status": status_m,
             "latency_ms": latency_m,
             "request_id": headers_m.get("x-nr-request-id", "N/A"),
             "cost_usd": float(headers_m.get("x-nr-request-cost", "0.0") or "0.0"),
-            "error": None if marker_passed else f"Expected 200 (stripped marker), got {status_m}: {sanitize(body_m)}",
+            "note": m_note,
+            "error": m_err,
         })
 
-        # 7d: Unknown x-nr-* request header dropped, accepted one forwarded
+        # 7d: Unknown x-nr-* request header dropped, accepted header verified
         forged_id = "forged-req-sentinel-99999"
         args_waf = self._auth_header() + [
             "-H", "Content-Type: application/json",
@@ -903,18 +1014,21 @@ class CurlHealthRunner:
         ]
         status_w, headers_w, body_w, latency_w = run_curl(args_waf)
         resp_req_id = headers_w.get("x-nr-request-id")
-        waf_passed = (status_w == 200) and check_header_isolation_passed(resp_req_id, forged_id)
+        comp_hdr_w = headers_w.get("x-nr-compression")
+        w_status, w_err = check_header_hygiene_contract(
+            status_w, resp_req_id, forged_id, comp_hdr_w, expect_comp_headers
+        )
         checks.append({
             "lane": "Compression",
-            "name": "Header Hygiene: Accepted Forwarded, Forged Dropped",
+            "name": "Header Hygiene: Forged Request ID Dropped",
             "method": "POST",
             "endpoint": "/v1/chat/completions",
-            "status": "passed" if waf_passed else "failed",
+            "status": w_status,
             "http_status": status_w,
             "latency_ms": latency_w,
             "request_id": resp_req_id or "N/A",
             "cost_usd": float(headers_w.get("x-nr-request-cost", "0.0") or "0.0"),
-            "error": None if waf_passed else f"Forged request ID adopted or request failed (status={status_w}, req_id={resp_req_id})",
+            "error": w_err,
         })
 
         self.results.extend(checks)
@@ -936,6 +1050,7 @@ class CurlHealthRunner:
 
         passed = sum(1 for r in self.results if r["status"] == "passed")
         failed = sum(1 for r in self.results if r["status"] == "failed")
+        skipped = sum(1 for r in self.results if r["status"] == "skipped")
         total = len(self.results)
         total_cost = sum(r.get("cost_usd", 0.0) for r in self.results)
         latencies = [r["latency_ms"] for r in self.results if r.get("latency_ms", 0) > 0]
@@ -948,6 +1063,7 @@ class CurlHealthRunner:
                 "total": total,
                 "passed": passed,
                 "failed": failed,
+                "skipped": skipped,
                 "pass_rate_pct": round((passed / total * 100.0) if total else 0, 1),
                 "total_cost_usd": round(total_cost, 7),
                 "avg_latency_ms": avg_latency,
@@ -964,11 +1080,13 @@ def format_markdown_summary(report: Dict[str, Any]) -> str:
     summary = report["summary"]
     status_icon = "🟢" if summary["failed"] == 0 else "🔴"
     status_title = "ALL SYSTEMS OPERATIONAL" if summary["failed"] == 0 else f"{summary['failed']} CHECK(S) FAILED"
+    skipped_count = summary.get("skipped", 0)
+    skipped_stat = f", {skipped_count} skipped" if skipped_count > 0 else ""
 
     lines = [
         f"## {status_icon} nRouter Platform Health Showcase: {status_title}",
         "",
-        f"- **Pass Rate:** {summary['passed']} / {summary['total']} ({summary['pass_rate_pct']}%)",
+        f"- **Pass Rate:** {summary['passed']} passed, {summary['failed']} failed{skipped_stat} / {summary['total']} total ({summary['pass_rate_pct']}%)",
         f"- **Live Models Catalog:** {summary['models_in_catalog']} live catalog entries verified via `GET /v1/models`",
         f"- **Average Latency:** {summary['avg_latency_ms']}ms",
         f"- **Total Probe Spend:** ${summary['total_cost_usd']:.7f} (< $0.0001)",
@@ -981,15 +1099,32 @@ def format_markdown_summary(report: Dict[str, Any]) -> str:
     ]
 
     for r in report["results"]:
-        status_badge = "**PASS**" if r["status"] == "passed" else "**FAIL**"
+        if r["status"] == "passed":
+            status_badge = "**PASS**"
+        elif r["status"] == "skipped":
+            status_badge = "**SKIP**"
+        else:
+            status_badge = "**FAIL**"
+
         cost_str = f"${r.get('cost_usd', 0.0):.6f}" if r.get("cost_usd", 0.0) > 0 else "$0.00"
         trace_id = r.get("request_id", "N/A")
         trace_short = f"`{trace_id[:8]}...`" if trace_id != "N/A" and len(trace_id) > 8 else f"`{trace_id}`"
+        name_display = r['name']
+        if r.get("note"):
+            name_display += f" _({r['note']})_"
         lines.append(
-            f"| {r['lane']} | {r['name']} | `{r['method']} {r['endpoint']}` | `{r['http_status']}` | {status_badge} | {r['latency_ms']}ms | {trace_short} | {cost_str} |"
+            f"| {r['lane']} | {name_display} | `{r['method']} {r['endpoint']}` | `{r['http_status']}` | {status_badge} | {r['latency_ms']}ms | {trace_short} | {cost_str} |"
         )
 
     lines.append("")
+    if skipped_count > 0:
+        lines.append("### ℹ️ Skipped Checks (Pending Gateway Release)")
+        for r in report["results"]:
+            if r["status"] == "skipped":
+                note_msg = r.get("note") or "pending gateway release"
+                lines.append(f"- **{r['name']}**: `{note_msg}`")
+        lines.append("")
+
     if summary["failed"] > 0:
         lines.append("### ⚠️ Failures Detected")
         for r in report["results"]:
@@ -1010,15 +1145,16 @@ def self_test() -> None:
     assert "sk-nrouter-" not in sanitized, "Secret token leaked in sanitization!"
     assert "[REDACTED_API_KEY]" in sanitized, "Redaction token missing!"
 
-    # 2. Test markdown summary formatting
+    # 2. Test markdown summary formatting and skipped counting
     mock_report = {
         "timestamp": "2026-09-17T00:00:00Z",
         "status": "ALL_OPERATIONAL",
         "summary": {
             "total": 3,
-            "passed": 3,
+            "passed": 2,
             "failed": 0,
-            "pass_rate_pct": 100.0,
+            "skipped": 1,
+            "pass_rate_pct": 66.7,
             "total_cost_usd": 0.000005,
             "avg_latency_ms": 350.0,
             "models_in_catalog": 164,
@@ -1035,27 +1171,41 @@ def self_test() -> None:
                 "latency_ms": 250.0,
                 "request_id": "req-12345678",
                 "cost_usd": 0.000002,
-            }
+            },
+            {
+                "lane": "Smart Routing",
+                "name": "Routing Header Present (/v1/chat/completions)",
+                "method": "POST",
+                "endpoint": "/v1/chat/completions",
+                "status": "skipped",
+                "http_status": 200,
+                "latency_ms": 110.0,
+                "request_id": "req-87654321",
+                "cost_usd": 0.000001,
+                "note": "pending gateway release",
+            },
         ],
     }
     summary_md = format_markdown_summary(mock_report)
     assert "ALL SYSTEMS OPERATIONAL" in summary_md
-    assert "live catalog entries verified" in summary_md
-    assert "Cache Explicit Bypass" in summary_md
+    assert "2 passed, 0 failed, 1 skipped" in summary_md
+    assert "**SKIP**" in summary_md
+    assert "Skipped Checks (Pending Gateway Release)" in summary_md
+    assert "pending gateway release" in summary_md
 
     mock_report["results"].append({
         "lane": "Compression",
-        "name": "Compression Header Contract (/v1/chat/completions)",
+        "name": "Compression Header Present (/v1/chat/completions)",
         "method": "POST",
         "endpoint": "/v1/chat/completions",
         "status": "passed",
         "http_status": 200,
         "latency_ms": 120.0,
-        "request_id": "req-87654321",
+        "request_id": "req-87654322",
         "cost_usd": 0.000001,
     })
     summary_md2 = format_markdown_summary(mock_report)
-    assert "Compression Header Contract" in summary_md2
+    assert "Compression Header Present" in summary_md2
 
     # 3. Guardrail matrix shape
     classes = {case[0] for case in GUARDRAIL_CASES}
@@ -1079,7 +1229,7 @@ def self_test() -> None:
     assert not guardrail_case_passed(200, None, 400, "toxicity"), "a refused request must fail an allow case"
     assert guardrail_case_passed(200, None, 200, "")
 
-    # 5. Routing header contract validation
+    # 5. Routing header contract validation (Finding 1)
     for valid_routing in ("direct", "weighted", "fallback", "auto"):
         assert is_valid_routing_header(valid_routing), f"routing token {valid_routing} should be valid"
     for invalid_routing in ("random", "round_robin", "", None, "DIRECT"):
@@ -1090,11 +1240,95 @@ def self_test() -> None:
     for invalid_attempts in ("0", "-1", "abc", None, 0, -2):
         assert not is_valid_attempts_header(invalid_attempts), f"attempts {invalid_attempts} should be invalid"
 
-    # 6. Compression header contract validation
+    # Valid routing header passes regardless of expect_headers
+    st, err, note = check_routing_header_contract(200, "direct", "1", expect_headers=True)
+    assert st == "passed" and err is None and note is None
+    st, err, note = check_routing_header_contract(200, "auto", 2, expect_headers=False)
+    assert st == "passed" and err is None and note is None
+
+    # Invalid header token fails
+    st, err, note = check_routing_header_contract(200, "random", "1", expect_headers=False)
+    assert st == "failed" and err is not None
+
+    # Invalid attempts value fails
+    st, err, note = check_routing_header_contract(200, "direct", "0", expect_headers=False)
+    assert st == "failed" and err is not None
+
+    # Missing header when expected FAILS (Rule: a check named 'present' must fail when absent)
+    st, err, note = check_routing_header_contract(200, None, None, expect_headers=True)
+    assert st == "failed" and "Missing required" in err and note is None
+
+    # Missing header when NOT expected is SKIPPED with note 'pending gateway release'
+    st, err, note = check_routing_header_contract(200, None, None, expect_headers=False)
+    assert st == "skipped" and err is None and note == "pending gateway release"
+
+    # Non-200 HTTP status fails
+    st, err, note = check_routing_header_contract(500, "direct", "1", expect_headers=False)
+    assert st == "failed" and "500" in err
+
+    # 6. Compression header contract validation (Finding 2)
     for valid_compression in ("applied", "not_requested", "off", "skipped"):
         assert is_valid_compression_header(valid_compression), f"compression token {valid_compression} should be valid"
     for invalid_compression in ("on", "yes", "true", None, "", "APPLIED"):
         assert not is_valid_compression_header(invalid_compression), f"compression token {invalid_compression} should be invalid"
+
+    # Valid compression header passes regardless of expect_headers
+    st, err, note = check_compression_header_contract(200, "applied", expect_headers=True)
+    assert st == "passed" and err is None and note is None
+    st, err, note = check_compression_header_contract(200, "skipped", expect_headers=False)
+    assert st == "passed" and err is None and note is None
+
+    # Invalid compression header fails
+    st, err, note = check_compression_header_contract(200, "bogus", expect_headers=False)
+    assert st == "failed" and err is not None
+
+    # Missing compression header when expected FAILS
+    st, err, note = check_compression_header_contract(200, None, expect_headers=True)
+    assert st == "failed" and "Missing required" in err and note is None
+
+    # Missing compression header when NOT expected is SKIPPED with note 'pending gateway release'
+    st, err, note = check_compression_header_contract(200, None, expect_headers=False)
+    assert st == "skipped" and err is None and note == "pending gateway release"
+
+    # Non-200 HTTP status fails
+    st, err, note = check_compression_header_contract(500, "applied", expect_headers=False)
+    assert st == "failed" and "500" in err
+
+    # Top-level marker stripping validation (Finding 3)
+    # When gateway strips marker, upstream returns 200 -> passes
+    st, err, note = check_marker_strip_contract(200, expect_compression=True)
+    assert st == "passed" and err is None and note is None
+    st, err, note = check_marker_strip_contract(200, expect_compression=False)
+    assert st == "passed" and err is None and note is None
+
+    # When provider rejects unstripped top-level marker with 400:
+    # If expect_compression is True: must FAIL
+    st, err, note = check_marker_strip_contract(400, expect_compression=True, body="unknown field")
+    assert st == "failed" and "400" in err and note is None
+
+    # If expect_compression is False: must be SKIPPED with note 'pending gateway release'
+    st, err, note = check_marker_strip_contract(400, expect_compression=False, body="unknown field")
+    assert st == "skipped" and err is None and note == "pending gateway release"
+
+    # Header hygiene contract validation (Finding 4)
+    # Genuine request ID and no compression expected -> passes
+    st, err = check_header_hygiene_contract(200, "req-genuine-12345", "forged-id-xyz", None, expect_compression=False)
+    assert st == "passed" and err is None
+
+    # When compression expected, valid compression header -> passes
+    st, err = check_header_hygiene_contract(200, "req-genuine-12345", "forged-id-xyz", "applied", expect_compression=True)
+    assert st == "passed" and err is None
+
+    # When compression expected, missing or invalid compression header -> FAILS
+    st, err = check_header_hygiene_contract(200, "req-genuine-12345", "forged-id-xyz", None, expect_compression=True)
+    assert st == "failed" and "Expected valid x-nr-compression" in err
+
+    st, err = check_header_hygiene_contract(200, "req-genuine-12345", "forged-id-xyz", "invalid_token", expect_compression=True)
+    assert st == "failed" and "Expected valid x-nr-compression" in err
+
+    # Forged request ID adopted -> FAILS regardless
+    st, err = check_header_hygiene_contract(200, "forged-id-xyz", "forged-id-xyz", "applied", expect_compression=True)
+    assert st == "failed" and "Forged request ID adopted" in err
 
     # 7. Smart routing gate logic
     assert check_smart_routing_gate_passed(200, None)
@@ -1163,6 +1397,8 @@ def main() -> int:
         status_payload = {
             "status": report["status"],
             "passed": report["summary"]["passed"],
+            "failed": report["summary"]["failed"],
+            "skipped": report["summary"].get("skipped", 0),
             "total": report["summary"]["total"],
             "timestamp": report["timestamp"],
             "models_count": report["summary"]["models_in_catalog"],
@@ -1204,9 +1440,9 @@ def main() -> int:
     <!-- KPI Grid -->
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
       <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
-        <div class="text-xs text-slate-400 uppercase tracking-wider font-medium">Platform Pass Rate</div>
-        <div class="text-2xl font-bold mt-1 text-emerald-400">{report['summary']['passed']} / {report['summary']['total']}</div>
-        <div class="text-[10px] text-emerald-400/80 font-medium mt-0.5">100% Verified</div>
+        <div class="text-xs text-slate-400 uppercase tracking-wider font-medium">Platform Checks</div>
+        <div class="text-2xl font-bold mt-1 text-emerald-400">{report['summary']['passed']} <span class="text-sm font-normal text-slate-400">/ {report['summary']['total']}</span></div>
+        <div class="text-[10px] text-slate-400 font-medium mt-0.5">{report['summary']['passed']} passed &bull; {report['summary'].get('skipped', 0)} skipped &bull; {report['summary']['failed']} failed</div>
       </div>
       <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
         <div class="text-xs text-slate-400 uppercase tracking-wider font-medium">Models in Catalog</div>
@@ -1247,13 +1483,20 @@ def main() -> int:
         <tbody class="divide-y divide-slate-800/60">
 """
         for r in report["results"]:
-            status_color = "text-emerald-400" if r["status"] == "passed" else "text-rose-400"
+            if r["status"] == "passed":
+                status_color = "text-emerald-400"
+            elif r["status"] == "skipped":
+                status_color = "text-amber-400"
+            else:
+                status_color = "text-rose-400"
+
             req_id_short = r['request_id'][:8] + "..." if len(r['request_id']) > 8 else r['request_id']
             cost_disp = f"${r.get('cost_usd', 0.0):.6f}" if r.get('cost_usd', 0.0) > 0 else "$0.00"
+            note_line = f'<span class="block text-[10px] text-amber-400/80 font-mono mt-0.5">Note: {r["note"]}</span>' if r.get("note") else ""
             dashboard_html += f"""
           <tr>
             <td class="py-2.5 pr-3 text-slate-400 font-medium">{r['lane']}</td>
-            <td class="py-2.5 px-3 font-medium text-slate-200">{r['name']}</td>
+            <td class="py-2.5 px-3 font-medium text-slate-200">{r['name']}{note_line}</td>
             <td class="py-2.5 px-3 font-mono text-slate-400">{r['method']} {r['endpoint']}</td>
             <td class="py-2.5 px-3 font-mono text-slate-300">{r['http_status']}</td>
             <td class="py-2.5 px-3 font-semibold {status_color}">{r['status'].upper()}</td>

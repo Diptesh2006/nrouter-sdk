@@ -130,6 +130,47 @@ def sanitize(text: str) -> str:
     return sanitized
 
 
+VALID_ROUTING_TOKENS = {"direct", "weighted", "fallback", "auto"}
+VALID_COMPRESSION_TOKENS = {"applied", "not_requested", "off", "skipped"}
+
+_SENTENCE = "The rapid evolution of machine learning architectures enables scalable processing and high throughput across distributed inference pipelines."
+LONG_COMPRESSION_PROMPT = " ".join([_SENTENCE] * 45)
+
+
+def is_valid_routing_header(value: Any) -> bool:
+    return isinstance(value, str) and value in VALID_ROUTING_TOKENS
+
+
+def is_valid_attempts_header(value: Any) -> bool:
+    if value is None:
+        return False
+    try:
+        val = int(value)
+        return val >= 1
+    except (ValueError, TypeError):
+        return False
+
+
+def is_valid_compression_header(value: Any) -> bool:
+    return isinstance(value, str) and value in VALID_COMPRESSION_TOKENS
+
+
+def check_smart_routing_gate_passed(http_status: int, limit_source: Optional[str]) -> bool:
+    return (http_status == 200) or (http_status == 402 and limit_source == "plan_required")
+
+
+def check_smart_routing_routed_passed(http_status: int, model_served: Optional[str], routing_header: Optional[str]) -> bool:
+    return (http_status == 200) and (model_served == "nrouter/auto") and (routing_header == "auto")
+
+
+def check_compression_applied_passed(http_status: int, compression_header: Optional[str], input_tokens: int, baseline_tokens: int) -> bool:
+    return (http_status == 200) and (compression_header == "applied") and (input_tokens < baseline_tokens)
+
+
+def check_header_isolation_passed(response_request_id: Optional[str], forged_request_id: str) -> bool:
+    return bool(response_request_id) and (response_request_id != forged_request_id)
+
+
 def run_curl(args: List[str], timeout_s: int = 20) -> Tuple[int, Dict[str, str], str, float]:
     """Execute curl with arguments and return (status_code, headers_dict, body, latency_ms)."""
     cmd = ["curl", "-s", "-i"] + args
@@ -359,12 +400,10 @@ class CurlHealthRunner:
             endpoint,
         ]
         status, headers, body, latency = run_curl(args_auto)
-        auto_passed = (status == 200) or (
-            status == 402 and headers.get("x-nr-limit-source") == "plan_required"
-        )
+        auto_passed = check_smart_routing_gate_passed(status, headers.get("x-nr-limit-source"))
         checks.append({
             "lane": "Smart Routing",
-            "name": "Smart Auto-Router Policy (nrouter/auto)",
+            "name": "Smart Routing Gate (nrouter/auto)",
             "method": "POST",
             "endpoint": "/v1/chat/completions",
             "status": "passed" if auto_passed else "failed",
@@ -377,7 +416,60 @@ class CurlHealthRunner:
             "error": None if auto_passed else f"Unexpected status {status}: {sanitize(body)}",
         })
 
-        # 3b: Alias routing to OpenAI wire
+        # 3b: Routing header present on 200 response
+        payload_routing_hdr = json.dumps({
+            "model": "openai/gpt-4o-mini",
+            "messages": [{"role": "user", "content": "Routing header probe"}],
+            "max_tokens": 2,
+        })
+        args_routing_hdr = self._auth_header() + [
+            "-H", "Content-Type: application/json",
+            "-d", payload_routing_hdr,
+            endpoint,
+        ]
+        status_r, headers_r, body_r, latency_r = run_curl(args_routing_hdr)
+        routing_val = headers_r.get("x-nr-routing")
+        attempts_val = headers_r.get("x-nr-attempts")
+        routing_hdr_passed = (status_r == 200) and (
+            routing_val is None or (is_valid_routing_header(routing_val) and is_valid_attempts_header(attempts_val))
+        )
+        checks.append({
+            "lane": "Smart Routing",
+            "name": "Routing Header Contract (/v1/chat/completions)",
+            "method": "POST",
+            "endpoint": "/v1/chat/completions",
+            "status": "passed" if routing_hdr_passed else "failed",
+            "http_status": status_r,
+            "latency_ms": latency_r,
+            "request_id": headers_r.get("x-nr-request-id", "N/A"),
+            "routing": routing_val or "absent",
+            "attempts": attempts_val or "absent",
+            "cost_usd": float(headers_r.get("x-nr-request-cost", "0.0") or "0.0"),
+            "error": None if routing_hdr_passed else f"Invalid routing headers: routing={routing_val}, attempts={attempts_val}",
+        })
+
+        # 3c: Smart routing routed (when NROUTER_HEALTH_EXPECT_AUTO_ROUTED=1)
+        if os.environ.get("NROUTER_HEALTH_EXPECT_AUTO_ROUTED") == "1":
+            status_routed, headers_routed, body_routed, latency_routed = run_curl(args_auto)
+            routed_passed = check_smart_routing_routed_passed(
+                status_routed, headers_routed.get("x-nr-model"), headers_routed.get("x-nr-routing")
+            )
+            checks.append({
+                "lane": "Smart Routing",
+                "name": "Smart Routing Routed Execution (nrouter/auto)",
+                "method": "POST",
+                "endpoint": "/v1/chat/completions",
+                "status": "passed" if routed_passed else "failed",
+                "http_status": status_routed,
+                "latency_ms": latency_routed,
+                "request_id": headers_routed.get("x-nr-request-id", "N/A"),
+                "model_served": headers_routed.get("x-nr-model", "N/A"),
+                "routing": headers_routed.get("x-nr-routing"),
+                "cost_usd": float(headers_routed.get("x-nr-request-cost", "0.0") or "0.0"),
+                "error": None if routed_passed else f"Expected 200 auto-routed, got {status_routed}: {sanitize(body_routed)}",
+            })
+
+        # 3d: Alias routing to OpenAI wire
         payload_openai = json.dumps({
             "model": "openai/gpt-4o-mini",
             "messages": [{"role": "user", "content": "Reply OK"}],
@@ -405,7 +497,7 @@ class CurlHealthRunner:
             "error": None if openai_passed else f"HTTP {status}: {sanitize(body)}",
         })
 
-        # 3c: Alias routing to Qwen wire
+        # 3e: Alias routing to Qwen wire
         payload_qwen = json.dumps({
             "model": "qwen-turbo",
             "messages": [{"role": "user", "content": "Reply OK"}],
@@ -693,6 +785,142 @@ class CurlHealthRunner:
         return checks
 
     # -------------------------------------------------------------------------
+    # Lane 7: Prompt Compression & Request Controls Lane
+    # -------------------------------------------------------------------------
+    def check_compression(self) -> List[Dict[str, Any]]:
+        """Verify prompt compression headers, application, part opt-out, and WAF header forwarding."""
+        checks = []
+        endpoint = f"{self.base_url}/chat/completions"
+
+        # 7a: Compression header present on text wire
+        payload_base = json.dumps({
+            "model": "openai/gpt-4o-mini",
+            "messages": [{"role": "user", "content": "Reply OK"}],
+            "max_tokens": 2,
+        })
+        args_base = self._auth_header() + [
+            "-H", "Content-Type: application/json",
+            "-d", payload_base,
+            endpoint,
+        ]
+        status, headers, body, latency = run_curl(args_base)
+        compression_hdr = headers.get("x-nr-compression")
+        hdr_passed = (status == 200) and (
+            compression_hdr is None or is_valid_compression_header(compression_hdr)
+        )
+        checks.append({
+            "lane": "Compression",
+            "name": "Compression Header Contract (/v1/chat/completions)",
+            "method": "POST",
+            "endpoint": "/v1/chat/completions",
+            "status": "passed" if hdr_passed else "failed",
+            "http_status": status,
+            "latency_ms": latency,
+            "request_id": headers.get("x-nr-request-id", "N/A"),
+            "compression": compression_hdr or "absent",
+            "cost_usd": float(headers.get("x-nr-request-cost", "0.0") or "0.0"),
+            "error": None if hdr_passed else f"Invalid compression header token: {compression_hdr}",
+        })
+
+        # 7b: Compression applied when enabled
+        if os.environ.get("NROUTER_HEALTH_EXPECT_COMPRESSION") == "1":
+            # Baseline without flag
+            payload_long_base = json.dumps({
+                "model": "openai/gpt-4o-mini",
+                "messages": [{"role": "user", "content": LONG_COMPRESSION_PROMPT}],
+                "max_tokens": 2,
+            })
+            status_b, headers_b, body_b, _ = run_curl(self._auth_header() + ["-H", "Content-Type: application/json", "-d", payload_long_base, endpoint])
+            base_tokens = int(headers_b.get("x-nr-input-tokens", "0") or "0")
+
+            # Flagged request
+            args_comp = self._auth_header() + [
+                "-H", "Content-Type: application/json",
+                "-H", "x-nr-compress: on",
+                "-d", payload_long_base,
+                endpoint,
+            ]
+            status_c, headers_c, body_c, latency_c = run_curl(args_comp)
+            comp_hdr = headers_c.get("x-nr-compression")
+            comp_tokens = int(headers_c.get("x-nr-input-tokens", "0") or "0")
+            comp_passed = check_compression_applied_passed(status_c, comp_hdr, comp_tokens, base_tokens)
+            checks.append({
+                "lane": "Compression",
+                "name": "Prompt Compression Applied (x-nr-compress: on)",
+                "method": "POST",
+                "endpoint": "/v1/chat/completions",
+                "status": "passed" if comp_passed else "failed",
+                "http_status": status_c,
+                "latency_ms": latency_c,
+                "request_id": headers_c.get("x-nr-request-id", "N/A"),
+                "compression": comp_hdr,
+                "tokens_before": base_tokens,
+                "tokens_after": comp_tokens,
+                "cost_usd": float(headers_c.get("x-nr-request-cost", "0.0") or "0.0"),
+                "error": None if comp_passed else f"Expected compression applied with token savings, got status={status_c}, header={comp_hdr}, before={base_tokens}, after={comp_tokens}",
+            })
+
+        # 7c: Marker never forwarded (per-part opt-out stripped before egress)
+        payload_marker = json.dumps({
+            "model": "openai/gpt-4o-mini",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Reply OK with opt-out marker",
+                    "nrouter_compress": False,
+                }
+            ],
+            "max_tokens": 2,
+        })
+        args_marker = self._auth_header() + [
+            "-H", "Content-Type: application/json",
+            "-d", payload_marker,
+            endpoint,
+        ]
+        status_m, headers_m, body_m, latency_m = run_curl(args_marker)
+        marker_passed = (status_m == 200)
+        checks.append({
+            "lane": "Compression",
+            "name": "Part Opt-Out Marker Stripped (nrouter_compress: false)",
+            "method": "POST",
+            "endpoint": "/v1/chat/completions",
+            "status": "passed" if marker_passed else "failed",
+            "http_status": status_m,
+            "latency_ms": latency_m,
+            "request_id": headers_m.get("x-nr-request-id", "N/A"),
+            "cost_usd": float(headers_m.get("x-nr-request-cost", "0.0") or "0.0"),
+            "error": None if marker_passed else f"Expected 200 (stripped marker), got {status_m}: {sanitize(body_m)}",
+        })
+
+        # 7d: Unknown x-nr-* request header dropped, accepted one forwarded
+        forged_id = "forged-req-sentinel-99999"
+        args_waf = self._auth_header() + [
+            "-H", "Content-Type: application/json",
+            "-H", "x-nr-compress: on",
+            "-H", f"x-nr-request-id: {forged_id}",
+            "-d", payload_base,
+            endpoint,
+        ]
+        status_w, headers_w, body_w, latency_w = run_curl(args_waf)
+        resp_req_id = headers_w.get("x-nr-request-id")
+        waf_passed = (status_w == 200) and check_header_isolation_passed(resp_req_id, forged_id)
+        checks.append({
+            "lane": "Compression",
+            "name": "Header Hygiene: Accepted Forwarded, Forged Dropped",
+            "method": "POST",
+            "endpoint": "/v1/chat/completions",
+            "status": "passed" if waf_passed else "failed",
+            "http_status": status_w,
+            "latency_ms": latency_w,
+            "request_id": resp_req_id or "N/A",
+            "cost_usd": float(headers_w.get("x-nr-request-cost", "0.0") or "0.0"),
+            "error": None if waf_passed else f"Forged request ID adopted or request failed (status={status_w}, req_id={resp_req_id})",
+        })
+
+        self.results.extend(checks)
+        return checks
+
+    # -------------------------------------------------------------------------
     # Run All & Build Summary
     # -------------------------------------------------------------------------
     def run_all(self) -> Dict[str, Any]:
@@ -704,6 +932,7 @@ class CurlHealthRunner:
         self.check_guardrails()
         self.check_features()
         self.check_security_and_refusals()
+        self.check_compression()
 
         passed = sum(1 for r in self.results if r["status"] == "passed")
         failed = sum(1 for r in self.results if r["status"] == "failed")
@@ -814,6 +1043,20 @@ def self_test() -> None:
     assert "live catalog entries verified" in summary_md
     assert "Cache Explicit Bypass" in summary_md
 
+    mock_report["results"].append({
+        "lane": "Compression",
+        "name": "Compression Header Contract (/v1/chat/completions)",
+        "method": "POST",
+        "endpoint": "/v1/chat/completions",
+        "status": "passed",
+        "http_status": 200,
+        "latency_ms": 120.0,
+        "request_id": "req-87654321",
+        "cost_usd": 0.000001,
+    })
+    summary_md2 = format_markdown_summary(mock_report)
+    assert "Compression Header Contract" in summary_md2
+
     # 3. Guardrail matrix shape
     classes = {case[0] for case in GUARDRAIL_CASES}
     for required in ("allow", "explicit", "minors", "toxicity", "harassment", "violence", "self-harm", "pii", "secret", "injection"):
@@ -835,6 +1078,44 @@ def self_test() -> None:
     assert not guardrail_case_passed(400, "toxicity", 200, ""), "a served request must fail a block case"
     assert not guardrail_case_passed(200, None, 400, "toxicity"), "a refused request must fail an allow case"
     assert guardrail_case_passed(200, None, 200, "")
+
+    # 5. Routing header contract validation
+    for valid_routing in ("direct", "weighted", "fallback", "auto"):
+        assert is_valid_routing_header(valid_routing), f"routing token {valid_routing} should be valid"
+    for invalid_routing in ("random", "round_robin", "", None, "DIRECT"):
+        assert not is_valid_routing_header(invalid_routing), f"routing token {invalid_routing} should be invalid"
+
+    for valid_attempts in ("1", "2", "5", 1, 3):
+        assert is_valid_attempts_header(valid_attempts), f"attempts {valid_attempts} should be valid"
+    for invalid_attempts in ("0", "-1", "abc", None, 0, -2):
+        assert not is_valid_attempts_header(invalid_attempts), f"attempts {invalid_attempts} should be invalid"
+
+    # 6. Compression header contract validation
+    for valid_compression in ("applied", "not_requested", "off", "skipped"):
+        assert is_valid_compression_header(valid_compression), f"compression token {valid_compression} should be valid"
+    for invalid_compression in ("on", "yes", "true", None, "", "APPLIED"):
+        assert not is_valid_compression_header(invalid_compression), f"compression token {invalid_compression} should be invalid"
+
+    # 7. Smart routing gate logic
+    assert check_smart_routing_gate_passed(200, None)
+    assert check_smart_routing_gate_passed(402, "plan_required")
+    assert not check_smart_routing_gate_passed(402, "key")
+    assert not check_smart_routing_gate_passed(500, None)
+
+    # 8. Smart routing routed logic
+    assert check_smart_routing_routed_passed(200, "nrouter/auto", "auto")
+    assert not check_smart_routing_routed_passed(200, "gpt-4o", "direct")
+    assert not check_smart_routing_routed_passed(402, "nrouter/auto", "auto")
+
+    # 9. Compression application logic
+    assert check_compression_applied_passed(200, "applied", 500, 700)
+    assert not check_compression_applied_passed(200, "applied", 750, 700), "tokens after >= before must fail"
+    assert not check_compression_applied_passed(200, "skipped", 500, 700), "non-applied status must fail"
+    assert not check_compression_applied_passed(400, "applied", 500, 700), "non-200 status must fail"
+
+    # 10. Header isolation / WAF forwarding logic
+    assert check_header_isolation_passed("req-genuine-12345", "forged-id-xyz")
+    assert not check_header_isolation_passed("forged-id-xyz", "forged-id-xyz"), "forged request-id adoption must fail"
 
     print("[PASS] curl_health_checks.py self-test passed cleanly.")
 

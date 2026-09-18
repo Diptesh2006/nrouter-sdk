@@ -436,8 +436,11 @@ def run_checks_with_scope_guard(checker: Any, checks: List[Callable]) -> None:
 # `startswith("HTTP/")` was too loose: a body whose first words are "HTTP/1.1 is
 # the protocol…" was consumed as a header block, and the caller was handed the
 # REST of the body as the whole body. Anchored, with the version and the
-# three-digit code both required.
-STATUS_LINE_RE = re.compile(r"HTTP/\d\.\d \d{3}")
+# three-digit code both required. The minor version is OPTIONAL: HTTP/2 and
+# HTTP/3 status lines are `HTTP/2 200` — no dot, no reason phrase — and that
+# is what every deployed plane answers; requiring `\d\.\d` parsed all of them
+# as status 0 (2026-09-18).
+STATUS_LINE_RE = re.compile(r"HTTP/\d(?:\.\d)? \d{3}")
 
 
 def split_head_body(raw: str) -> Tuple[str, str]:
@@ -1031,6 +1034,25 @@ def parser_contract_self_test() -> None:
     # Sanitization actually bites.
     assert "sk-nrouter-" not in sanitize("key sk-nrouter-abc123 leaked")
     assert "[REDACTED]" in sanitize("Authorization: Bearer sk-nrouter-abc123")
+
+    # RULE 4 — HTTP/2 status lines. The deployed planes speak HTTP/2, whose
+    # status line is `HTTP/2 200` (no minor version, no reason phrase), while
+    # local development speaks HTTP/1.1. A status-line anchor written for
+    # `HTTP/1.1` left every deployed response parsed as status 0, so every
+    # feature module failed on stage while passing locally (2026-09-18).
+    h2 = (
+        "HTTP/2 200 \r\n"
+        "content-type: application/json\r\n"
+        "x-nr-request-id: h2-abc\r\n"
+        "\r\n"
+        '{"id":"msg_1"}'
+    )
+    status, headers, body = parse_curl_output(h2)
+    assert status == 200, f"HTTP/2 status parsed as {status} — the deployed planes are unparseable"
+    assert headers.get("x-nr-request-id") == "h2-abc", headers
+    assert body == '{"id":"msg_1"}', repr(body)
+    status, _, body = parse_curl_output("HTTP/2 429 \r\nretry-after: 1\r\n\r\n{}")
+    assert status == 429 and body == "{}", (status, body)
 
 
 def transport_contract_self_test() -> None:

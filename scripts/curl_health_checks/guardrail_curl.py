@@ -48,11 +48,16 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-# Only the shared SELF-TEST contract is borrowed: this module keeps its own
-# transport and its own report shape. `--json` puts exactly one JSON document on
-# stdout in all thirteen modules, so that contract has one home, not three.
+# Only the shared SELF-TEST contract and the shared VERDICT rule are borrowed:
+# this module keeps its own transport and its own report shape. `--json` puts
+# exactly one JSON document on stdout in all thirteen modules, and a suite that
+# proved nothing reads as a failure in all thirteen, so both contracts have one
+# home, not three.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _curl_common import main_json_stdout_contract_self_test  # noqa: E402
+from _curl_common import (  # noqa: E402
+    main_json_stdout_contract_self_test,
+    suite_verdict,
+)
 
 DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 DEFAULT_GUARDRAIL_ROUTE = "/messages"
@@ -451,7 +456,13 @@ class GuardrailCurlHealthCheck:
         total_cases = len(self.results)
         passed_cases = sum(1 for r in self.results if r["passed"])
         failed_cases = total_cases - passed_cases
-        all_passed = (failed_cases == 0)
+        # The ONE verdict rule, shared by every module and by run_all.py: nothing
+        # failed AND something was actually proven. This module has no
+        # NOT-CONFIGURED result — a guardrail case either blocks or it does not —
+        # but a suite that executed NO case still proved nothing, and an empty
+        # run must never report a clean guardrail floor. See
+        # `_curl_common.suite_verdict`.
+        verdict = suite_verdict(passed_cases, failed_cases, not_configured=0)
 
         # Categorize results
         category_summary: Dict[str, Dict[str, int]] = {}
@@ -473,7 +484,7 @@ class GuardrailCurlHealthCheck:
             "total_cases": total_cases,
             "passed_cases": passed_cases,
             "failed_cases": failed_cases,
-            "all_passed": all_passed,
+            **verdict,
             "category_summary": category_summary,
             "checks": self.results,
         }
@@ -616,6 +627,28 @@ def run_self_test() -> int:
     )
     broken_result = broken_checker.run_suite(quick=True)
     assert broken_result["all_passed"] is False, "Broken mock should not pass"
+
+    # A run that executed NO case proved NOTHING about the guardrail floor, and
+    # must never read as passing. Under `all_passed = failed_cases == 0` an empty
+    # run reported a clean floor — the strongest possible false green in this
+    # directory, since this module is the one that proves prompts get blocked.
+    saved_cases = globals()["QUICK_GUARDRAIL_CASES"]
+    globals()["QUICK_GUARDRAIL_CASES"] = []
+    try:
+        empty_result = GuardrailCurlHealthCheck(
+            base_url="https://mock.api.nrouter.ai/v1",
+            api_key="sk-nrouter-mock-test-key",
+            curl_fn=mock_curl,
+        ).run_suite(quick=True)
+    finally:
+        globals()["QUICK_GUARDRAIL_CASES"] = saved_cases
+    assert empty_result["total_cases"] == 0, empty_result["total_cases"]
+    assert empty_result["all_passed"] is False, (
+        "a run that executed no guardrail case proved nothing and must not report all_passed"
+    )
+    assert empty_result["proved_nothing"] is True, empty_result["passed_cases"]
+    # ...and the restore actually restored, so nothing below runs on an empty set.
+    assert QUICK_GUARDRAIL_CASES, "the case list was not restored"
 
     # ---------------------------------------------------------------- D8
     # A MODERATION CASE THAT WAS **SERVED** STAYS FAIL, AND SAYS WHY.

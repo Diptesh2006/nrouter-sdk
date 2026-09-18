@@ -584,6 +584,37 @@ def reported_headers(headers: Dict[str, str]) -> Dict[str, str]:
     }
 
 
+def suite_verdict(passed: int, failed: int, not_configured: int) -> Dict[str, bool]:
+    """The ONE verdict rule for every module in this directory.
+
+    A successful call is not a win, and a domain that proved NOTHING must never
+    read as passing. The arithmetic this replaces — `all_passed = failed == 0` —
+    is green for a run in which every check was NOT-CONFIGURED and not one thing
+    was proven; a CI gate reading `all_passed` waves that through as evidence.
+
+    - `all_passed`    — nothing failed AND at least one check actually proved
+                        something. Zero real passes is never a pass.
+    - `partial`       — something was absent on this plane, so the evidence is
+                        incomplete even when `all_passed` is true.
+    - `proved_nothing`— not a single check ran to a real result. Reported per
+                        module by `run_all.py` so an all-absent suite is named,
+                        not averaged away.
+
+    No module keeps its own copy of this arithmetic: one rule, one place, so the
+    aggregate and every module agree by construction.
+    """
+    if passed < 0 or failed < 0 or not_configured < 0:
+        raise ValueError(
+            f"check counts cannot be negative: passed={passed} failed={failed} "
+            f"not_configured={not_configured}"
+        )
+    return {
+        "all_passed": failed == 0 and passed >= 1,
+        "partial": not_configured > 0,
+        "proved_nothing": passed == 0,
+    }
+
+
 def emit_results(
     suite: Dict[str, Any],
     markdown: str = "",
@@ -1066,12 +1097,71 @@ def transport_contract_self_test() -> None:
     assert sanitize("$NROUTER_API_KEY") == "$NROUTER_API_KEY"
 
 
+def suite_verdict_contract_self_test() -> None:
+    """A suite that proved NOTHING must never read as a suite that passed.
+
+    The arithmetic every module used to carry — `all_passed = failed == 0` —
+    is green for a run in which every single check was NOT-CONFIGURED and not
+    one thing was actually proven. A CI gate reading `all_passed` waves that
+    through as evidence. A successful call is not a win, and a domain that
+    proved nothing must never read as passing.
+    """
+    # Every check NOT-CONFIGURED: nothing failed, and nothing was proven.
+    all_nc = suite_verdict(passed=0, failed=0, not_configured=7)
+    assert all_nc["all_passed"] is False, all_nc
+    assert all_nc["proved_nothing"] is True, all_nc
+    assert all_nc["partial"] is True, all_nc
+
+    # An empty suite proved nothing either — and is not a pass.
+    empty = suite_verdict(passed=0, failed=0, not_configured=0)
+    assert empty["all_passed"] is False, empty
+    assert empty["proved_nothing"] is True, empty
+    assert empty["partial"] is False, empty
+
+    # One real pass with the rest absent: a PARTIAL pass, which is real but
+    # incomplete evidence. It passes, and it says so.
+    partial = suite_verdict(passed=1, failed=0, not_configured=6)
+    assert partial["all_passed"] is True, partial
+    assert partial["partial"] is True, partial
+    assert partial["proved_nothing"] is False, partial
+
+    # Fully proven, nothing absent.
+    clean = suite_verdict(passed=7, failed=0, not_configured=0)
+    assert clean["all_passed"] is True, clean
+    assert clean["partial"] is False, clean
+    assert clean["proved_nothing"] is False, clean
+
+    # ANY failure fails the suite, whatever else is in it.
+    for verdict in (
+        suite_verdict(passed=0, failed=1, not_configured=0),
+        suite_verdict(passed=9, failed=1, not_configured=0),
+        suite_verdict(passed=9, failed=1, not_configured=3),
+        suite_verdict(passed=0, failed=1, not_configured=6),
+    ):
+        assert verdict["all_passed"] is False, verdict
+
+    # The keys are the contract: every module and `run_all.py` read these three
+    # names, so the helper must not quietly grow or lose one.
+    assert set(clean) == {"all_passed", "partial", "proved_nothing"}, sorted(clean)
+    for value in clean.values():
+        assert isinstance(value, bool), clean
+
+    # Negative counts are a caller bug, not a verdict to render.
+    for bad in ((-1, 0, 0), (0, -1, 0), (0, 0, -1)):
+        try:
+            suite_verdict(passed=bad[0], failed=bad[1], not_configured=bad[2])
+        except ValueError:
+            continue
+        raise AssertionError(f"negative counts must be refused, not scored: {bad}")
+
+
 def run_self_test() -> int:
     """Offline verification of the shared plumbing."""
     print("Running _curl_common.py --self-test (offline mode)...")
     parser_contract_self_test()
     wire_contract_self_test()
     transport_contract_self_test()
+    suite_verdict_contract_self_test()
     # R3: the `--json` contract is THIS module's to keep, so this module must
     # exercise it. Before, `emit_results` could be broken — a banner routed back
     # to stdout — and `_curl_common --self-test` still passed, leaving the gate

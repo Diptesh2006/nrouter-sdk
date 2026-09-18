@@ -71,6 +71,7 @@ from _curl_common import (  # noqa: E402
     sanitize,
     served_body_for,
     served_body_ok,
+    suite_verdict,
     wire_contract_self_test,
 )
 
@@ -417,8 +418,10 @@ class ContextLimitCurlHealthCheck:
             "failed_checks": failed,
             "not_configured_checks": unconfigured,
             "adversarial_checks": sum(1 for r in self.results if r["expected_failure"]),
-            "all_passed": failed == 0,
-            "partial": unconfigured > 0,
+            # The ONE verdict rule, shared by every module and by run_all.py:
+            # nothing failed AND something was actually proven. See
+            # `_curl_common.suite_verdict`.
+            **suite_verdict(passed, failed, unconfigured),
         }
 
     def render_markdown_summary(self, suite: Dict[str, Any]) -> str:
@@ -723,6 +726,14 @@ def run_self_test() -> int:
     assert any(
         "NROUTER_HEALTH_ROUTE" in r.get("detail", "") for r in scoped_suite["checks"]
     ), "the scope refusal must name the override to set"
+    # ...and that suite proved NOTHING, so it must never read as passing. Under
+    # `all_passed = failed == 0` this was green: zero failures, zero proof, and a
+    # CI gate reading `all_passed` waved it through as release evidence.
+    assert scoped_suite["not_configured_checks"] == scoped_suite["total_checks"], scoped_suite
+    assert scoped_suite["all_passed"] is False, (
+        "an all-NOT-CONFIGURED suite proved nothing and must not report all_passed"
+    )
+    assert scoped_suite["proved_nothing"] is True, scoped_suite["passed_checks"]
 
     assert "Context & Output Ceilings" in checker.render_markdown_summary(suite)
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))

@@ -67,6 +67,7 @@ from _curl_common import (  # noqa: E402
     run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    suite_verdict,
     wire_contract_self_test,
 )
 
@@ -524,8 +525,10 @@ class ContractCurlHealthCheck:
             "failed_checks": failed,
             "not_configured_checks": unconfigured,
             "adversarial_checks": sum(1 for r in self.results if r["expected_failure"]),
-            "all_passed": failed == 0,
-            "partial": unconfigured > 0,
+            # The ONE verdict rule, shared by every module and by run_all.py:
+            # nothing failed AND something was actually proven. See
+            # `_curl_common.suite_verdict`.
+            **suite_verdict(passed, failed, unconfigured),
         }
 
     def render_markdown_summary(self, suite: Dict[str, Any]) -> str:
@@ -809,6 +812,28 @@ def run_self_test() -> int:
     assert any(
         "NROUTER_HEALTH_ROUTE" in r.get("detail", "") for r in scoped_suite["checks"]
     ), "the scope refusal must name the override to set"
+    # The OpenAPI document is not on the route under test, so it still answers:
+    # one real pass with the rest absent is a PARTIAL pass — real but incomplete
+    # evidence, and it says so.
+    assert scoped_suite["passed_checks"] >= 1, scoped_suite["passed_checks"]
+    assert scoped_suite["all_passed"] is True and scoped_suite["partial"] is True, scoped_suite
+    assert scoped_suite["proved_nothing"] is False, scoped_suite
+
+    # ...but a suite in which EVERY row is NOT-CONFIGURED proved NOTHING, and must
+    # never read as passing. Under `all_passed = failed == 0` this was green: zero
+    # failures, zero proof, and a CI gate reading `all_passed` waved it through as
+    # release evidence. The module's own summarizer is what is exercised here.
+    absent = ContractCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", spec=spec,
+        curl_fn=mock_route_not_allowed,
+    )
+    absent.results = [dict(row, result=NOT_CONFIGURED) for row in scoped_suite["checks"]]
+    absent_suite = absent.summarize()
+    assert absent_suite["not_configured_checks"] == absent_suite["total_checks"], absent_suite
+    assert absent_suite["all_passed"] is False, (
+        "an all-NOT-CONFIGURED suite proved nothing and must not report all_passed"
+    )
+    assert absent_suite["proved_nothing"] is True, absent_suite["passed_checks"]
 
     # ...but a refusal on a DIFFERENT path (the OpenAPI document) must not
     # short-circuit the route under test: that path is not what is being tested.

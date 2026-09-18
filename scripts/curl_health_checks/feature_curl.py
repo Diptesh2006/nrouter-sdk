@@ -139,6 +139,7 @@ from _curl_common import (  # noqa: E402
     resolve_route,
     served_body_ok,
     served_location,
+    suite_verdict,
     wire_of,
 )
 
@@ -1144,7 +1145,11 @@ class FeatureCurlHealthCheck:
         # the probe was provably absent, so it proved nothing either way. It is
         # counted and surfaced as PARTIAL — never quietly folded into `passed`.
         failed = total - passed - not_configured
-        all_passed = (failed == 0)
+        # The ONE verdict rule, shared by every module and by run_all.py: nothing
+        # failed AND something was actually proven. A run of 40 NOT-CONFIGURED
+        # probes and zero passes proved nothing and is not a pass. See
+        # `_curl_common.suite_verdict`.
+        verdict = suite_verdict(passed, failed, not_configured)
 
         # Group by category
         cat_summary: Dict[str, Dict[str, int]] = {}
@@ -1170,8 +1175,7 @@ class FeatureCurlHealthCheck:
             "passed_features": passed,
             "failed_features": failed,
             "not_configured_features": not_configured,
-            "partial": not_configured > 0,
-            "all_passed": all_passed,
+            **verdict,
             "category_summary": cat_summary,
             "checks": self.results,
         }
@@ -1553,6 +1557,43 @@ def run_self_test() -> int:
     assert "claude-haiku-4-5-20251001" in rows["models_detail_retrieve"]["endpoint"], (
         rows["models_detail_retrieve"]["endpoint"]
     )
+
+    # 4. A run in which EVERY probe was NOT-CONFIGURED proved NOTHING, so it must
+    #    never read as passing. Under `all_passed = failed == 0` a 40/40
+    #    NOT-CONFIGURED run with zero passes reported `all_passed: true`, and a CI
+    #    gate reading that field waved it through as release evidence.
+    absent_checker = FeatureCurlHealthCheck(
+        base_url="https://mock.api.nrouter.ai/v1",
+        api_key="sk-nrouter-mock-test-key",
+        route="/messages",
+        model="claude-haiku-4-5-20251001",
+        curl_fn=mock_messages_only,
+    )
+
+    def absent_feature(idx: int, feat: Dict[str, Any]) -> Dict[str, Any]:
+        row = {
+            "index": idx,
+            "id": feat["id"],
+            "name": feat["name"],
+            "category": feat["category"],
+            "endpoint": feat["endpoint"],
+            "passed": False,
+            "not_configured": True,
+            "error": "precondition absent on this plane",
+        }
+        absent_checker.results.append(row)
+        return row
+
+    absent_checker.execute_feature = absent_feature  # type: ignore[method-assign]
+    absent_suite = absent_checker.run_suite()
+    assert absent_suite["total_features"] > 0, absent_suite
+    assert absent_suite["passed_features"] == 0, absent_suite["passed_features"]
+    assert absent_suite["not_configured_features"] == absent_suite["total_features"], absent_suite
+    assert absent_suite["all_passed"] is False, (
+        "an all-NOT-CONFIGURED run proved nothing and must not report all_passed"
+    )
+    assert absent_suite["proved_nothing"] is True, absent_suite["passed_features"]
+    assert absent_suite["partial"] is True, absent_suite
 
     # ---- the guard is NARROW: only 403 + key_route_not_allowed -------------
     def mock_other_denial(args: List[str], timeout_s: int = 35) -> Tuple[int, Dict[str, str], str, float]:

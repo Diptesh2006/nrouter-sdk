@@ -59,6 +59,7 @@ from _curl_common import (  # noqa: E402
     served_body_ok,
     served_location,
     served_text,
+    suite_verdict,
     wire_of,
 )
 
@@ -373,15 +374,29 @@ class ModelCurlHealthCheck:
 
         # NOT-CONFIGURED is not a pass: it is recorded, counted and surfaced as
         # PARTIAL, so a run that proved nothing never reads as a run that did.
+        #
+        # This module used to keep its own arithmetic —
+        # `all(c["passed"] or c.get("not_configured"))` — which is TRUE for a run
+        # in which every check was NOT-CONFIGURED and nothing was proven. The ONE
+        # verdict rule now lives in `_curl_common.suite_verdict` and is shared by
+        # every module and by run_all.py: nothing failed AND something was
+        # actually proven.
         not_configured = sum(1 for c in self.results if c.get("not_configured"))
-        all_passed = all(c["passed"] or c.get("not_configured") for c in self.results)
+        proven = sum(1 for c in self.results if c["passed"])
+        failed = len(self.results) - proven - not_configured
+        verdict = suite_verdict(proven, failed, not_configured)
+        all_passed = verdict["all_passed"]
         return {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "base_url": self.base_url,
             "route": self.route,
             "model": self.model,
+            # This module's top-level verdict key is `passed`, not `all_passed`
+            # (run_all.py reads `model_result["passed"]`); the rule behind it is
+            # the shared one.
             "passed": all_passed,
-            "partial": not_configured > 0,
+            "partial": verdict["partial"],
+            "proved_nothing": verdict["proved_nothing"],
             "not_configured_checks": not_configured,
             "checks": self.results,
             "summary": {
@@ -390,6 +405,7 @@ class ModelCurlHealthCheck:
                 "probe_latency_ms": probe_res.get("latency_ms", 0.0),
                 "not_configured": not_configured,
                 "all_passed": all_passed,
+                "proved_nothing": verdict["proved_nothing"],
             },
         }
 
@@ -632,6 +648,42 @@ def _run_self_test_body() -> int:
         model="claude-haiku-4-5-20251001",
         curl_fn=mock_model_denied,
     )
+    # A run in which EVERY check was NOT-CONFIGURED proved NOTHING, and must never
+    # read as passing. Under this module's old arithmetic —
+    # `all(c["passed"] or c.get("not_configured"))` — that run reported
+    # `passed: true`, and a CI gate reading it waved through a suite that had not
+    # reached the gateway once.
+    absent = ModelCurlHealthCheck(
+        base_url="https://mock.api.nrouter.ai/v1",
+        api_key="sk-nrouter-mock-key-for-test",
+        route="/messages",
+        model="claude-haiku-4-5-20251001",
+        curl_fn=mock_scoped_curl,
+    )
+
+    def absent_check(name: str):
+        def record() -> Dict[str, Any]:
+            row = {
+                "check": name,
+                "name": name,
+                "passed": False,
+                "not_configured": True,
+                "error": "precondition absent on this plane",
+            }
+            absent.results.append(row)
+            return row
+        return record
+
+    absent.check_models_catalog = absent_check("models_catalog")  # type: ignore[method-assign]
+    absent.check_provider_inference_probe = absent_check("model_probe")  # type: ignore[method-assign]
+    absent_result = absent.run_all()
+    assert absent_result["not_configured_checks"] == len(absent_result["checks"]), absent_result
+    assert absent_result["passed"] is False, (
+        "an all-NOT-CONFIGURED run proved nothing and must not report passed"
+    )
+    assert absent_result["proved_nothing"] is True, absent_result
+    assert absent_result["summary"]["all_passed"] is False, absent_result["summary"]
+
     denied_probe = next(c for c in denied.run_all()["checks"] if c["check"] == "model_probe")
     assert denied_probe["passed"] is False, "a model-policy denial is a failure"
     assert denied_probe.get("not_configured") is not True, (

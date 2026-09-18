@@ -188,11 +188,19 @@ def run_feature_suites(
         suite = checker.run_suite(quick=quick)
         suite["_markdown"] = checker.render_markdown_summary(suite)
         suites.append(suite)
-        state = "PASS" if suite["all_passed"] else "FAIL"
-        if suite["all_passed"] and suite["partial"]:
+        # The verdict words come from the shared rule (`_curl_common.suite_verdict`),
+        # which every module now carries: a suite in which nothing was proven is
+        # NOT a pass, however few things failed.
+        if suite["proved_nothing"]:
+            state = "NOTHING-PROVEN"
+        elif not suite["all_passed"]:
+            state = "FAIL"
+        elif suite["partial"]:
             state = "PARTIAL"
+        else:
+            state = "PASS"
         print(
-            f"  ✓ {feature:<20} {state:<8} "
+            f"  ✓ {feature:<20} {state:<14} "
             f"{suite['passed_checks']}/{suite['total_checks']} passed, "
             f"{suite['failed_checks']} failed, "
             f"{suite['not_configured_checks']} not-configured, "
@@ -210,7 +218,11 @@ def render_feature_summary(suites: List[Dict[str, Any]]) -> str:
         "|---|---|---|---|---|---|---|",
     ]
     for suite in suites:
-        if not suite["all_passed"]:
+        # `proved_nothing` is reported per module, never averaged away: a domain
+        # that reached the gateway zero times is not a domain that passed.
+        if suite["proved_nothing"]:
+            status = "⚪ Nothing proven"
+        elif not suite["all_passed"]:
             status = "❌ Fail"
         elif suite["partial"]:
             status = "🟡 Partial"
@@ -243,6 +255,21 @@ def render_consolidated_summary(
     )
     overall_badge = "🟢 **ALL CHECKS OPERATIONAL**" if overall_passed else "🔴 **FAILURES DETECTED**"
 
+    def cell(result: Dict[str, Any], verdict_key: str) -> str:
+        """One suite's status cell, under the shared rule."""
+        if result.get("proved_nothing"):
+            return "⚪ Nothing proven"
+        return "✅ Pass" if result[verdict_key] else "❌ Fail"
+
+    # Named, never averaged away: a domain that proved nothing is listed by name
+    # so a reader of this report cannot mistake silence for evidence.
+    nothing_proven = (
+        (["Models & Providers"] if model_result.get("proved_nothing") else [])
+        + (["Guardrails & WAF"] if guard_result.get("proved_nothing") else [])
+        + (["Endpoints & Features"] if feature_result.get("proved_nothing") else [])
+        + [s["feature"] for s in feature_suites if s.get("proved_nothing")]
+    )
+
     lines = [
         "# 🚀 nRouter Consolidated Health Check Report",
         "",
@@ -252,13 +279,21 @@ def render_consolidated_summary(
         "",
         "| Check Suite | Scope / Focus | Checks Run | Passed | Failed | Status |",
         "|---|---|---|---|---|---|",
-        f"| **Models & Providers** | Catalog & Live Provider Inference | {len(model_result['checks'])} | {sum(1 for c in model_result['checks'] if c['passed'])} | {sum(1 for c in model_result['checks'] if not c['passed'])} | {'✅ Pass' if model_result['passed'] else '❌ Fail'} |",
-        f"| **Guardrails & WAF** | Moderation, Injection, Secrets, Evasions | {guard_result['total_cases']} | {guard_result['passed_cases']} | {guard_result['failed_cases']} | {'✅ Pass' if guard_result['all_passed'] else '❌ Fail'} |",
-        f"| **Endpoints & Features** | Feature Probes Across All Endpoints & Params | {feature_result['total_features']} | {feature_result['passed_features']} | {feature_result['failed_features']} | {'✅ Pass' if feature_result['all_passed'] else '❌ Fail'} |",
-        "",
-        "---",
+        f"| **Models & Providers** | Catalog & Live Provider Inference | {len(model_result['checks'])} | {sum(1 for c in model_result['checks'] if c['passed'])} | {sum(1 for c in model_result['checks'] if not c['passed'])} | {cell(model_result, 'passed')} |",
+        f"| **Guardrails & WAF** | Moderation, Injection, Secrets, Evasions | {guard_result['total_cases']} | {guard_result['passed_cases']} | {guard_result['failed_cases']} | {cell(guard_result, 'all_passed')} |",
+        f"| **Endpoints & Features** | Feature Probes Across All Endpoints & Params | {feature_result['total_features']} | {feature_result['passed_features']} | {feature_result['failed_features']} | {cell(feature_result, 'all_passed')} |",
         "",
     ]
+    if nothing_proven:
+        lines.extend([
+            "> ⚪ **Proved nothing on this plane** (not evidence, whatever the failure count): "
+            + ", ".join(f"`{name}`" for name in nothing_proven),
+            "",
+        ])
+    lines.extend([
+        "---",
+        "",
+    ])
 
     # Include Models summary
     lines.append(model_curl.ModelCurlHealthCheck().render_markdown_summary(model_result))
@@ -393,20 +428,38 @@ def main() -> int:
     )
     feature_failures = sum(suite["failed_checks"] for suite in feature_suites)
     feature_unconfigured = sum(suite["not_configured_checks"] for suite in feature_suites)
+    # `feature_failures == 0` was the aggregate's own copy of the arithmetic this
+    # directory just retired: zero failures across ten modules that each proved
+    # nothing is not a pass. The aggregate now reads each module's shared verdict.
+    feature_all_passed = all(suite["all_passed"] for suite in feature_suites)
     print(
-        f"  Result:              {'PASS' if feature_failures == 0 else 'FAIL'}"
+        f"  Result:              {'PASS' if feature_all_passed else 'FAIL'}"
         f"{' (PARTIAL: ' + str(feature_unconfigured) + ' not-configured)' if feature_unconfigured else ''}\n"
+    )
+
+    # Named per module, never averaged away.
+    nothing_proven = (
+        (["models"] if model_res.get("proved_nothing") else [])
+        + (["guardrails"] if guard_res.get("proved_nothing") else [])
+        + (["features"] if feat_res.get("proved_nothing") else [])
+        + [s["feature"] for s in feature_suites if s.get("proved_nothing")]
     )
 
     overall_passed = (
         model_res["passed"]
         and guard_res["all_passed"]
         and feat_res["all_passed"]
-        and feature_failures == 0
+        and feature_all_passed
     )
 
     print("============================================================")
     print(f"OVERALL STATUS:   {'🟢 ALL OPERATIONAL (PASS)' if overall_passed else '🔴 FAILURES DETECTED (FAIL)'}")
+    if nothing_proven:
+        print(
+            "PROVED NOTHING:   ⚪ "
+            + ", ".join(nothing_proven)
+            + "  (a domain that proved nothing is not evidence)"
+        )
     print("============================================================")
 
     if args.step_summary:
@@ -427,6 +480,9 @@ def main() -> int:
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "base_url": args.base_url,
             "overall_passed": overall_passed,
+            # Per module, by name: a consumer reading only `overall_passed` still
+            # learns which domains reached the gateway zero times.
+            "proved_nothing": nothing_proven,
             "models_and_providers": model_res,
             "guardrails": guard_res,
             "features": feat_res,

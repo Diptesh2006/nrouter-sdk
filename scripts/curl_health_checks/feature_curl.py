@@ -1700,8 +1700,12 @@ def run_self_test() -> int:
             f"Expected lazy model resolution 'test/lazy-model-second', got {lazy_checker.model!r}"
         )
     finally:
+        # Restore EXACTLY the prior state: a variable that was unset is unset
+        # again, never left holding the test's value for the rest of the run.
         if old_model_env is not None:
             os.environ[MODEL_ENV] = old_model_env
+        else:
+            os.environ.pop(MODEL_ENV, None)
         else:
             os.environ.pop(MODEL_ENV, None)
 

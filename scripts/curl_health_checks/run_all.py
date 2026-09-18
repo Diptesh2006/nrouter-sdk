@@ -163,13 +163,16 @@ def _not_evaluated_summary_self_test() -> int:
         return 1
 
     # Suite with a NOT-EVALUATED check
+    # The fixture obeys suite_verdict: one real pass alongside the
+    # NOT-EVALUATED row, so all_passed=True / proved_nothing=False is a state
+    # the helper can actually produce (zero passes never reads as passing).
     suite_with_ne = [{
         "feature": "rate_limit",
         "all_passed": True,
         "partial": True,
         "proved_nothing": False,
-        "total_checks": 1,
-        "passed_checks": 0,
+        "total_checks": 2,
+        "passed_checks": 1,
         "failed_checks": 0,
         "not_configured_checks": 0,
         "not_evaluated_checks": 1,
@@ -350,7 +353,7 @@ def render_consolidated_summary(
         for check in suite.get("checks", []):
             if check.get("result") == "NOT-EVALUATED" or check.get("not_evaluated"):
                 feature_name = suite.get("feature", "feature")
-                not_evaluated_checks.append(f"{feature_name}: `{check['name']}`")
+                not_evaluated_checks.append(f"{feature_name}: `{check.get('name', 'check')}`")
     for r, label in [
         (model_result, "models"),
         (guard_result, "guardrails"),
@@ -548,10 +551,18 @@ def main() -> int:
         + [s["feature"] for s in feature_suites if s.get("proved_nothing")]
     )
 
+    # The same aggregation the markdown report makes: every suite, the three
+    # legacy modules INCLUDED — a NOT-EVALUATED row in one of them must reach the
+    # console and the JSON summary too, not only the markdown.
     not_evaluated_checks = [
-        f"{s.get('feature', 'feature')}: {c['name']}"
+        f"{s.get('feature', 'feature')}: {c.get('name', 'check')}"
         for s in feature_suites
         for c in s.get("checks", [])
+        if c.get("result") == "NOT-EVALUATED" or c.get("not_evaluated")
+    ] + [
+        f"{label}: {c.get('name', 'check')}"
+        for r, label in [(model_res, "models"), (guard_res, "guardrails"), (feat_res, "features")]
+        for c in r.get("checks", [])
         if c.get("result") == "NOT-EVALUATED" or c.get("not_evaluated")
     ]
 

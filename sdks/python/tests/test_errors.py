@@ -304,6 +304,42 @@ def test_the_header_name_list_matches_what_is_parsed():
     assert meta.response_cache is not None
     assert meta.budget_warning is not None
     assert meta.guardrails is not None
+    assert meta.compression is not None
+    assert meta.routing is not None
+    assert meta.attempts is not None
+
+
+def test_compression_routing_attempts_reach_the_metadata():
+    """All three headers are parsed into typed fields on nRouterResponseMeta.
+
+    They are optional and absent on cache hits and refusals.
+    """
+    from nroutersdk import nRouterResponseMeta
+
+    meta = nRouterResponseMeta.from_headers(
+        {
+            "x-nr-compression": "applied",
+            "x-nr-routing": "fallback:1",
+            "x-nr-attempts": "2",
+        }
+    )
+    assert meta.compression == "applied"
+    assert meta.routing == "fallback:1"
+    assert meta.attempts == 2
+
+    # Absent/None when headers are missing
+    empty_meta = nRouterResponseMeta.from_headers({})
+    assert empty_meta.compression is None
+    assert empty_meta.routing is None
+    assert empty_meta.attempts is None
+
+    # attempts is an optional integer: non-numeric values parse as None
+    for hostile in ("not-a-number", "", "  "):
+        assert (
+            nRouterResponseMeta.from_headers({"x-nr-attempts": hostile}).attempts
+            is None
+        )
+
 
 
 def test_latency_and_trace_reach_the_metadata():

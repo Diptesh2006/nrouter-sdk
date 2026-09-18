@@ -130,6 +130,9 @@ class NRouterHttpClientTest {
                 "x-nr-auth-reason",
                 "x-nr-response-cache",
                 "x-nr-response-cache-age",
+                "x-nr-compression",
+                "x-nr-routing",
+                "x-nr-attempts",
                 "x-nr-funding-source",
                 "x-nr-allowance-reset");
         assertEquals(expected.size(), NRouterResponseMeta.HEADER_NAMES.size());
@@ -942,6 +945,35 @@ class NRouterHttpClientTest {
         ));
         assertEquals("allowance", meta.fundingSource());
         assertEquals(Long.valueOf(86400L), meta.allowanceReset());
+    }
+
+    @Test
+    void parsesCompressionRoutingAndAttempts() {
+        NRouterResponseMeta meta = NRouterResponseMeta.fromHeaders(HttpHeaders.of(
+                Map.of(
+                        "x-nr-compression", List.of("applied"),
+                        "x-nr-routing", List.of("fallback:1"),
+                        "x-nr-attempts", List.of("2")
+                ),
+                (name, value) -> true
+        ));
+        assertEquals("applied", meta.compression());
+        assertEquals("fallback:1", meta.routing());
+        assertEquals(Long.valueOf(2L), meta.attempts());
+
+        NRouterResponseMeta emptyMeta = NRouterResponseMeta.fromHeaders(HttpHeaders.of(
+                Map.of(),
+                (name, value) -> true
+        ));
+        assertNull(emptyMeta.compression());
+        assertNull(emptyMeta.routing());
+        assertNull(emptyMeta.attempts());
+
+        NRouterResponseMeta mangledMeta = NRouterResponseMeta.fromHeaders(HttpHeaders.of(
+                Map.of("x-nr-attempts", List.of("not-a-number")),
+                (name, value) -> true
+        ));
+        assertNull(mangledMeta.attempts());
     }
 
     @Test

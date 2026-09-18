@@ -26,6 +26,7 @@ final class ContractTests: XCTestCase {
             "x-nr-input-tokens", "x-nr-output-tokens", "x-nr-total-tokens",
             "x-nr-cache-read-tokens", "x-nr-cache-write-tokens", "x-nr-limit-source",
             "x-nr-auth-reason", "x-nr-response-cache", "x-nr-response-cache-age",
+            "x-nr-compression", "x-nr-routing", "x-nr-attempts",
             "x-nr-budget-warning", "x-nr-guardrails", "x-nr-funding-source", "x-nr-allowance-reset",
         ]
         XCTAssertEqual(NRouterResponseMeta.headerNames.count, expected.count)
@@ -584,6 +585,9 @@ final class ContractTests: XCTestCase {
             "x-nr-auth-reason": "active",
             "x-nr-response-cache": "hit",
             "x-nr-response-cache-age": "60",
+            "x-nr-compression": "applied",
+            "x-nr-routing": "fallback:1",
+            "x-nr-attempts": "2",
             "x-nr-budget-warning": "org soft_budget 80.00/100.00",
             "x-nr-guardrails": "pass",
         ]
@@ -607,9 +611,31 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(meta.authReason, "active")
         XCTAssertEqual(meta.responseCache, "hit")
         XCTAssertEqual(meta.responseCacheAge, 60)
+        XCTAssertEqual(meta.compression, "applied")
+        XCTAssertEqual(meta.routing, "fallback:1")
+        XCTAssertEqual(meta.attempts, 2)
         XCTAssertEqual(meta.budgetWarning, "org soft_budget 80.00/100.00")
         XCTAssertEqual(meta.guardrails, "pass")
         XCTAssertTrue(meta.isPriced)
+    }
+
+    func testCompressionRoutingAndAttemptsParsedAndOptional() {
+        let present = NRouterResponseMeta { name in
+            switch name {
+            case "x-nr-compression": return "applied"
+            case "x-nr-routing": return "direct"
+            case "x-nr-attempts": return "1"
+            default: return nil
+            }
+        }
+        XCTAssertEqual(present.compression, "applied")
+        XCTAssertEqual(present.routing, "direct")
+        XCTAssertEqual(present.attempts, 1)
+
+        let absent = NRouterResponseMeta { _ in nil }
+        XCTAssertNil(absent.compression)
+        XCTAssertNil(absent.routing)
+        XCTAssertNil(absent.attempts)
     }
 
     func testBaseURLTrailingSlashIsNormalised() throws {

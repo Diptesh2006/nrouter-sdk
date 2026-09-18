@@ -66,6 +66,9 @@ nrouter_meta <- function(headers = list()) {
       auth_reason        = get_chr("x-nr-auth-reason"),
       response_cache     = get_chr("x-nr-response-cache"),
       response_cache_age = get_num("x-nr-response-cache-age"),
+      compression        = get_chr("x-nr-compression"),
+      routing            = get_chr("x-nr-routing"),
+      attempts           = get_int("x-nr-attempts"),
       funding_source     = get_chr("x-nr-funding-source"),
       allowance_reset    = get_int("x-nr-allowance-reset"),
       retry_after        = nrouter_parse_retry_after(get_chr("retry-after"))
@@ -98,6 +101,9 @@ nrouter_header_names <- function() {
     "x-nr-auth-reason",
     "x-nr-response-cache",
     "x-nr-response-cache-age",
+    "x-nr-compression",
+    "x-nr-routing",
+    "x-nr-attempts",
     "x-nr-funding-source",
     "x-nr-allowance-reset"
   )

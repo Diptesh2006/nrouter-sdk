@@ -22,6 +22,7 @@ test_that("every spec header is read", {
     "x-nr-input-tokens", "x-nr-output-tokens", "x-nr-total-tokens",
     "x-nr-cache-read-tokens", "x-nr-cache-write-tokens", "x-nr-limit-source",
     "x-nr-auth-reason", "x-nr-response-cache", "x-nr-response-cache-age",
+    "x-nr-compression", "x-nr-routing", "x-nr-attempts",
     "x-nr-budget-warning", "x-nr-guardrails", "x-nr-funding-source", "x-nr-allowance-reset"
   )
   expect_length(nrouter_header_names(), length(expected))
@@ -589,6 +590,26 @@ test_that("parses funding_source and allowance_reset", {
   ))
   expect_equal(meta$funding_source, "allowance")
   expect_equal(meta$allowance_reset, 86400)
+})
+
+test_that("parses compression, routing, and attempts headers", {
+  meta <- nrouter_meta(list(
+    "x-nr-compression" = "applied",
+    "x-nr-routing"     = "fallback:1",
+    "x-nr-attempts"    = "2"
+  ))
+  expect_equal(meta$compression, "applied")
+  expect_equal(meta$routing, "fallback:1")
+  expect_equal(meta$attempts, 2)
+
+  empty_meta <- nrouter_meta(list())
+  expect_null(empty_meta$compression)
+  expect_null(empty_meta$routing)
+  expect_null(empty_meta$attempts)
+
+  for (hostile in c("not-an-int", "1.5", "-1", "")) {
+    expect_null(nrouter_meta(list("x-nr-attempts" = hostile))$attempts, info = hostile)
+  }
 })
 
 test_that("plan limits map to credit error", {

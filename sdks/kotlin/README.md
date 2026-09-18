@@ -104,6 +104,9 @@ if (meta.isPriced) println("cost $${meta.cost}") else println("cost unpriced")
 | `guardrails` | `x-nr-guardrails` | Pre-call guardrail posture; **null** means the response makes no guardrail claim — never "none", which is an explicit token |
 | `authReason` | `x-nr-auth-reason` | On a 401, the gateway's stable reason |
 | `responseCache` / `responseCacheAge` | `x-nr-response-cache*` | `hit`/`miss` and age in seconds |
+| `compression` | `x-nr-compression` | Prompt compression outcome (`applied`, `not_requested`, `off`, `skipped`) |
+| `routing` | `x-nr-routing` | Which chain entry answered (`direct` or `fallback:<n>`) |
+| `attempts` | `x-nr-attempts` | Provider calls made for this request (>= 1) |
 
 The table documents the properties this SDK exposes and what each one means;
 the authoritative header set is

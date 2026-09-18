@@ -54,6 +54,12 @@ pub struct ResponseMeta {
     pub response_cache: Option<String>,
     /// Age in seconds of a response-cache hit.
     pub response_cache_age: Option<u64>,
+    /// Prompt compression outcome: `applied`, `not_requested`, `off`, or `skipped`.
+    pub compression: Option<String>,
+    /// Which chain entry answered: `direct` or `fallback:<n>`.
+    pub routing: Option<String>,
+    /// Provider calls made for this request, retries and failovers alike.
+    pub attempts: Option<u64>,
     /// How this response was funded.
     pub funding_source: Option<String>,
     /// When the current usage allowance resets.
@@ -61,7 +67,7 @@ pub struct ResponseMeta {
 }
 
 /// Every header this SDK reads, exactly as the spec names them.
-pub const HEADER_NAMES: [&str; 19] = [
+pub const HEADER_NAMES: [&str; 22] = [
     "x-nr-request-id",
     "x-nr-latency-ms",
     "x-nr-trace-id",
@@ -79,6 +85,9 @@ pub const HEADER_NAMES: [&str; 19] = [
     "x-nr-auth-reason",
     "x-nr-response-cache",
     "x-nr-response-cache-age",
+    "x-nr-compression",
+    "x-nr-routing",
+    "x-nr-attempts",
     "x-nr-funding-source",
     "x-nr-allowance-reset",
 ];
@@ -114,6 +123,9 @@ impl ResponseMeta {
             auth_reason: get("x-nr-auth-reason"),
             response_cache: get("x-nr-response-cache"),
             response_cache_age: num("x-nr-response-cache-age"),
+            compression: get("x-nr-compression"),
+            routing: get("x-nr-routing"),
+            attempts: num("x-nr-attempts"),
             funding_source: get("x-nr-funding-source"),
             allowance_reset: num("x-nr-allowance-reset"),
         }

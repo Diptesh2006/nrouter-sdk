@@ -25,6 +25,9 @@ class NRouterResponseMeta {
     this.authReason,
     this.responseCache,
     this.responseCacheAge,
+    this.compression,
+    this.routing,
+    this.attempts,
     this.fundingSource,
     this.allowanceReset,
   });
@@ -87,6 +90,15 @@ class NRouterResponseMeta {
   /// Age in seconds of a response-cache hit.
   final int? responseCacheAge;
 
+  /// Prompt compression outcome for this request: applied, not_requested, off, or skipped.
+  final String? compression;
+
+  /// Which chain entry answered: direct for the first entry, fallback:<n> for the entry n fallbacks deep. Absent on cache hits and refusals.
+  final String? routing;
+
+  /// Provider calls made for this request, retries and failovers alike. Absent on cache hits and refusals.
+  final int? attempts;
+
   /// How this response was funded.
   final String? fundingSource;
   /// When the current usage allowance resets.
@@ -111,6 +123,9 @@ class NRouterResponseMeta {
     'x-nr-auth-reason',
     'x-nr-response-cache',
     'x-nr-response-cache-age',
+    'x-nr-compression',
+    'x-nr-routing',
+    'x-nr-attempts',
     'x-nr-funding-source',
     'x-nr-allowance-reset',
   ];
@@ -145,6 +160,9 @@ class NRouterResponseMeta {
       authReason: get('x-nr-auth-reason'),
       responseCache: get('x-nr-response-cache'),
       responseCacheAge: asInt('x-nr-response-cache-age'),
+      compression: get('x-nr-compression'),
+      routing: get('x-nr-routing'),
+      attempts: asInt('x-nr-attempts'),
       fundingSource: get('x-nr-funding-source'),
       allowanceReset: asInt('x-nr-allowance-reset'),
     );

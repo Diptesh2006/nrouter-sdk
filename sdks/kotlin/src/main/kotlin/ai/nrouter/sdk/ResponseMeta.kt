@@ -65,6 +65,12 @@ public data class NRouterResponseMeta(
     val responseCache: String? = null,
     /** Age in seconds of a response-cache hit. */
     val responseCacheAge: Long? = null,
+    /** Prompt compression outcome: applied, not_requested, off, skipped. */
+    val compression: String? = null,
+    /** Which chain entry answered: direct or fallback:<n>. */
+    val routing: String? = null,
+    /** Provider calls made for this request (>= 1). */
+    val attempts: Long? = null,
     /** How this response was funded. */
     val fundingSource: String? = null,
     /** When the current usage allowance resets. */
@@ -115,6 +121,9 @@ public data class NRouterResponseMeta(
             "x-nr-auth-reason",
             "x-nr-response-cache",
             "x-nr-response-cache-age",
+            "x-nr-compression",
+            "x-nr-routing",
+            "x-nr-attempts",
             "x-nr-funding-source",
             "x-nr-allowance-reset",
         )
@@ -149,6 +158,9 @@ public data class NRouterResponseMeta(
                 authReason = lookup("x-nr-auth-reason"),
                 responseCache = lookup("x-nr-response-cache"),
                 responseCacheAge = num("x-nr-response-cache-age"),
+                compression = lookup("x-nr-compression"),
+                routing = lookup("x-nr-routing"),
+                attempts = num("x-nr-attempts"),
                 fundingSource = lookup("x-nr-funding-source"),
                 allowanceReset = num("x-nr-allowance-reset"),
             )

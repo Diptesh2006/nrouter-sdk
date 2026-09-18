@@ -24,6 +24,9 @@ public final class NRouterResponseMeta {
             "x-nr-auth-reason",
             "x-nr-response-cache",
             "x-nr-response-cache-age",
+            "x-nr-compression",
+            "x-nr-routing",
+            "x-nr-attempts",
             "x-nr-funding-source",
             "x-nr-allowance-reset");
 
@@ -44,6 +47,9 @@ public final class NRouterResponseMeta {
     private final String authReason;
     private final String responseCache;
     private final Long responseCacheAge;
+    private final String compression;
+    private final String routing;
+    private final Long attempts;
     private final String fundingSource;
     private final Long allowanceReset;
 
@@ -68,6 +74,9 @@ public final class NRouterResponseMeta {
         authReason = value(headers, "x-nr-auth-reason");
         responseCache = value(headers, "x-nr-response-cache");
         responseCacheAge = integer(headers, "x-nr-response-cache-age");
+        compression = value(headers, "x-nr-compression");
+        routing = value(headers, "x-nr-routing");
+        attempts = integer(headers, "x-nr-attempts");
         fundingSource = value(headers, "x-nr-funding-source");
         allowanceReset = integer(headers, "x-nr-allowance-reset");
     }
@@ -130,6 +139,9 @@ public final class NRouterResponseMeta {
     public String authReason() { return authReason; }
     public String responseCache() { return responseCache; }
     public Long responseCacheAge() { return responseCacheAge; }
+    public String compression() { return compression; }
+    public String routing() { return routing; }
+    public Long attempts() { return attempts; }
     public String fundingSource() { return fundingSource; }
     public Long allowanceReset() { return allowanceReset; }
     public boolean isPriced() { return cost != null && "exact".equals(costStatus); }

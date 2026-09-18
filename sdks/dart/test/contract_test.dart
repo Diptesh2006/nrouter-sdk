@@ -41,6 +41,9 @@ void main() {
         'x-nr-auth-reason',
         'x-nr-response-cache',
         'x-nr-response-cache-age',
+        'x-nr-compression',
+        'x-nr-routing',
+        'x-nr-attempts',
         'x-nr-budget-warning',
         'x-nr-guardrails',
         'x-nr-funding-source',
@@ -219,6 +222,24 @@ void main() {
       expect(meta.responseCacheAge, 7);
       expect(meta.budgetWarning, 'org soft_budget 80.00/100.00');
       expect(meta.guardrails, 'pass');
+    });
+
+    test('parses compression, routing, and attempts headers when present', () {
+      final meta = NRouterResponseMeta.fromHeaders({
+        'x-nr-compression': 'applied',
+        'x-nr-routing': 'fallback:1',
+        'x-nr-attempts': '2',
+      });
+      expect(meta.compression, 'applied');
+      expect(meta.routing, 'fallback:1');
+      expect(meta.attempts, 2);
+    });
+
+    test('compression, routing, and attempts are null when missing', () {
+      final meta = NRouterResponseMeta.fromHeaders({});
+      expect(meta.compression, isNull);
+      expect(meta.routing, isNull);
+      expect(meta.attempts, isNull);
     });
   });
 

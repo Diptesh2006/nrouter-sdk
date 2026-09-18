@@ -267,6 +267,9 @@ func TestEveryDeclaredHeaderIsRead(t *testing.T) {
 		"x-nr-guardrails":         "pass",
 		"x-nr-funding-source":     "allowance",
 		"x-nr-allowance-reset":    "86400",
+		"x-nr-compression":        "applied",
+		"x-nr-routing":            "fallback:1",
+		"x-nr-attempts":           "2",
 	}
 	if len(headers) != len(HeaderNames) {
 		t.Fatalf("this test covers %d headers, HeaderNames declares %d", len(headers), len(HeaderNames))
@@ -299,6 +302,7 @@ func TestEveryDeclaredHeaderIsRead(t *testing.T) {
 		"input": m.InputTokens, "output": m.OutputTokens, "total": m.TotalTokens,
 		"cacheRead": m.CacheReadTokens, "cacheWrite": m.CacheWriteTokens,
 		"cacheAge": m.ResponseCacheAge,
+		"attempts": m.Attempts,
 	} {
 		if got == nil {
 			t.Fatalf("%s header not parsed", name)
@@ -309,6 +313,9 @@ func TestEveryDeclaredHeaderIsRead(t *testing.T) {
 	}
 	if m.FundingSource != "allowance" || m.AllowanceReset == nil || *m.AllowanceReset != 86400 {
 		t.Fatalf("funding headers not parsed: %+v", m)
+	}
+	if m.Compression != "applied" || m.Routing != "fallback:1" {
+		t.Fatalf("compression/routing headers not parsed: %+v", m)
 	}
 	if !m.IsPriced() {
 		t.Fatal("an exact cost should report IsPriced")
@@ -333,10 +340,30 @@ func TestUnpricedIsNilNotZero(t *testing.T) {
 	}
 }
 
+func TestOptionalGatewayHeadersAbsent(t *testing.T) {
+	c := newTestClient(t, jsonHandler(200, map[string]string{
+		"x-nr-request-id": "nrouter-abc123",
+	}, map[string]any{"ok": true}))
+	res, err := c.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Meta.Compression != "" {
+		t.Fatalf("absent x-nr-compression must be empty, got %q", res.Meta.Compression)
+	}
+	if res.Meta.Routing != "" {
+		t.Fatalf("absent x-nr-routing must be empty, got %q", res.Meta.Routing)
+	}
+	if res.Meta.Attempts != nil {
+		t.Fatalf("absent x-nr-attempts must be nil, got %v", res.Meta.Attempts)
+	}
+}
+
 func TestUnparseableNumericHeaderIsNilNotZero(t *testing.T) {
 	c := newTestClient(t, jsonHandler(200, map[string]string{
 		"x-nr-input-tokens": "not-a-number",
 		"x-nr-request-cost": "also-not",
+		"x-nr-attempts":     "not-a-number",
 		// The gateway sends WHOLE milliseconds, so a fractional value is a
 		// mangled header, not a latency a caller should chart.
 		"x-nr-latency-ms": "4.5",
@@ -345,7 +372,7 @@ func TestUnparseableNumericHeaderIsNilNotZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Meta.InputTokens != nil || res.Meta.Cost != nil {
+	if res.Meta.InputTokens != nil || res.Meta.Cost != nil || res.Meta.Attempts != nil {
 		t.Fatal("an unparseable numeric header must be nil, never a zero")
 	}
 	if res.Meta.LatencyMs != nil {

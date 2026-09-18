@@ -67,6 +67,9 @@ const FIXTURE: Record<string, string> = {
   'x-nr-auth-reason': 'key_blocked',
   'x-nr-response-cache': 'hit',
   'x-nr-response-cache-age': '12',
+  'x-nr-compression': 'applied',
+  'x-nr-routing': 'direct',
+  'x-nr-attempts': '2',
   'x-nr-budget-warning': 'org soft_budget 80.00/100.00',
   // Posture only — one of the five tokens, matched case-sensitively.
   'x-nr-guardrails': 'pass',
@@ -118,6 +121,9 @@ test('every one of the declared headers is actually read', () => {
   assert.equal(parsed.authReason, 'key_blocked');
   assert.equal(parsed.responseCache, 'hit');
   assert.equal(parsed.responseCacheAge, 12);
+  assert.equal(parsed.compression, 'applied');
+  assert.equal(parsed.routing, 'direct');
+  assert.equal(parsed.attempts, 2);
   assert.equal(parsed.budgetWarning, 'org soft_budget 80.00/100.00');
   assert.equal(parsed.guardrails, 'pass');
   assert.equal(isPriced(parsed), true);
@@ -309,3 +315,24 @@ test('fundingSource and allowanceReset are parsed', () => {
   assert.equal(m.fundingSource, 'allowance');
   assert.equal(m.allowanceReset, 86400);
 });
+
+test('compression, routing, and attempts parse to null when headers are missing', () => {
+  const parsed = metaFromHeaders({
+    'x-nr-request-id': 'nrouter-abc123',
+  });
+  assert.equal(parsed.compression, null);
+  assert.equal(parsed.routing, null);
+  assert.equal(parsed.attempts, null);
+});
+
+test('compression, routing, and attempts are parsed into typed fields when present', () => {
+  const parsed = metaFromHeaders({
+    'x-nr-compression': 'applied',
+    'x-nr-routing': 'fallback:1',
+    'x-nr-attempts': '3',
+  });
+  assert.equal(parsed.compression, 'applied');
+  assert.equal(parsed.routing, 'fallback:1');
+  assert.equal(parsed.attempts, 3);
+});
+

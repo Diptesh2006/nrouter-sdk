@@ -53,6 +53,12 @@ public struct NRouterResponseMeta: Equatable, Sendable {
     public var responseCache: String?
     /// Age in seconds of a response-cache hit.
     public var responseCacheAge: Int?
+    /// Prompt compression outcome: applied | not_requested | off | skipped.
+    public var compression: String?
+    /// Which chain entry answered: direct | fallback:<n>. Absent on cache hits and refusals.
+    public var routing: String?
+    /// Provider calls made for this request (>= 1). Absent on cache hits and refusals.
+    public var attempts: Int?
     /// How this response was funded.
     public var fundingSource: String?
     /// When the current usage allowance resets.
@@ -77,6 +83,9 @@ public struct NRouterResponseMeta: Equatable, Sendable {
         "x-nr-auth-reason",
         "x-nr-response-cache",
         "x-nr-response-cache-age",
+        "x-nr-compression",
+        "x-nr-routing",
+        "x-nr-attempts",
         "x-nr-funding-source",
         "x-nr-allowance-reset",
     ]
@@ -109,6 +118,9 @@ public struct NRouterResponseMeta: Equatable, Sendable {
         authReason = lookup("x-nr-auth-reason")
         responseCache = lookup("x-nr-response-cache")
         responseCacheAge = int("x-nr-response-cache-age")
+        compression = lookup("x-nr-compression")
+        routing = lookup("x-nr-routing")
+        attempts = int("x-nr-attempts")
         fundingSource = lookup("x-nr-funding-source")
         allowanceReset = int("x-nr-allowance-reset")
     }

@@ -100,6 +100,7 @@ class ContractTest {
             "x-nr-cache-read-tokens", "x-nr-cache-write-tokens", "x-nr-limit-source",
             "x-nr-auth-reason", "x-nr-response-cache", "x-nr-response-cache-age",
             "x-nr-budget-warning", "x-nr-guardrails", "x-nr-funding-source", "x-nr-allowance-reset",
+            "x-nr-compression", "x-nr-routing", "x-nr-attempts",
         )
         assertEquals(expected.size, NRouterResponseMeta.HEADER_NAMES.size)
         expected.forEach {
@@ -615,6 +616,9 @@ class ContractTest {
             .add("x-nr-response-cache-age", "120")
             .add("x-nr-budget-warning", "org soft_budget 80.00/100.00")
             .add("x-nr-guardrails", "pass")
+            .add("x-nr-compression", "applied")
+            .add("x-nr-routing", "fallback:1")
+            .add("x-nr-attempts", "2")
             .build()
 
         val meta = NRouterResponseMeta.fromLookup { headers[it] }
@@ -633,6 +637,9 @@ class ContractTest {
         assertEquals(120L, meta.responseCacheAge)
         assertEquals("org soft_budget 80.00/100.00", meta.budgetWarning)
         assertEquals("pass", meta.guardrails)
+        assertEquals("applied", meta.compression)
+        assertEquals("fallback:1", meta.routing)
+        assertEquals(2L, meta.attempts)
         assertTrue(meta.isPriced)
         assertTrue(meta.isCacheHit)
         assertFalse(meta.isCacheMiss)
@@ -1343,5 +1350,30 @@ class ContractTest {
         val nrouterErr2 = NRouterError.fromCode(err2)
         assertTrue(nrouterErr2 is NRouterError.Credit)
         assertEquals("plan_required", err2.code)
+    }
+
+    @Test
+    fun `compression routing and attempts reach metadata`() {
+        val meta = NRouterResponseMeta.fromLookup { name ->
+            when (name) {
+                "x-nr-compression" -> "applied"
+                "x-nr-routing" -> "fallback:1"
+                "x-nr-attempts" -> "2"
+                else -> null
+            }
+        }
+        assertEquals("applied", meta.compression)
+        assertEquals("fallback:1", meta.routing)
+        assertEquals(2L, meta.attempts)
+
+        val empty = NRouterResponseMeta.fromLookup { null }
+        assertNull(empty.compression)
+        assertNull(empty.routing)
+        assertNull(empty.attempts)
+
+        val mangled = NRouterResponseMeta.fromLookup { name ->
+            if (name == "x-nr-attempts") "not-a-number" else null
+        }
+        assertNull(mangled.attempts)
     }
 }

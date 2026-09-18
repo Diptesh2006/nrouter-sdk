@@ -40,6 +40,9 @@ fn every_spec_header_is_read() {
         "x-nr-auth-reason",
         "x-nr-response-cache",
         "x-nr-response-cache-age",
+        "x-nr-compression",
+        "x-nr-routing",
+        "x-nr-attempts",
         "x-nr-budget-warning",
         "x-nr-guardrails",
         "x-nr-funding-source",
@@ -513,3 +516,25 @@ fn test_plan_limits_map_to_credit_error() {
         _ => panic!("Expected Credit error"),
     }
 }
+
+#[test]
+fn test_parses_compression_routing_and_attempts() {
+    let get = |name: &str| -> Option<String> {
+        match name {
+            "x-nr-compression" => Some("applied".into()),
+            "x-nr-routing" => Some("fallback:1".into()),
+            "x-nr-attempts" => Some("2".into()),
+            _ => None,
+        }
+    };
+    let meta = nrouter::meta::ResponseMeta::from_lookup(get);
+    assert_eq!(meta.compression.as_deref(), Some("applied"));
+    assert_eq!(meta.routing.as_deref(), Some("fallback:1"));
+    assert_eq!(meta.attempts, Some(2));
+
+    let empty = nrouter::meta::ResponseMeta::from_lookup(|_| None);
+    assert_eq!(empty.compression, None);
+    assert_eq!(empty.routing, None);
+    assert_eq!(empty.attempts, None);
+}
+

@@ -120,6 +120,7 @@
         "key_blocked",
         "key_expired",
         "key_route_not_allowed",
+        "key_model_not_allowed",
         "key_ip_not_allowed",
         "key_network_policy_invalid",
         "auth_backend_unavailable"

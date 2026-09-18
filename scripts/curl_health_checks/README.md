@@ -10,8 +10,9 @@ By testing using raw `curl` requests rather than language-specific SDKs, these h
 |---|---|---|
 | **Consolidated Suite** | [`run_all.sh`](run_all.sh) / [`run_all.py`](run_all.py) | Executes all health check groups sequentially, aggregates results, and generates a unified status report. |
 | **Shared plumbing** | [`_curl_common.py`](_curl_common.py) | Not a check group — the ONE curl invocation, response parser and credential rule every module imports. Carries its own `--self-test`. |
-| **Models & Providers** | [`model_curl.sh`](model_curl.sh) / [`model_curl.py`](model_curl.py) | Verifies `GET /v1/models` catalog, provider discovery & distribution, and live provider chat completion inference. |
+| **Models & Providers** | [`model_curl.sh`](model_curl.sh) / [`model_curl.py`](model_curl.py) | Verifies the `GET /v1/models` catalog's SHAPE (at least one entry, every `id` a non-empty string; the count is reported, not judged), provider discovery & distribution, and a live inference probe on the route under test. |
 | **Guardrails** | [`guardrail_curl.sh`](guardrail_curl.sh) / [`guardrail_curl.py`](guardrail_curl.py) | Verifies platform moderation floor, PII redaction, prompt injection & secret leakage detection, evasion resistance, and wire contract assertions. |
+| **Endpoints & Features** | [`feature_curl.sh`](feature_curl.sh) / [`feature_curl.py`](feature_curl.py) | 40 probes across the request surface. The inference-path ones ask the ROUTE UNDER TEST in that wire's shape; the rest are pinned to their own path and carry the fixed-route scope guard. |
 | **Request Fallbacks** | [`fallbacks_curl.sh`](fallbacks_curl.sh) / [`fallbacks_curl.py`](fallbacks_curl.py) | Per-request fallback chains: the answering rank is named in the routing headers, and an unpermitted target, a self-reference, an over-long list, a non-array value, an unknown `nrouter_*` key and an auto-router chain are each refused with a code and no cost. |
 | **Per-Request Guardrails** | [`guardrails_request_curl.sh`](guardrails_request_curl.sh) / [`guardrails_request_curl.py`](guardrails_request_curl.py) | Requested guardrails are ADD-ONLY: an unknown or foreign id is refused identically (no cross-tenant existence oracle), the tenant's own block rule survives any addition, and the platform floor cannot be displaced. |
 | **Response Cache** | [`cache_curl.sh`](cache_curl.sh) / [`cache_curl.py`](cache_curl.py) | Miss → hit → bypass, hit billing that is strictly positive, tenant isolation across keys, and a fingerprint that changes when the body or the guardrail chain changes. |
@@ -54,7 +55,26 @@ Every check reports one of three results, and the third is the important one:
 |---|---|
 | `PASS` | The assertion held: status **and** headers **and** body. |
 | `FAIL` | The assertion did not hold. The `detail` field says which clause failed. |
-| `NOT-CONFIGURED` | The precondition for this check does not exist on this plane — no second tenant key, no MCP server, no exhausted-budget key, no routing headers. **It is never reported as `PASS`.** A run with any `NOT-CONFIGURED` check is PARTIAL and is not release evidence for that property. |
+| `NOT-CONFIGURED` | The precondition for this check does not exist on this plane — no second tenant key, no MCP server, no exhausted-budget key, no routing headers, a key not scoped to this route, a parameter this wire does not carry. **It is never reported as `PASS`.** A run with any `NOT-CONFIGURED` check is PARTIAL and is not release evidence for that property. |
+
+⚠️ **NOT-CONFIGURED is for what the script can SEE.** A precondition is absent
+only when the response proves it (a 403 naming `key_route_not_allowed`, a route
+that does not exist, a fixture variable nobody set). Where the script cannot see
+the plane's configuration, the check stays `FAIL` and the detail states both
+readings — see the guardrail case below. Downgrading on a guess is how a real
+defect becomes a yellow row nobody reads.
+
+### A moderation prompt that was SERVED stays FAIL
+
+`guardrail_curl` sends prompts the platform floor is supposed to refuse. When one
+comes back `200 x-nr-guardrails: pass`, that is real evidence and it stays a
+failure — but the detail says which floor let it through, because the two mean
+different things and this script cannot tell which plane it is on:
+
+| Category | Detail says | Read it as |
+|---|---|---|
+| toxicity, harassment, violence, self-harm, harmful-intent, injection, evasion | *"the model-scored moderation floor did not block; on a plane where content scoring is not required this is expected, on stage/prod it is a defect"* | Check whether content scoring is required on this plane. |
+| explicit, secret | *"the deterministic … scanner did not block … NOT conditional on content scoring … a defect on every plane"* | A defect, wherever you ran it. |
 
 Roughly two thirds of the checks are adversarial (`expected_failure: true`): they
 send something the gateway must refuse, and they assert the shape of the refusal
@@ -74,6 +94,8 @@ passing:
 | `NROUTER_TENANT_BLOCK_KEYWORD` | the keyword the tenant's own rule blocks |
 | `NROUTER_FOREIGN_GUARDRAIL_ID` | the cross-tenant existence-oracle check |
 | `NROUTER_MCP_SERVER` | the MCP happy path |
+| `NROUTER_MCP_URL` | the MCP endpoint, when it is not `<API origin>/mcp` (see below) |
+| `NROUTER_HEALTH_MIN_MODELS` | a **minimum catalog size** you expect on this plane; unset means the count is reported and not judged (see below) |
 | `NROUTER_CONTROL_PLANE_KEY` | the real management-credential refusal check |
 | `NROUTER_DEPLETED_API_KEY` | the 402 limit-source check |
 | `NROUTER_UNPRICED_MODEL` | the "unpriced is never $0" check |
@@ -177,8 +199,42 @@ Anthropic response:
 | `/responses` | `input` + `max_output_tokens` | `output_text` / `output[0].content[0].text` |
 | `/completions` | `prompt` + `max_tokens` | `choices[0].text` |
 
-`mcp_curl` is the one exception: `/mcp` is its own fixed path, so it accepts the
-flags for symmetry and ignores them.
+**All thirteen modules honour the pair**, including `model_curl` and
+`feature_curl`. Their historical model flags — `model_curl --probe-model`,
+`feature_curl --chat-model`, `fallbacks_curl --primary-model` — are DEPRECATED
+aliases for `--model`, kept working because a script somewhere uses them; an
+explicit `--model` wins over any of them.
+
+`feature_curl` splits its 40 probes into two kinds, and the difference is
+load-bearing:
+
+* **Route-under-test** (`chat_`, `fallback_`, `ratelimit_`, `cache_`,
+  `context_limit_`, `guardrail_`, `routing_`, `metering_`,
+  `waf_malformed_json`) ask the route under test, in that wire's body shape. A
+  probe whose PARAMETER does not exist on that wire — `response_format` or
+  `logprobs` on the Anthropic-shaped wire — reports NOT-CONFIGURED naming the
+  wire, instead of earning a 400 about its own request.
+* **Fixed-route** (`messages_`, `tokens_`, `embed_`, `completions_`, `models_`,
+  the two `waf_` refusals) are pinned by their own nature and carry the
+  fixed-route scope guard below.
+
+`mcp_curl` is the one module the pair does not steer: `/mcp` is its own fixed
+path, so it accepts the flags for symmetry and ignores them. **It does NOT live
+under `/v1`.** The MCP surface is at the API **origin** (`/mcp`, and
+`/mcp/{server_id}` for the path-addressed form), while `NROUTER_BASE_URL` names
+the inference base and ends in `/v1` — so the module strips one trailing `/v1`
+and appends `/mcp`. Set `NROUTER_MCP_URL` (or `--mcp-url`) to name the endpoint
+outright. A 404 from `<origin>/v1/mcp` would be the module asking the wrong URL
+and says nothing about the plane; a 404 from the real `/mcp` with a configured
+server header means the plane names no such server, and reports NOT-CONFIGURED.
+
+### The catalog size is a plane fact, not a contract
+
+`model_curl` asserts the SHAPE of `GET /v1/models` — at least one entry, every
+`id` a non-empty string — and **reports** the count rather than judging it. A
+virtual key scoped to two models legitimately lists two; a built-in floor of ten
+reported a correct gateway as broken. Set `NROUTER_HEALTH_MIN_MODELS=<n>` to
+assert a floor you actually expect on the plane you are pointing at.
 
 **If the key may not use the route**, the gateway answers `403` with
 `x-nr-auth-reason: key_route_not_allowed`. That is a provably absent

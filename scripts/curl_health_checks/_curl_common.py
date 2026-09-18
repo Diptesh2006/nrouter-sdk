@@ -94,9 +94,17 @@ EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_UNRUNNABLE = 2
 
+# Credential shapes, MOST SPECIFIC FIRST. The last entry is the catch-all: any
+# `sk-` token of 20 characters or more, whatever vendor minted it. Without it the
+# list only redacted the two vendors someone happened to think of, and an
+# OpenAI project key (`sk-proj-…`) pasted into a prompt or echoed in an upstream
+# error reached the report in full. The 20-character floor is what keeps
+# ordinary text (`sk-short`) and shell references (`$NROUTER_API_KEY`) intact.
 SECRET_PATTERNS = [
     re.compile(r"sk-nrouter-[A-Za-z0-9_-]+"),
     re.compile(r"sk-ant-[A-Za-z0-9_-]+"),
+    re.compile(r"sk-proj-[A-Za-z0-9_-]+"),
+    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
     re.compile(r"Bearer\s+[A-Za-z0-9._-]+", re.IGNORECASE),
 ]
 
@@ -230,10 +238,13 @@ def build_multiturn_body(
             {"role": "user" if index % 2 == 0 else "assistant", "content": turn}
             for index, turn in enumerate(turns)
         ]
-        # The Anthropic-shaped wire requires the conversation to end on a user
-        # turn, so drop a trailing assistant turn rather than send a 400 that
-        # has nothing to do with what is under test.
-        if body["messages"] and body["messages"][-1]["role"] == "assistant":
+        # The Anthropic-shaped wire — and ONLY that one — requires the
+        # conversation to end on a user turn, so drop a trailing assistant turn
+        # rather than send a 400 that has nothing to do with what is under test.
+        # The chat wire accepts a trailing assistant turn (it is how prefill is
+        # expressed), so dropping it there sent a different conversation than
+        # the check said it was sending.
+        if wire == "messages" and body["messages"] and body["messages"][-1]["role"] == "assistant":
             body["messages"].pop()
     elif wire == "responses":
         body["input"] = "\n\n".join(turns)
@@ -281,6 +292,26 @@ def served_text(route: str, body_text: str) -> Optional[str]:
             if isinstance(text, str):
                 return text
     return None
+
+
+def served_body_for(route: str, text: str = "ok") -> Dict[str, Any]:
+    """A SERVED response body in the shape this route's wire actually returns.
+
+    The inverse of `served_text`, and it exists for the self-test mocks. A mock
+    that answers every route with a chat-shaped `choices` array makes the
+    assertions pass for the wrong reason on three wires out of four: the check
+    reads `content[0].text`, finds nothing, and the suite goes red against a
+    mock rather than against the gateway. Pinned by a round trip below.
+    """
+    wire = wire_of(route)
+    if wire == "chat":
+        return {"choices": [{"index": 0, "message": {"role": "assistant", "content": text}}]}
+    if wire == "messages":
+        return {"id": "msg", "type": "message", "role": "assistant",
+                "content": [{"type": "text", "text": text}]}
+    if wire == "responses":
+        return {"id": "resp", "object": "response", "output_text": text}
+    return {"id": "cmpl", "object": "text_completion", "choices": [{"index": 0, "text": text}]}
 
 
 def served_body_ok(route: str, body_text: str) -> Tuple[bool, str]:
@@ -400,18 +431,27 @@ def run_checks_with_scope_guard(checker: Any, checks: List[Callable]) -> None:
             return
 
 
+# A real HTTP status line, and nothing that merely mentions the protocol. The
+# walk below consumes header blocks while the remaining text starts with one, so
+# `startswith("HTTP/")` was too loose: a body whose first words are "HTTP/1.1 is
+# the protocol…" was consumed as a header block, and the caller was handed the
+# REST of the body as the whole body. Anchored, with the version and the
+# three-digit code both required.
+STATUS_LINE_RE = re.compile(r"HTTP/\d\.\d \d{3}")
+
+
 def split_head_body(raw: str) -> Tuple[str, str]:
     """Return (last header block, body) from `curl -D -` output.
 
     `curl` writes one header block per response it receives — a `100 Continue`,
     a redirect hop, a proxy `CONNECT` — and then the body verbatim. So the walk
     is: consume header blocks from the front while the text still starts with a
-    status line, and whatever remains is the body, UNTOUCHED. The body is never
+    STATUS LINE, and whatever remains is the body, UNTOUCHED. The body is never
     re-split on blank lines, which is what keeps an SSE stream whole.
     """
     position = 0
     header_block = ""
-    while raw.startswith("HTTP/", position):
+    while STATUS_LINE_RE.match(raw, position):
         crlf = raw.find("\r\n\r\n", position)
         lf = raw.find("\n\n", position)
         ends = [(index, length) for index, length in ((crlf, 4), (lf, 2)) if index != -1]
@@ -953,11 +993,112 @@ def parser_contract_self_test() -> None:
     assert "[REDACTED]" in sanitize("Authorization: Bearer sk-nrouter-abc123")
 
 
+def transport_contract_self_test() -> None:
+    """Prove the response parser, the turn builder and the redactor hold.
+
+    Every assertion here is about a case that ALREADY produced a wrong answer,
+    not a hypothetical: a body that begins with the four characters `HTTP/`, a
+    chat-wire conversation whose last turn is an assistant message, and an API
+    key shape the redactor did not know about.
+    """
+    # ---- R1: a BODY that begins with "HTTP/" is not a header block ---------
+    # The walk consumes header blocks while the remaining text starts with a
+    # status line. `startswith("HTTP/")` is not "starts with a status line": an
+    # answer that quotes the protocol, or a doc page about it, was silently
+    # eaten — the body's first paragraph became the header block and the caller
+    # was handed the REST of the body as the whole body.
+    prose = "HTTP/1.1 is the protocol this gateway speaks.\n\nAnd here is the rest."
+    head, body = split_head_body("HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n\r\n" + prose)
+    assert body == prose, f"a body beginning with HTTP/ was eaten as a header block: {body!r}"
+    assert "content-type" in head, head
+
+    # A REAL extra hop is still consumed — the narrowing must not break that.
+    head, body = split_head_body(
+        "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 201 Created\r\nx-nr-request-id: r\r\n\r\n{}"
+    )
+    assert body == "{}", body
+    status, headers = parse_header_block(head)
+    assert status == 201 and headers.get("x-nr-request-id") == "r", (status, headers)
+
+    # ...and an SSE body, whose frames are separated by blank lines, stays whole.
+    sse = 'data: {"a":1}\n\ndata: [DONE]\n\n'
+    assert split_head_body("HTTP/1.1 200 OK\r\n\r\n" + sse)[1] == sse
+
+    # ---- R2: only the Anthropic-shaped wire needs a user turn last ---------
+    # It REQUIRES the conversation to end on a user turn. The chat wire does
+    # not, so dropping the trailing assistant turn there quietly sent a
+    # different conversation than the check said it was sending.
+    chat = build_multiturn_body("/chat/completions", "m", ["ask", "answer"], max_tokens=4)
+    assert [turn["role"] for turn in chat["messages"]] == ["user", "assistant"], chat["messages"]
+    messages = build_multiturn_body("/messages", "m", ["ask", "answer"], max_tokens=4)
+    assert [turn["role"] for turn in messages["messages"]] == ["user"], messages["messages"]
+    # A conversation already ending on a user turn is untouched on both wires.
+    for route in ("/chat/completions", "/messages"):
+        three = build_multiturn_body(route, "m", ["a", "b", "c"], max_tokens=4)
+        assert len(three["messages"]) == 3, (route, three["messages"])
+
+    # ---- a served body round-trips on EVERY wire ---------------------------
+    # `served_body_for` is what the self-test mocks answer with; if it and
+    # `served_text` ever disagree, a mock starts failing checks that the gateway
+    # would pass, and the suite is red at the wrong thing.
+    for route in ALLOWED_ROUTES:
+        rendered = json.dumps(served_body_for(route, "round-trip"))
+        assert served_text(route, rendered) == "round-trip", route
+        assert served_body_ok(route, rendered)[0], route
+        # ...and a body from the WRONG wire is rejected, which is the property
+        # that makes the round trip worth anything.
+        for other in ALLOWED_ROUTES:
+            if wire_of(other) == wire_of(route):
+                continue
+            assert not served_body_ok(route, json.dumps(served_body_for(other)))[0], (route, other)
+
+    # ---- R4: the redactor knows the key shapes that actually exist ---------
+    for secret in (
+        "sk-nrouter-" + "A" * 24,
+        "sk-ant-api03-" + "B" * 30,
+        "sk-proj-" + "C" * 30,
+        "sk-" + "D" * 24,  # any 20+ char sk- token, vendor unknown
+    ):
+        assert secret not in sanitize(f"debug: {secret} trailing"), secret
+        assert "[REDACTED]" in sanitize(f"debug: {secret} trailing"), secret
+    # ...and does not eat ordinary text that merely starts with sk-.
+    assert sanitize("sk-short") == "sk-short"
+    assert sanitize("$NROUTER_API_KEY") == "$NROUTER_API_KEY"
+
+
 def run_self_test() -> int:
     """Offline verification of the shared plumbing."""
     print("Running _curl_common.py --self-test (offline mode)...")
     parser_contract_self_test()
     wire_contract_self_test()
+    transport_contract_self_test()
+    # R3: the `--json` contract is THIS module's to keep, so this module must
+    # exercise it. Before, `emit_results` could be broken — a banner routed back
+    # to stdout — and `_curl_common --self-test` still passed, leaving the gate
+    # to whichever downstream module happened to call it.
+    json_stdout_contract_self_test(
+        {
+            "feature": "_curl_common",
+            "base_url": DEFAULT_BASE_URL,
+            "total_checks": 1,
+            "passed_checks": 1,
+            "failed_checks": 0,
+            "not_configured_checks": 0,
+            "all_passed": True,
+            "partial": False,
+            "checks": [{
+                "name": "self_test_row",
+                "request": 'curl -sS -D - "$NROUTER_BASE_URL/models"',
+                "status": 200,
+                "headers": {"x-nr-request-id": "r"},
+                "assertion": "the shared reporter puts exactly one JSON document on stdout",
+                "result": PASS,
+                "expected_failure": False,
+                "detail": "",
+            }],
+        },
+        "## _curl_common",
+    )
     print("[PASS] _curl_common.py self-test passed cleanly.")
     return 0
 

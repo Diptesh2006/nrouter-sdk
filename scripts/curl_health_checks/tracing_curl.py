@@ -54,10 +54,12 @@ from _curl_common import (  # noqa: E402
     build_body,
     emit_results,
     error_of,
+    ALLOWED_ROUTES,
     json_stdout_contract_self_test,
     note_route_scope,
     parse_json,
     parser_contract_self_test,
+    prompt_field,
     reported_headers,
     resolve_api_key,
     resolve_model,
@@ -65,6 +67,7 @@ from _curl_common import (  # noqa: E402
     run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    served_body_for,
     served_body_ok,
     wire_contract_self_test,
 )
@@ -244,15 +247,32 @@ class TracingCurlHealthCheck:
 
     # ------------------------------------------------------ adversarial checks
 
+    def _malformed_body(self) -> str:
+        """A body this wire is certain to refuse, and for the right reason.
+
+        The prompt field differs per wire: `messages` on chat and the
+        Anthropic-shaped wire, `input` on `/responses`, `prompt` on
+        `/completions`. Hardcoding `messages` meant two wires out of four were
+        handed a VALID request carrying an ignorable extra key — the gateway had
+        no reason to refuse it, the check asked for a 400 anyway, and the
+        property under test (a refusal is traceable too) went unexercised there.
+        `prompt_field` is the same shared helper `metering_curl` and
+        `contract_curl` already use for exactly this.
+
+        The VALUE matters as much as the field. A string is malformed for
+        `messages` and perfectly valid for `input` and `prompt`, so the old
+        `"not-an-array"` would have been served on the very wires this is
+        fixing. A bare number is accepted by none of them.
+        """
+        return json.dumps({"model": self.model, **{prompt_field(self.route): 12345}})
+
     def check_request_id_on_refusal(self) -> Dict[str, Any]:
         name = "request_id_on_refusal"
         assertion = (
             "400; x-nr-request-id present and a UUID; error.type present "
             "(a refusal is traceable too)"
         )
-        args, request = self._prepare(
-            None, raw_body=json.dumps({"model": self.model, "messages": "not-an-array"})
-        )
+        args, request = self._prepare(None, raw_body=self._malformed_body())
         status, headers, body, _ = self.curl_fn(args)
         request_id = headers.get("x-nr-request-id")
         err = error_of(body)
@@ -298,9 +318,7 @@ class TracingCurlHealthCheck:
             "400; x-nr-routing and x-nr-attempts ABSENT; x-nr-request-id still "
             "present (identity survives, routing claims do not)"
         )
-        args, request = self._prepare(
-            None, raw_body=json.dumps({"model": self.model, "messages": "not-an-array"})
-        )
+        args, request = self._prepare(None, raw_body=self._malformed_body())
         status, headers, _, _ = self.curl_fn(args)
         ok, detail = assert_all([
             (status == 400, f"expected 400, got {status}"),
@@ -489,6 +507,14 @@ def run_self_test() -> int:
                 return args[index + 1]
         return ""
 
+    def route_of(args: List[str]) -> str:
+        """Which wire this request was made on, read back from the URL it asked."""
+        url = args[-1]
+        for candidate in ALLOWED_ROUTES:
+            if url.endswith(candidate):
+                return candidate
+        return "/chat/completions"
+
     def make_backend() -> Callable:
         counter = {"n": 0}
 
@@ -509,22 +535,30 @@ def run_self_test() -> int:
                 return 400, dict(base), json.dumps(
                     {"error": {"type": "invalid_request_error", "message": "malformed JSON body"}}
                 ), 2.0
-            if not isinstance(body.get("messages"), list):
+            # Refuse a malformed PROMPT FIELD on whichever wire was asked. The
+            # field differs per wire, and hardcoding `messages` meant two of the
+            # four wires were handed a perfectly valid request and served it.
+            route = route_of(args)
+            field = prompt_field(route)
+            value = body.get(field)
+            # `messages` must be an array; `input` and `prompt` accept a string
+            # or an array of parts. Nothing accepts a bare number.
+            accepted = (list,) if field == "messages" else (str, list)
+            if not isinstance(value, accepted):
                 return 400, dict(base), json.dumps(
-                    {"error": {"type": "invalid_request_error", "message": "messages must be an array"}}
+                    {"error": {"type": "invalid_request_error", "message": f"{field} is malformed"}}
                 ), 2.0
             headers = dict(base)
             headers.update({
-                "x-nr-model": DEFAULT_MODEL,
+                # `x-nr-model` reports WHAT WAS SERVED, so it echoes what was
+                # requested. A constant here is the one value that cannot catch
+                # a request being answered by a different model.
+                "x-nr-model": str(body.get("model") or ""),
                 "x-nr-trace-id": "4bf92f3577b34da6a3ce929d0e0e4736",
                 "x-nr-request-cost": "0.000022",
                 "x-nr-cost-status": "exact",
             })
-            if args[-1].endswith("/messages"):
-                return 200, headers, json.dumps(
-                    {"content": [{"type": "text", "text": "pong"}]}
-                ), 30.0
-            return 200, headers, json.dumps({"choices": [{"message": {"content": "pong"}}]}), 30.0
+            return 200, headers, json.dumps(served_body_for(route, "pong")), 30.0
 
         return mock_curl
 
@@ -702,6 +736,50 @@ def run_self_test() -> int:
     assert any(
         "NROUTER_HEALTH_ROUTE" in r.get("detail", "") for r in scoped_suite["checks"]
     ), "the scope refusal must name the override to set"
+
+    # ---- R9 / R10: the wires, on BOTH sides of the probe -------------------
+    #
+    # R9: the mock echoed a hardcoded `x-nr-model` on every wire. `x-nr-model`
+    # reports WHAT THE GATEWAY SERVED, so a constant is the one answer that
+    # cannot catch a request asking for one model and being handed another.
+    #
+    # R10: `request_id_on_refusal` malformed `messages`, which only two of the
+    # four wires carry. On `/responses` and `/completions` that body is not
+    # malformed at all — it is a valid request with an extra field — so the
+    # check asked for a 400 that the gateway had no reason to send, and the
+    # whole "a refusal is traceable too" property went untested on those wires.
+    for route, model in (
+        ("/chat/completions", "vendor/chat-model"),
+        ("/messages", "vendor/messages-model"),
+        ("/responses", "vendor/responses-model"),
+        ("/completions", "vendor/completions-model"),
+    ):
+        wire_suite = TracingCurlHealthCheck(
+            base_url="https://mock.invalid/v1", api_key="k",
+            route=route, model=model, curl_fn=make_backend(),
+        ).run_suite()
+        assert wire_suite["all_passed"] is True, (
+            route,
+            [(r["name"], r.get("detail")) for r in wire_suite["checks"] if r["result"] == FAIL],
+        )
+        rows = {r["name"]: r for r in wire_suite["checks"]}
+
+        # R9: every served row reports the model the checker asked for.
+        served_models = {
+            r["headers"].get("x-nr-model")
+            for r in wire_suite["checks"]
+            if r["headers"].get("x-nr-model")
+        }
+        assert served_models == {model}, (route, served_models)
+
+        # R10: the refusal probe malformed THIS wire's prompt field, and the
+        # gateway had a real reason to refuse.
+        refusal_row = rows["request_id_on_refusal"]
+        assert refusal_row["status"] == 400, (route, refusal_row)
+        assert f'"{prompt_field(route)}"' in refusal_row["request"], (
+            f"{route}: the refusal probe must malform {prompt_field(route)!r}, "
+            f"not another wire's field: {refusal_row['request']}"
+        )
 
     assert "Request Identity" in checker.render_markdown_summary(suite)
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))

@@ -55,6 +55,7 @@ from _curl_common import (  # noqa: E402
     error_of,
     header_float,
     json_stdout_contract_self_test,
+    max_tokens_field,
     note_route_scope,
     parse_json,
     parser_contract_self_test,
@@ -174,8 +175,22 @@ class CacheCurlHealthCheck:
         # twice into the builder.
         fields: Dict[str, Any] = {"temperature": 0}
         fields.update(extra)
+        # The OUTPUT CEILING is the same hazard one level down: it is passed
+        # explicitly below AND could arrive in `**extra`, which raised
+        # `TypeError: got multiple values for keyword argument` inside the
+        # request builder — a crash in this script, not a gateway result. A
+        # caller may name it either wire-neutrally (`max_tokens`) or by this
+        # wire's own field, and their value wins over the default.
+        ceiling_field = max_tokens_field(self.route)
+        ceiling = fields.pop("max_tokens", None)
+        if ceiling_field != "max_tokens":
+            ceiling = fields.pop(ceiling_field, ceiling)
         return build_body(
-            self.route, self.model, f"{self.salt}{suffix}", max_tokens=16, **fields
+            self.route,
+            self.model,
+            f"{self.salt}{suffix}",
+            max_tokens=16 if ceiling is None else ceiling,
+            **fields,
         )
 
     def _prime(
@@ -953,6 +968,29 @@ def run_self_test() -> int:
     ), "the scope refusal must name the override to set"
 
     assert "Response Cache" in checker.render_markdown_summary(suite)
+    # ---- R5: `_payload` must not collide on the output-ceiling field --------
+    # It passes `max_tokens=16` to the builder AND forwards `**extra`, so a
+    # caller naming its own ceiling raised `TypeError: got multiple values for
+    # keyword argument`. A check crashing inside its own request builder is not
+    # a gateway result, and the caller's value is the one that was meant.
+    for route, field in (
+        ("/chat/completions", "max_tokens"),
+        ("/messages", "max_tokens"),
+        ("/responses", "max_output_tokens"),
+        ("/completions", "max_tokens"),
+    ):
+        payload_checker = CacheCurlHealthCheck(
+            base_url="https://mock.invalid/v1", api_key="k", route=route, model="m",
+            curl_fn=lambda *a, **k: (200, {}, "{}", 1.0),
+        )
+        assert payload_checker._payload("-default")[field] == 16, route
+        # named under the wire-neutral name...
+        assert payload_checker._payload("-explicit", max_tokens=4)[field] == 4, route
+        # ...and under this wire's own name.
+        assert payload_checker._payload("-wire", **{field: 7})[field] == 7, route
+        # The default temperature override is unaffected.
+        assert payload_checker._payload("-t", temperature=0.8)["temperature"] == 0.8, route
+
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] cache_curl.py self-test passed cleanly.")
     return 0

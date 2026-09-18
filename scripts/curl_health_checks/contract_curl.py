@@ -45,8 +45,6 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _curl_common import (  # noqa: E402
     DEFAULT_BASE_URL,
-    EXIT_FAILED,
-    EXIT_OK,
     EXIT_UNRUNNABLE,
     FAIL,
     MISSING_KEY_MESSAGE,
@@ -59,9 +57,9 @@ from _curl_common import (  # noqa: E402
     error_of,
     json_stdout_contract_self_test,
     note_route_scope,
-    prompt_field,
     parse_json,
     parser_contract_self_test,
+    prompt_field,
     reported_headers,
     resolve_api_key,
     resolve_model,
@@ -69,12 +67,14 @@ from _curl_common import (  # noqa: E402
     run_checks_with_scope_guard,
     run_curl,
     sanitize,
-    served_body_ok,
     wire_contract_self_test,
 )
 
 FEATURE = "contract"
-DEFAULT_MODEL = "openai/gpt-4o-mini"
+# There is deliberately no `DEFAULT_MODEL` here. The model under test comes from
+# `resolve_model()` like everywhere else in this directory; a local constant
+# duplicating it was read only by this file's own mock, which then echoed a
+# model the checker had never asked for.
 INVALID_KEY = "sk-nrouter-invalid-key-0000"
 SPOOF_HEADER = "x-nr-fake-spoof-header"
 
@@ -178,7 +178,14 @@ class ContractCurlHealthCheck:
         # behaviour under test: NOT-CONFIGURED, whatever the check wanted.
         scope_blocked = note_route_scope(self, status, headers)
         if scope_blocked:
-            detail = self.scope_detail or detail
+            # The CALLER's detail wins. Both can be true at once, but the
+            # caller's names what THIS check wanted and what it saw, while the
+            # scope detail is the same sentence on every row — letting the
+            # generic one overwrite the specific one throws away the only part
+            # of the transcript that told the rows apart. When the caller says
+            # nothing, the scope detail fills in, because a NOT-CONFIGURED row
+            # with no explanation is not evidence of anything.
+            detail = detail or self.scope_detail or ""
         row = {
             "name": name,
             "request": request,
@@ -566,7 +573,10 @@ def run_self_test() -> int:
     served_headers = {
         "x-nr-request-id": "55555555-0000-1111-2222-333333333333",
         "x-nr-latency-ms": "42",
-        "x-nr-model": DEFAULT_MODEL,
+        # `x-nr-model` is filled per request by the mock, from the model the
+        # checker actually asked for — see `mock_curl`. A constant here echoes a
+        # model nobody requested, which is exactly what `x-nr-model` is for
+        # catching.
         "x-nr-request-cost": "0.000023",
         "x-nr-cost-status": "exact",
         "x-nr-input-tokens": "6",
@@ -607,7 +617,12 @@ def run_self_test() -> int:
             }, json.dumps(
                 {"error": {"type": "invalid_request", "code": "invalid_request", "message": "messages must be an array"}}
             ), 2.0
-        return 200, dict(served_headers), json.dumps(
+        # Echo the model the request actually named: `x-nr-model` reports what
+        # the gateway served, so a mock that answers with a constant cannot
+        # catch a check asking for one model and being handed another.
+        headers = dict(served_headers)
+        headers["x-nr-model"] = str(body.get("model") or "")
+        return 200, headers, json.dumps(
             {"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 10}}
         ), 30.0
 
@@ -731,7 +746,7 @@ def run_self_test() -> int:
     def never_refuses(args, timeout_s=40, stdin_data=None):
         if args[-1].endswith("/openapi.json"):
             return 200, {"content-type": "application/json"}, openapi_document, 9.0
-        return 200, dict(served_headers), json.dumps(
+        return 200, {**served_headers, "x-nr-model": "mock/served"}, json.dumps(
             {"choices": [{"message": {"content": "served anyway"}}]}
         ), 30.0
 
@@ -818,6 +833,63 @@ def run_self_test() -> int:
     )
 
     assert "Wire Contract" in checker.render_markdown_summary(suite)
+    # ---- R8: no dead constant, no unused import ----------------------------
+    # `DEFAULT_MODEL` duplicated the shared default and was read only by this
+    # file's own mock, which then echoed a model the checker had not asked for.
+    # A constant that only the test reads is a place for the test and the code
+    # to disagree.
+    module = sys.modules[__name__]
+    assert not hasattr(module, "DEFAULT_MODEL"), (
+        "DEFAULT_MODEL is dead — the model under test comes from resolve_model()"
+    )
+    import ast as _ast
+
+    _source = Path(__file__).read_text()
+    _tree = _ast.parse(_source)
+    _imported = {
+        alias.name
+        for node in _ast.walk(_tree)
+        if isinstance(node, _ast.ImportFrom) and node.module == "_curl_common"
+        for alias in node.names
+    }
+    _used = {n.id for n in _ast.walk(_tree) if isinstance(n, _ast.Name)} | {
+        n.attr for n in _ast.walk(_tree) if isinstance(n, _ast.Attribute)
+    }
+    assert not (_imported - _used), (
+        f"imported from _curl_common and never used: {sorted(_imported - _used)}"
+    )
+
+    # ---- R8: a caller's detail is more specific than the scope detail ------
+    # Both can be true at once. The caller's names what THIS check wanted and
+    # what it saw; the scope detail is the same sentence on every row. Letting
+    # the generic one overwrite the specific one threw away the only part of the
+    # transcript that distinguished the rows.
+    class _DetailProbe(ContractCurlHealthCheck):
+        pass
+
+    probe = _DetailProbe(base_url="https://mock.invalid/v1", api_key="k", route="/chat/completions")
+    probe._current_path = probe.route
+    scoped_headers = {"x-nr-auth-reason": "key_route_not_allowed"}
+    row = probe._record(
+        "caller_detail_wins", "(req)", 403, scoped_headers,
+        "the caller's detail survives a scope refusal",
+        False, False, detail="the caller saw x-nr-cost-status: unpriced on a served row",
+    )
+    assert row["result"] == NOT_CONFIGURED, row
+    assert row["detail"] == "the caller saw x-nr-cost-status: unpriced on a served row", row["detail"]
+    # ...and with NO caller detail the scope detail is still reported, because a
+    # NOT-CONFIGURED row with no explanation is not evidence of anything.
+    probe.scope_detail = None
+    probe.results.clear()
+    probe._current_path = probe.route
+    bare = probe._record(
+        "scope_detail_when_silent", "(req)", 403, scoped_headers,
+        "the scope detail fills in when the caller says nothing",
+        False, False,
+    )
+    assert bare["result"] == NOT_CONFIGURED, bare
+    assert "key_route_not_allowed" in bare.get("detail", ""), bare
+
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] contract_curl.py self-test passed cleanly.")
     return 0

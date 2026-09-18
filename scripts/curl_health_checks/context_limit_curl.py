@@ -50,6 +50,7 @@ from _curl_common import (  # noqa: E402
     MISSING_KEY_MESSAGE,
     NOT_CONFIGURED,
     PASS,
+    ALLOWED_ROUTES,
     add_wire_arguments,
     assert_all,
     build_body,
@@ -68,6 +69,7 @@ from _curl_common import (  # noqa: E402
     run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    served_body_for,
     served_body_ok,
     wire_contract_self_test,
 )
@@ -463,6 +465,18 @@ def run_self_test() -> int:
     def endpoint_of(args: List[str]) -> str:
         return args[-1]
 
+    def route_of(args: List[str]) -> str:
+        """Which wire this request was made on, read back from the URL it asked.
+
+        The mock must answer in that wire's shape, so it has to recover the
+        route rather than assume one.
+        """
+        url = endpoint_of(args)
+        for candidate in ALLOWED_ROUTES:
+            if url.endswith(candidate):
+                return candidate
+        return "/chat/completions"
+
     base = {"x-nr-request-id": "eeeeeeee-0000-1111-2222-333333333333"}
     ceiling_chars = 100_000
 
@@ -513,9 +527,10 @@ def run_self_test() -> int:
             "x-nr-request-cost": "0.000019",
             "x-nr-cost-status": "exact",
         })
-        if endpoint_of(args).endswith("/messages"):
-            return 200, headers, json.dumps({"content": [{"type": "text", "text": "ok"}]}), 25.0
-        return 200, headers, json.dumps({"choices": [{"message": {"content": "ok"}}]}), 25.0
+        # The upstream answers in the shape of the wire it was ASKED on. A mock
+        # that always returns `choices` makes three wires out of four fail
+        # against the mock rather than against the gateway.
+        return 200, headers, json.dumps(served_body_for(route_of(args), "ok")), 25.0
 
     checker = ContextLimitCurlHealthCheck(
         base_url="https://mock.invalid/v1",
@@ -663,6 +678,34 @@ def run_self_test() -> int:
     assert '"max_tokens"' not in ceiling_request, (
         "the responses wire was sent a chat-shaped ceiling field"
     )
+    # ---- R6: the mock must answer in THIS wire's shape ---------------------
+    # Asserting the request field and stopping there left the SERVED side
+    # untested: the mock answered `choices` on every wire, so the suite was red
+    # against the mock rather than green against the gateway. A ceiling suite
+    # that cannot go green on a wire proves nothing about that wire.
+    assert responses_suite["all_passed"] is True, [
+        (r["name"], r.get("detail")) for r in responses_suite["checks"] if r["result"] == FAIL
+    ]
+    completions_suite = ContextLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/completions",
+        model="openai/gpt-4o-mini", oversize_words=40_000, curl_fn=mock_curl,
+    ).run_suite()
+    assert completions_suite["all_passed"] is True, [
+        (r["name"], r.get("detail")) for r in completions_suite["checks"] if r["result"] == FAIL
+    ]
+
+    # ...and at least one oversize probe still sends NO output ceiling at all,
+    # so the INPUT ceiling is proven on its own rather than only in company with
+    # an output-ceiling refusal that would mask it.
+    oversize_requests = [
+        r["request"] for r in suite["checks"]
+        if "oversize" in r["name"] and r["request"] != "(not executed)"
+    ]
+    assert oversize_requests, "no oversize probe in the suite"
+    assert any(
+        '"max_tokens"' not in req and '"max_output_tokens"' not in req
+        for req in oversize_requests
+    ), "every oversize probe now names an output ceiling; the input ceiling is no longer isolated"
 
     # A route-scoped key short-circuits as NOT-CONFIGURED, not as failures.
     def mock_route_not_allowed(args, timeout_s=60, stdin_data=None):

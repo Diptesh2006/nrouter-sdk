@@ -54,6 +54,7 @@ from _curl_common import (  # noqa: E402
     EXIT_UNRUNNABLE,
     FAIL,
     MISSING_KEY_MESSAGE,
+    MODEL_ENV,
     NOT_CONFIGURED,
     PASS,
     add_wire_arguments,
@@ -78,7 +79,10 @@ from _curl_common import (  # noqa: E402
 )
 
 FEATURE = "fallbacks"
-DEFAULT_PRIMARY_MODEL = "openai/gpt-4o-mini"
+# There is deliberately NO `DEFAULT_PRIMARY_MODEL`. The primary IS the model
+# under test (`NROUTER_HEALTH_MODEL` / `--model`); a second constant naming the
+# same thing was never read, and a name that looks like configuration while
+# changing nothing is a second place for the two to drift apart.
 # These two are only a GUESS at a secondary this key can route to. A virtual key
 # is commonly scoped to a handful of models, and a target outside that scope is
 # refused 400 `fallback_not_allowed` — which is the gateway being RIGHT. So the
@@ -121,10 +125,25 @@ class FallbacksCurlHealthCheck:
         # The route and model under test are a runtime choice: a virtual key is
         # commonly scoped to a subset of both.
         self.route = resolve_route(route)
-        self.model = resolve_model(model)
+        # `--primary-model` is a DEPRECATED alias for `--model`: they name the
+        # same thing (the model the chain starts from), so an explicit `--model`
+        # wins and the alias fills in behind it. Keeping them as two independent
+        # values is how a run ends up asking about a model nobody chose.
+        self.model = resolve_model(model or primary_model)
         self.scope_detail: Optional[str] = None
         self._current_path: Optional[str] = None
-        self.primary_model = primary_model or self.model
+        self.primary_model = self.model
+        # A run with no model at all would post `"model": ""` on every probe and
+        # read the gateway's complaint about THAT as a fallback finding. It is
+        # an absent precondition, decided here, before anything is sent.
+        self.unrunnable_detail: Optional[str] = None
+        if not self.model.strip():
+            self.unrunnable_detail = (
+                f"no model under test: {MODEL_ENV} is unset or blank and no --model/--primary-model "
+                "was given, so every probe would ask the gateway about an empty model name and "
+                f"report its complaint as a fallback finding. Set {MODEL_ENV}=<a model this key "
+                "may use>."
+            )
         # A healthy SECONDARY is plane data, exactly like the route and the
         # primary model: this key may not be allowed to route the default. Track
         # whether each was actually named, because that is what tells a refusal
@@ -594,27 +613,45 @@ class FallbacksCurlHealthCheck:
 
     # ----------------------------------------------------------------- driving
 
+    def _checks_for(self, quick: bool) -> List[Callable[[], Dict[str, Any]]]:
+        """The check list for this lane — ONE definition, so nothing drifts."""
+        if quick:
+            return [
+                self.check_direct_serve_with_fallback_list,
+                self.check_unpermitted_target_is_400,
+                self.check_self_reference_400,
+                self.check_auto_refuses_fallbacks,
+            ]
+        return [
+            self.check_direct_serve_with_fallback_list,
+            self.check_served_via_fallback_names_rank,
+            self.check_request_list_is_walked_in_order,
+            self.check_unpermitted_target_is_400,
+            self.check_five_targets_400,
+            self.check_self_reference_400,
+            self.check_unknown_nrouter_key_400,
+            self.check_auto_refuses_fallbacks,
+            self.check_non_array_fallbacks_400,
+            self.check_exhausted_chain_has_no_attempts_header,
+        ]
+
     def run_suite(self, quick: bool = False) -> Dict[str, Any]:
         self.results.clear()
-        checks: List[Callable[[], Dict[str, Any]]] = [
-            self.check_direct_serve_with_fallback_list,
-            self.check_unpermitted_target_is_400,
-            self.check_self_reference_400,
-            self.check_auto_refuses_fallbacks,
-        ]
-        if not quick:
-            checks = [
-                self.check_direct_serve_with_fallback_list,
-                self.check_served_via_fallback_names_rank,
-                self.check_request_list_is_walked_in_order,
-                self.check_unpermitted_target_is_400,
-                self.check_five_targets_400,
-                self.check_self_reference_400,
-                self.check_unknown_nrouter_key_400,
-                self.check_auto_refuses_fallbacks,
-                self.check_non_array_fallbacks_400,
-                self.check_exhausted_chain_has_no_attempts_header,
-            ]
+        checks = self._checks_for(quick)
+        if self.unrunnable_detail:
+            # Recorded per check, never silently skipped: a suite that could not
+            # run must SAY so on every row it did not make, and the run is
+            # PARTIAL rather than a clean green with nothing behind it.
+            for check in checks:
+                name = check.__name__
+                if name.startswith("check_"):
+                    name = name[len("check_"):]
+                self._record(
+                    name, "(not executed)", 0, {},
+                    "(skipped: no model under test)",
+                    False, False, detail=self.unrunnable_detail, not_configured=True,
+                )
+            return self.summarize()
         run_checks_with_scope_guard(self, checks)
         return self.summarize()
 
@@ -1030,22 +1067,30 @@ def run_self_test() -> int:
     )
 
     # The override is honoured from the environment too, not only the flag.
+    #
+    # R11: the cleanup is in a `finally`. With the pops written after the
+    # assertions, a FAILING assertion here skipped them and left both variables
+    # set for every later section — so the next failure would be reported
+    # against a configuration this block silently installed, and the real cause
+    # would be two hundred lines upstream.
     os.environ[FALLBACK_MODEL_ENV] = "vendor/allowed-secondary"
     os.environ[SECOND_FALLBACK_MODEL_ENV] = "vendor/allowed-tertiary"
-    from_env = FallbacksCurlHealthCheck(
-        base_url="https://mock.invalid/v1", api_key="k",
-        curl_fn=mock_only_scoped_targets_route,
-    )
-    from_env_rows = {r["name"]: r for r in from_env.run_suite()["checks"]}
-    assert from_env_rows["direct_serve_with_fallback_list"]["result"] == PASS, (
-        f"{FALLBACK_MODEL_ENV} must be read from the environment, not only the flag; "
-        f"got {from_env_rows['direct_serve_with_fallback_list']}"
-    )
-    assert from_env_rows["request_list_is_walked_in_order"]["result"] == PASS, (
-        f"{SECOND_FALLBACK_MODEL_ENV} must be read from the environment"
-    )
-    os.environ.pop(FALLBACK_MODEL_ENV, None)
-    os.environ.pop(SECOND_FALLBACK_MODEL_ENV, None)
+    try:
+        from_env = FallbacksCurlHealthCheck(
+            base_url="https://mock.invalid/v1", api_key="k",
+            curl_fn=mock_only_scoped_targets_route,
+        )
+        from_env_rows = {r["name"]: r for r in from_env.run_suite()["checks"]}
+        assert from_env_rows["direct_serve_with_fallback_list"]["result"] == PASS, (
+            f"{FALLBACK_MODEL_ENV} must be read from the environment, not only the flag; "
+            f"got {from_env_rows['direct_serve_with_fallback_list']}"
+        )
+        assert from_env_rows["request_list_is_walked_in_order"]["result"] == PASS, (
+            f"{SECOND_FALLBACK_MODEL_ENV} must be read from the environment"
+        )
+    finally:
+        os.environ.pop(FALLBACK_MODEL_ENV, None)
+        os.environ.pop(SECOND_FALLBACK_MODEL_ENV, None)
 
     # THE NARROWING, both halves. NOT-CONFIGURED is reserved for a 400 that
     # names `fallback_not_allowed`: a 400 with any OTHER code, and any other
@@ -1065,10 +1110,16 @@ def run_self_test() -> int:
     other_code = FallbacksCurlHealthCheck(
         base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_other_400_code
     )
-    other_row = other_code.run_suite(quick=True)["checks"][0]
+    # R12: looked up BY NAME, like every other assertion here. `["checks"][0]`
+    # silently follows whatever the quick lane happens to run first, so
+    # reordering `_checks_for` would move this assertion onto a different check
+    # and it would keep passing — asserting about something nobody chose.
+    other_row = {
+        r["name"]: r for r in other_code.run_suite(quick=True)["checks"]
+    }["direct_serve_with_fallback_list"]
     assert other_row["result"] == FAIL, (
         "a 400 carrying a code other than fallback_not_allowed is a real failure; "
-        f"got {other_row['result']}"
+        f"got {other_row['result']} ({other_row.get('detail')})"
     )
 
     def mock_503(args, timeout_s=40, stdin_data=None):
@@ -1166,6 +1217,58 @@ def run_self_test() -> int:
         "a self-referencing chain that is SERVED must go red, not pass on prose"
     )
 
+    # ---- R7: no dead constant, and no run with no model at all -------------
+    # `DEFAULT_PRIMARY_MODEL` was never read: the primary IS the model under
+    # test, and a second name for it is a second place to drift. A name that
+    # looks like configuration but changes nothing is worse than no name.
+    assert not hasattr(sys.modules[__name__], "DEFAULT_PRIMARY_MODEL"), (
+        "DEFAULT_PRIMARY_MODEL is dead — the primary is the model under test"
+    )
+    # `--primary-model` stays as a DEPRECATED alias, because a caller may have
+    # it in a script, and it must resolve to the same thing as `--model`.
+    aliased = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/chat/completions",
+        primary_model="vendor/aliased", curl_fn=lambda *a, **k: (200, {}, "{}", 1.0),
+    )
+    assert aliased.primary_model == "vendor/aliased", aliased.primary_model
+    assert aliased.model == "vendor/aliased", (
+        "--primary-model must alias the model under test, not shadow it"
+    )
+    # ...and an explicit --model still wins over the deprecated alias.
+    both = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/chat/completions",
+        model="vendor/explicit", primary_model="vendor/aliased",
+        curl_fn=lambda *a, **k: (200, {}, "{}", 1.0),
+    )
+    assert both.model == "vendor/explicit" and both.primary_model == "vendor/explicit", (
+        (both.model, both.primary_model)
+    )
+
+    # An EMPTY model is refused at a local precondition guard, before any
+    # request is sent. Every probe would otherwise post `"model": ""` and read
+    # the gateway's complaint about it as a fallback finding.
+    empty_model_calls: List[Any] = []
+
+    def must_not_be_called(*args, **kwargs):
+        empty_model_calls.append(args)
+        return 200, {}, "{}", 1.0
+
+    blank = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/chat/completions",
+        model=" ", curl_fn=must_not_be_called,
+    )
+    blank_suite = blank.run_suite()
+    assert blank_suite["failed_checks"] == 0, (
+        "no model is an absent precondition, not a pile of gateway failures"
+    )
+    assert blank_suite["not_configured_checks"] == blank_suite["total_checks"], blank_suite
+    assert not empty_model_calls, (
+        f"a request was sent with no model at all: {empty_model_calls[:1]}"
+    )
+    assert any(
+        "NROUTER_HEALTH_MODEL" in r.get("detail", "") for r in blank_suite["checks"]
+    ), "the refusal must NAME the variable to set"
+
     markdown = checker.render_markdown_summary(suite)
     assert "Request Fallbacks" in markdown, "markdown summary lost its title"
 
@@ -1187,6 +1290,11 @@ def main() -> int:
     # Empty by default on purpose: the constructor must be able to tell "nobody
     # named a secondary" from "someone named this one", because only the first
     # makes a `fallback_not_allowed` refusal an absent precondition.
+    parser.add_argument(
+        "--primary-model",
+        default="",
+        help=f"DEPRECATED alias for --model (env {MODEL_ENV}); --model wins",
+    )
     parser.add_argument(
         "--fallback-model",
         default="",
@@ -1215,6 +1323,7 @@ def main() -> int:
             api_key=api_key,
             route=args.route,
             model=args.model,
+            primary_model=args.primary_model,
             fallback_model=args.fallback_model,
             second_fallback_model=args.second_fallback_model,
         )

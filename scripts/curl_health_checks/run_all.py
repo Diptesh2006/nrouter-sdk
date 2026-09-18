@@ -327,10 +327,15 @@ def main() -> int:
 
     # 1. Models & Providers
     print("▶ Running [1/4] Models & Providers Health Check...")
+    # --route / --model are the ONE override surface and reach the three legacy
+    # modules too; the env variables already did, the flags did not (round-4
+    # measurement: 11 probes stayed on /chat/completions under --route).
     model_checker = model_curl.ModelCurlHealthCheck(
         base_url=args.base_url,
         api_key=api_key,
         probe_model=args.probe_model,
+        route=args.route,
+        model=args.model,
     )
     model_res = model_checker.run_all()
     print(f"  ✓ Models Catalog:    {model_res['summary']['total_models']} models discovered")
@@ -340,11 +345,23 @@ def main() -> int:
 
     # 2. Guardrails
     print("▶ Running [2/4] Guardrails & WAF Health Check...")
+    # --guardrail-route / --guardrail-model stay as deprecated aliases: they win
+    # only when the caller set them away from their defaults.
+    guard_route = (
+        args.guardrail_route
+        if args.guardrail_route != guardrail_curl.DEFAULT_GUARDRAIL_ROUTE
+        else args.route
+    )
+    guard_model = (
+        args.guardrail_model
+        if args.guardrail_model != guardrail_curl.DEFAULT_GUARDRAIL_MODEL
+        else args.model
+    )
     guard_checker = guardrail_curl.GuardrailCurlHealthCheck(
         base_url=args.base_url,
         api_key=api_key,
-        route=args.guardrail_route,
-        model=args.guardrail_model,
+        route=guard_route,
+        model=guard_model,
     )
     guard_res = guard_checker.run_suite(quick=args.quick)
     print(f"  ✓ Total Cases:       {guard_res['total_cases']}")
@@ -360,6 +377,8 @@ def main() -> int:
         chat_model=args.chat_model,
         messages_model=args.messages_model,
         embed_model=args.embed_model,
+        route=args.route,
+        model=args.model,
     )
     feat_res = feat_checker.run_suite(quick=args.quick)
     print(f"  ✓ Total Probes:      {feat_res['total_features']}")

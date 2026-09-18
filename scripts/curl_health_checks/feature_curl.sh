@@ -24,16 +24,8 @@ for arg in "$@"; do
   fi
 done
 
-if [[ "$IS_SELF_TEST" != "true" && -z "${NROUTER_API_KEY:-}" ]]; then
-  # Fall back to local admin test key if available
-  TEST_ENV_FILE="${HOME}/.nrouter_admin_keys/nrouter-test/prod/credentials.env"
-  if [[ -f "${TEST_ENV_FILE}" ]]; then
-    # shellcheck disable=SC1090
-    source "${TEST_ENV_FILE}"
-    export NROUTER_API_KEY="${NROUTER_TEST_API_KEY:-}"
-  fi
-fi
-
+# The key comes from NROUTER_API_KEY and nowhere else — no credentials-file
+# fallback, for the same reason the Python modules refuse one.
 if [[ "$IS_SELF_TEST" != "true" && -z "${NROUTER_API_KEY:-}" ]]; then
   echo "Error: NROUTER_API_KEY environment variable is required." >&2
   echo "Provide NROUTER_API_KEY or use --self-test for offline validation." >&2

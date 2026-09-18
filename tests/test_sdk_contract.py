@@ -104,10 +104,30 @@ class SpecContractTests(unittest.TestCase):
                     internal_names - all_gateway_definitions.keys(),
                     set(),
                 )
+                # REQUEST headers the gateway accepts (`x-nr-compress`, …) are
+                # defined in the same module but are never emitted, so they are
+                # not response-header contract. Derived from the accepted
+                # registry, never listed here.
+                accepted_body = re.search(
+                    r"pub fn all_accepted_request_names\(\).*?\{\s*&\[(.*?)\]\s*\}",
+                    gateway_text,
+                    flags=re.DOTALL,
+                )
+                self.assertIsNotNone(
+                    accepted_body, "gateway accepted-request-header registry is missing"
+                )
+                accepted_names = {
+                    entry.strip().rsplit("::", 1)[-1]
+                    for entry in re.sub(
+                        r"//.*$", "", accepted_body.group(1), flags=re.MULTILINE
+                    ).split(",")
+                    if entry.strip()
+                }
+                self.assertTrue(accepted_names, "gateway accepted-request registry is empty")
                 gateway_definitions = {
                     name: value
                     for name, value in all_gateway_definitions.items()
-                    if name not in internal_names
+                    if name not in internal_names and name not in accepted_names
                 }
                 cache_pairs = re.findall(
                     definition_pattern,
@@ -195,9 +215,13 @@ class SpecContractTests(unittest.TestCase):
             "nrouter_cache",
             spec["extra_body_fields"],
         )
+        # `bypass` is the third outcome the gateway emits: the request opted out
+        # (`nrouter_cache: false`), the call streamed, or the org disabled the
+        # cache. A contract listing only hit/miss taught SDKs to classify it as
+        # unknown.
         self.assertEqual(
             set(spec["response_headers"]["x-nr-response-cache"]["values"]),
-            {"hit", "miss"},
+            {"hit", "miss", "bypass"},
         )
         self.assertIn("x-nr-response-cache-age", spec["response_headers"])
 

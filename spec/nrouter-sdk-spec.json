@@ -131,12 +131,29 @@
       "always": false,
       "values": [
         "hit",
-        "miss"
+        "miss",
+        "bypass"
       ]
     },
     "x-nr-response-cache-age": {
       "type": "integer",
       "description": "Age in seconds of a response-cache hit",
+      "always": false
+    },
+    "x-nr-compression": {
+      "type": "string",
+      "description": "Prompt compression outcome for this request",
+      "always": false,
+      "values": ["applied", "not_requested", "off", "skipped"]
+    },
+    "x-nr-routing": {
+      "type": "string",
+      "description": "Which chain entry answered: direct for the first entry, fallback:<n> for the entry n fallbacks deep. Absent on cache hits and refusals",
+      "always": false
+    },
+    "x-nr-attempts": {
+      "type": "integer",
+      "description": "Provider calls made for this request, retries and failovers alike. Absent on cache hits and refusals",
       "always": false
     },
     "x-nr-funding-source": {

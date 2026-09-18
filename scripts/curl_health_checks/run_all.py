@@ -13,6 +13,13 @@ Consolidates all modular health checks into a single runner:
      - PII handling & redaction posture
      - Evasion normalization (homoglyphs, letter-spacing, leetspeak, base64 smuggling)
      - Wire contract assertions ($0 token spend on injection/refusal, exact posture headers)
+  3. Endpoints & Features (`feature_curl`)
+  4. Per-feature curl proofs — ten adversarial-heavy modules, each with at least
+     as many adversarial checks as happy-path ones, each asserting headers and
+     body rather than a status code alone:
+     `fallbacks_curl`, `guardrails_request_curl`, `cache_curl`,
+     `rate_limit_curl`, `context_limit_curl`, `metering_curl`, `tracing_curl`,
+     `moderation_floor_curl`, `mcp_curl`, `contract_curl`
 
 Usage:
   python3 scripts/curl_health_checks/run_all.py --self-test
@@ -30,7 +37,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # Ensure scripts/curl_health_checks is on path
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -40,6 +47,37 @@ if str(CURRENT_DIR) not in sys.path:
 import model_curl
 import guardrail_curl
 import feature_curl
+
+# Per-feature proof modules. Each exposes run_self_test(), a
+# <Domain>CurlHealthCheck class with named checks, run_suite(quick=...) and
+# render_markdown_summary(). Each returns the same JSON contract:
+#   {feature, base_url, checks: [{name, request, status, headers, assertion,
+#                                 result, expected_failure}]}
+# `result` is PASS, FAIL or NOT-CONFIGURED — a check whose precondition is
+# missing on the plane reports NOT-CONFIGURED and never PASS.
+import fallbacks_curl
+import guardrails_request_curl
+import cache_curl
+import rate_limit_curl
+import context_limit_curl
+import metering_curl
+import tracing_curl
+import moderation_floor_curl
+import mcp_curl
+import contract_curl
+
+FEATURE_MODULES = [
+    ("fallbacks", fallbacks_curl, "FallbacksCurlHealthCheck"),
+    ("guardrails_request", guardrails_request_curl, "GuardrailsRequestCurlHealthCheck"),
+    ("cache", cache_curl, "CacheCurlHealthCheck"),
+    ("rate_limit", rate_limit_curl, "RateLimitCurlHealthCheck"),
+    ("context_limit", context_limit_curl, "ContextLimitCurlHealthCheck"),
+    ("metering", metering_curl, "MeteringCurlHealthCheck"),
+    ("tracing", tracing_curl, "TracingCurlHealthCheck"),
+    ("moderation_floor", moderation_floor_curl, "ModerationFloorCurlHealthCheck"),
+    ("mcp", mcp_curl, "McpCurlHealthCheck"),
+    ("contract", contract_curl, "ContractCurlHealthCheck"),
+]
 
 
 def run_all_self_tests() -> int:
@@ -63,8 +101,61 @@ def run_all_self_tests() -> int:
         print("[FAIL] feature_curl self-test failed", file=sys.stderr)
         return feat_code
 
+    for index, (feature, module, _) in enumerate(FEATURE_MODULES, start=4):
+        print(f"\n{index}. Testing {feature}_curl module...")
+        code = module.run_self_test()
+        if code != 0:
+            print(f"[FAIL] {feature} self-test failed", file=sys.stderr)
+            return code
+
     print("\n[PASS] All consolidated self-tests passed cleanly (100% offline verification).")
     return 0
+
+
+def run_feature_suites(base_url: str, api_key: str, quick: bool) -> List[Dict[str, Any]]:
+    """Run every per-feature proof module and return their JSON reports."""
+    suites: List[Dict[str, Any]] = []
+    for feature, module, class_name in FEATURE_MODULES:
+        checker = getattr(module, class_name)(base_url=base_url, api_key=api_key)
+        suite = checker.run_suite(quick=quick)
+        suite["_markdown"] = checker.render_markdown_summary(suite)
+        suites.append(suite)
+        state = "PASS" if suite["all_passed"] else "FAIL"
+        if suite["all_passed"] and suite["partial"]:
+            state = "PARTIAL"
+        print(
+            f"  ✓ {feature:<20} {state:<8} "
+            f"{suite['passed_checks']}/{suite['total_checks']} passed, "
+            f"{suite['failed_checks']} failed, "
+            f"{suite['not_configured_checks']} not-configured, "
+            f"{suite['adversarial_checks']} adversarial"
+        )
+    return suites
+
+
+def render_feature_summary(suites: List[Dict[str, Any]]) -> str:
+    """Render the per-feature proof table for the consolidated markdown report."""
+    lines = [
+        "## Per-Feature Curl Proofs",
+        "",
+        "| Feature | Checks | Passed | Failed | Not-Configured | Adversarial | Status |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for suite in suites:
+        if not suite["all_passed"]:
+            status = "❌ Fail"
+        elif suite["partial"]:
+            status = "🟡 Partial"
+        else:
+            status = "✅ Pass"
+        lines.append(
+            f"| **{suite['feature']}** | {suite['total_checks']} | {suite['passed_checks']} | "
+            f"{suite['failed_checks']} | {suite['not_configured_checks']} | "
+            f"{suite['adversarial_checks']} | {status} |"
+        )
+    for suite in suites:
+        lines.extend(["", "---", "", suite.get("_markdown", "")])
+    return "\n".join(lines)
 
 
 def render_consolidated_summary(
@@ -72,9 +163,16 @@ def render_consolidated_summary(
     model_result: Dict[str, Any],
     guard_result: Dict[str, Any],
     feature_result: Dict[str, Any],
+    feature_suites: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Render unified markdown summary for GitHub Step Summary or terminal reporting."""
-    overall_passed = model_result["passed"] and guard_result["all_passed"] and feature_result["all_passed"]
+    feature_suites = feature_suites or []
+    overall_passed = (
+        model_result["passed"]
+        and guard_result["all_passed"]
+        and feature_result["all_passed"]
+        and all(suite["all_passed"] for suite in feature_suites)
+    )
     overall_badge = "🟢 **ALL CHECKS OPERATIONAL**" if overall_passed else "🔴 **FAILURES DETECTED**"
 
     lines = [
@@ -102,6 +200,10 @@ def render_consolidated_summary(
     lines.append("\n---\n")
     # Include Features summary
     lines.append(feature_curl.FeatureCurlHealthCheck().render_markdown_summary(feature_result))
+
+    if feature_suites:
+        lines.append("\n---\n")
+        lines.append(render_feature_summary(feature_suites))
 
     return "\n".join(lines)
 
@@ -156,7 +258,7 @@ def main() -> int:
     print("------------------------------------------------------------\n")
 
     # 1. Models & Providers
-    print("▶ Running [1/3] Models & Providers Health Check...")
+    print("▶ Running [1/4] Models & Providers Health Check...")
     model_checker = model_curl.ModelCurlHealthCheck(
         base_url=args.base_url,
         api_key=api_key,
@@ -169,7 +271,7 @@ def main() -> int:
     print(f"  Result:              {'PASS' if model_res['passed'] else 'FAIL'}\n")
 
     # 2. Guardrails
-    print("▶ Running [2/3] Guardrails & WAF Health Check...")
+    print("▶ Running [2/4] Guardrails & WAF Health Check...")
     guard_checker = guardrail_curl.GuardrailCurlHealthCheck(
         base_url=args.base_url,
         api_key=api_key,
@@ -183,7 +285,7 @@ def main() -> int:
     print(f"  Result:              {'PASS' if guard_res['all_passed'] else 'FAIL'}\n")
 
     # 3. Endpoints & Features
-    print("▶ Running [3/3] Endpoints & Parameters Health Check...")
+    print("▶ Running [3/4] Endpoints & Parameters Health Check...")
     feat_checker = feature_curl.FeatureCurlHealthCheck(
         base_url=args.base_url,
         api_key=api_key,
@@ -197,7 +299,22 @@ def main() -> int:
     print(f"  ✓ Probes Failed:     {feat_res['failed_features']}")
     print(f"  Result:              {'PASS' if feat_res['all_passed'] else 'FAIL'}\n")
 
-    overall_passed = model_res["passed"] and guard_res["all_passed"] and feat_res["all_passed"]
+    # 4. Per-feature curl proofs (ten modules, adversarial-heavy)
+    print("▶ Running [4/4] Per-Feature Curl Proofs...")
+    feature_suites = run_feature_suites(args.base_url, api_key, args.quick)
+    feature_failures = sum(suite["failed_checks"] for suite in feature_suites)
+    feature_unconfigured = sum(suite["not_configured_checks"] for suite in feature_suites)
+    print(
+        f"  Result:              {'PASS' if feature_failures == 0 else 'FAIL'}"
+        f"{' (PARTIAL: ' + str(feature_unconfigured) + ' not-configured)' if feature_unconfigured else ''}\n"
+    )
+
+    overall_passed = (
+        model_res["passed"]
+        and guard_res["all_passed"]
+        and feat_res["all_passed"]
+        and feature_failures == 0
+    )
 
     print("============================================================")
     print(f"OVERALL STATUS:   {'🟢 ALL OPERATIONAL (PASS)' if overall_passed else '🔴 FAILURES DETECTED (FAIL)'}")
@@ -206,7 +323,9 @@ def main() -> int:
     if args.step_summary:
         step_summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
         if step_summary_path:
-            summary_md = render_consolidated_summary(args.base_url, model_res, guard_res, feat_res)
+            summary_md = render_consolidated_summary(
+                args.base_url, model_res, guard_res, feat_res, feature_suites
+            )
             try:
                 with open(step_summary_path, "a") as f:
                     f.write("\n" + summary_md + "\n")
@@ -222,6 +341,10 @@ def main() -> int:
             "models_and_providers": model_res,
             "guardrails": guard_res,
             "features": feat_res,
+            "feature_proofs": [
+                {key: value for key, value in suite.items() if key != "_markdown"}
+                for suite in feature_suites
+            ],
         }
         print(json.dumps(combined, indent=2))
 

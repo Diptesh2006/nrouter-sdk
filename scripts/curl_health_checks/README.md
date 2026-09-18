@@ -11,6 +11,16 @@ By testing using raw `curl` requests rather than language-specific SDKs, these h
 | **Consolidated Suite** | [`run_all.sh`](run_all.sh) / [`run_all.py`](run_all.py) | Executes all health check groups sequentially, aggregates results, and generates a unified status report. |
 | **Models & Providers** | [`model_curl.sh`](model_curl.sh) / [`model_curl.py`](model_curl.py) | Verifies `GET /v1/models` catalog, provider discovery & distribution, and live provider chat completion inference. |
 | **Guardrails** | [`guardrail_curl.sh`](guardrail_curl.sh) / [`guardrail_curl.py`](guardrail_curl.py) | Verifies platform moderation floor, PII redaction, prompt injection & secret leakage detection, evasion resistance, and wire contract assertions. |
+| **Request Fallbacks** | [`fallbacks_curl.sh`](fallbacks_curl.sh) / [`fallbacks_curl.py`](fallbacks_curl.py) | Per-request fallback chains: the answering rank is named in the routing headers, and an unpermitted target, a self-reference, an over-long list, a non-array value, an unknown `nrouter_*` key and an auto-router chain are each refused with a code and no cost. |
+| **Per-Request Guardrails** | [`guardrails_request_curl.sh`](guardrails_request_curl.sh) / [`guardrails_request_curl.py`](guardrails_request_curl.py) | Requested guardrails are ADD-ONLY: an unknown or foreign id is refused identically (no cross-tenant existence oracle), the tenant's own block rule survives any addition, and the platform floor cannot be displaced. |
+| **Response Cache** | [`cache_curl.sh`](cache_curl.sh) / [`cache_curl.py`](cache_curl.py) | Miss → hit → bypass, hit billing that is strictly positive, tenant isolation across keys, and a fingerprint that changes when the body or the guardrail chain changes. |
+| **Rate Limits** | [`rate_limit_curl.sh`](rate_limit_curl.sh) / [`rate_limit_curl.py`](rate_limit_curl.py) | A burst past the key ceiling answers 429 with a usable `Retry-After` and a named limit source, charges nothing, and leaks no internals; authentication is refused before throughput is measured. |
+| **Context & Output Ceilings** | [`context_limit_curl.sh`](context_limit_curl.sh) / [`context_limit_curl.py`](context_limit_curl.py) | An oversize prompt and an over-ceiling `max_tokens` are refused with a code, before the provider is paid, on every wire shape. |
+| **Metering** | [`metering_curl.sh`](metering_curl.sh) / [`metering_curl.py`](metering_curl.py) | Every served response states its cost and tokens; embeddings are priced on input only; every refusal states nothing; an unpriced model omits the cost header rather than reporting `0`. |
+| **Request Identity & Tracing** | [`tracing_curl.sh`](tracing_curl.sh) / [`tracing_curl.py`](tracing_curl.py) | `x-nr-request-id` is present and unique on every response including refusals, is the gateway's own rather than the caller's, and refusals advertise no routing they never performed. |
+| **Moderation Floor** | [`moderation_floor_curl.sh`](moderation_floor_curl.sh) / [`moderation_floor_curl.py`](moderation_floor_curl.py) | Both directions: hostile prompts are refused at $0, and an ordinary business prompt that merely contains an email address, a phone number or a card number is **served** — over-blocking is a defect too. |
+| **MCP** | [`mcp_curl.sh`](mcp_curl.sh) / [`mcp_curl.py`](mcp_curl.py) | JSON-RPC `tools/list` over the customer credential, with the credential boundary proved: no key, a management-shaped key, an unknown server, a missing server header and a traversal-shaped name are all refused. |
+| **Wire Contract** | [`contract_curl.sh`](contract_curl.sh) / [`contract_curl.py`](contract_curl.py) | Compares the live wire against [`spec/nrouter-sdk-spec.json`](../../spec/nrouter-sdk-spec.json): documented headers, header-value enums, refusal envelopes and error codes, plus no upstream, internal or reflected header. |
 
 ## Quickstart
 
@@ -23,7 +33,51 @@ bash scripts/curl_health_checks/run_all.sh --self-test
 # Individual module self-tests:
 bash scripts/curl_health_checks/model_curl.sh --self-test
 bash scripts/curl_health_checks/guardrail_curl.sh --self-test
+bash scripts/curl_health_checks/fallbacks_curl.sh --self-test
+bash scripts/curl_health_checks/guardrails_request_curl.sh --self-test
+bash scripts/curl_health_checks/cache_curl.sh --self-test
+bash scripts/curl_health_checks/rate_limit_curl.sh --self-test
+bash scripts/curl_health_checks/context_limit_curl.sh --self-test
+bash scripts/curl_health_checks/metering_curl.sh --self-test
+bash scripts/curl_health_checks/tracing_curl.sh --self-test
+bash scripts/curl_health_checks/moderation_floor_curl.sh --self-test
+bash scripts/curl_health_checks/mcp_curl.sh --self-test
+bash scripts/curl_health_checks/contract_curl.sh --self-test
 ```
+
+## Reading a result
+
+Every check reports one of three results, and the third is the important one:
+
+| Result | Meaning |
+|---|---|
+| `PASS` | The assertion held: status **and** headers **and** body. |
+| `FAIL` | The assertion did not hold. The `detail` field says which clause failed. |
+| `NOT-CONFIGURED` | The precondition for this check does not exist on this plane — no second tenant key, no MCP server, no exhausted-budget key, no routing headers. **It is never reported as `PASS`.** A run with any `NOT-CONFIGURED` check is PARTIAL and is not release evidence for that property. |
+
+Roughly two thirds of the checks are adversarial (`expected_failure: true`): they
+send something the gateway must refuse, and they assert the shape of the refusal
+— its code, the headers it must carry and, above all, the money headers it must
+**not** carry. A refusal that quietly charges the caller is the defect these
+modules exist to catch.
+
+Some checks need a plane fixture before they can do anything. Supply what you
+have; anything missing degrades to `NOT-CONFIGURED` rather than silently
+passing:
+
+| Environment variable | Unlocks |
+|---|---|
+| `NROUTER_API_KEY_B` | cache tenant isolation (a key in a *different* organization) |
+| `NROUTER_GUARDRAIL_ID` | requested-guardrail checks and the cache fingerprint check |
+| `NROUTER_GUARDRAIL_BLOCK_KEYWORD` | the keyword an added guardrail blocks |
+| `NROUTER_TENANT_BLOCK_KEYWORD` | the keyword the tenant's own rule blocks |
+| `NROUTER_FOREIGN_GUARDRAIL_ID` | the cross-tenant existence-oracle check |
+| `NROUTER_MCP_SERVER` | the MCP happy path |
+| `NROUTER_CONTROL_PLANE_KEY` | the real management-credential refusal check |
+| `NROUTER_DEPLETED_API_KEY` | the 402 limit-source check |
+| `NROUTER_UNPRICED_MODEL` | the "unpriced is never $0" check |
+| `NROUTER_FAILING_PRIMARY_MODEL`, `NROUTER_HEALTHY_FALLBACK_MODEL`, `NROUTER_FAILING_FALLBACK_MODEL` | forced-failover and exhausted-chain checks |
+| `NROUTER_GUARDRAILS_DISABLED_API_KEY` | proof that the platform floor is not tenant-disableable |
 
 ### 2. Live Health Check
 ```bash
@@ -47,5 +101,33 @@ bash scripts/curl_health_checks/run_all.sh --step-summary
 ### 4. JSON Output
 ```bash
 python3 scripts/curl_health_checks/run_all.py --json
+
+# One feature at a time
+python3 scripts/curl_health_checks/cache_curl.py --json
 ```
+
+Each per-feature module emits the same JSON report, so a run is a reproducible
+artifact rather than scrollback:
+
+```json
+{
+  "feature": "cache",
+  "base_url": "https://api.nrouter.ai/v1",
+  "checks": [
+    {
+      "name": "miss_then_hit",
+      "request": "curl -sS -D - -X POST \"$NROUTER_BASE_URL/chat/completions\" ...",
+      "status": 200,
+      "headers": { "x-nr-response-cache": "hit", "x-nr-request-cost": "0.000003" },
+      "assertion": "both 200; first x-nr-response-cache == miss; second == hit; ...",
+      "result": "PASS",
+      "expected_failure": false
+    }
+  ]
+}
+```
+
+The `request` field is a curl command you can paste into a terminal. The key is
+always rendered as `$NROUTER_API_KEY` and the host as `$NROUTER_BASE_URL`, so a
+report can be attached to an issue without redacting it first.
 

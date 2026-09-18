@@ -1,6 +1,6 @@
 {
   "source": "derived from the gateway's emitted header set",
-  "source_commit": "c640d0a",
+  "source_commit": "2026-09-17",
   "headers": [
     "x-nr-request-id",
     "x-nr-latency-ms",

@@ -59,7 +59,7 @@ get wrong:
 |---|---|---|
 | `nrouter_fallbacks` | 1–4 model ids, tried in order. **REPLACES** the organization's fallback policy for this one call; never merged with it. `model` stays the primary and is never listed. Text wires only. | a target this key cannot route — including an alias, auto-router, allowance or capacity-pool name — is `400 fallback_not_allowed`, before any provider egress |
 | `nrouter_guardrails` | 1–8 guardrail ids or names. **ADD-ONLY**: they run *in addition to* what is assigned to the key, team and organization, and a request can never remove, relax or replace an assigned guardrail or the platform moderation floor. Text wires only. | an id or name the organization does not own is `400 guardrail_not_found` — refused, never silently ignored |
-| `nrouter_cache: false` | Forces provider egress for a buffered text request; streams are never cached anyway. | none — the response carries `x-nr-response-cache: bypass` |
+| `nrouter_cache` | Boolean. `false` forces provider egress for a buffered text request; streams are never cached anyway. | none — the response carries `x-nr-response-cache: bypass` |
 
 **Typed option builders exist in three of the ten SDKs today, and the gate says which** — the other
 seven are recorded with a reason rather than assumed, so never claim ten of ten. Derive:
@@ -71,7 +71,8 @@ print('typed:',sorted(c.OPTION_BUILDERS));print('none:',sorted(c.NO_OPTION_BUILD
 
 `check_option_builders` fails an SDK whose builder omits a spec field, an entry in
 `NO_OPTION_BUILDER` that has quietly grown a builder, and a builder naming an invented `nrouter_*`
-key that the gateway would forward to the provider as dead weight.
+key — the gateway refuses any key outside `spec.extra_body_fields` with a 400 before the provider
+is called, so such a builder can only ever produce refusals.
 
 ### Reading a response: routing, guardrails, cache
 

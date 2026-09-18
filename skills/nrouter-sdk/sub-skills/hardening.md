@@ -52,7 +52,9 @@ the ceiling changes what the request costs. The generic `invalid_request` covers
 
 ⚠️ **`service_unavailable` (503) is the inverse case and the one SDKs get backwards.** When it
 carries `x-nr-guardrails: unavailable` the request was refused **without being judged** — the
-correct client behaviour is to RETRY, not to rewrite the prompt. A client that reports it as a
+correct CALLER behaviour is to retry the same prompt later, not to rewrite it. That is the
+application's decision, not the SDK's: every SDK keeps its automatic retries at zero on billed
+calls (see `testing.md`), and only surfaces the posture so the caller can choose. A client that reports it as a
 content block sends callers to change content nothing objected to. That header is the only thing
 separating a guardrail-capacity 503 from any other.
 

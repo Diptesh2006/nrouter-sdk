@@ -1706,8 +1706,6 @@ def run_self_test() -> int:
             os.environ[MODEL_ENV] = old_model_env
         else:
             os.environ.pop(MODEL_ENV, None)
-        else:
-            os.environ.pop(MODEL_ENV, None)
 
     print("[PASS] feature_curl.py self-test passed cleanly (all 42 features & prefix filters verified offline).")
     return 0

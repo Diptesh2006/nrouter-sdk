@@ -582,13 +582,18 @@ class RateLimitCurlHealthCheck:
             # The ONE verdict rule, shared by every module and by run_all.py:
             # nothing failed AND something was actually proven. See
             # `_curl_common.suite_verdict`.
-            **suite_verdict(passed, failed, unconfigured + not_evaluated),
+            **suite_verdict(passed, failed, unconfigured, not_evaluated),
         }
 
     def render_markdown_summary(self, suite: Dict[str, Any]) -> str:
         badge = "🟢 **PASSED**" if suite["all_passed"] else "🔴 **FAILED**"
         if suite["all_passed"] and suite["partial"]:
-            badge = "🟡 **PARTIAL (checks not configured on this plane)**"
+            if suite.get("not_evaluated_checks", 0) > 0 and not suite.get("not_configured_checks", 0):
+                badge = "🟡 **PARTIAL (checks not evaluated on this plane)**"
+            elif suite.get("not_evaluated_checks", 0) > 0:
+                badge = "🟡 **PARTIAL (checks not configured / not evaluated on this plane)**"
+            else:
+                badge = "🟡 **PARTIAL (checks not configured on this plane)**"
         lines = [
             "## 🚦 nRouter Pure-Curl Health Check: Rate Limits",
             "",
@@ -708,13 +713,20 @@ def run_self_test() -> int:
         return mock
 
     outage = RateLimitCurlHealthCheck(
-        base_url="https://mock.invalid/v1", api_key="k", burst=12, curl_fn=mock_store_outage_429()
+        base_url="https://mock.invalid/v1",
+        api_key="sk-nrouter-mock-key",
+        burst=12,
+        depleted_api_key="sk-nrouter-depleted",
+        curl_fn=mock_store_outage_429(),
     )
     outage_suite = outage.run_suite()
     outage_row = next(r for r in outage_suite["checks"] if r["name"] == "burst_returns_429_with_retry_after")
     assert outage_row["result"] == "NOT-EVALUATED", outage_row["result"]
     assert "NOT-EVALUATED (store outage)" in outage_row["detail"], outage_row["detail"]
     assert outage_row["result"] != FAIL and outage_row["result"] != PASS
+    assert outage_suite["not_configured_checks"] == 0, outage_suite["not_configured_checks"]
+    assert outage_suite["not_evaluated_checks"] > 0, outage_suite["not_evaluated_checks"]
+    assert outage_suite["partial"] is True, outage_suite["partial"]
 
     # BITE 2: a billed refusal must go red.
     def billed_refusal() -> Callable:

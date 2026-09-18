@@ -49,13 +49,14 @@ bash scripts/curl_health_checks/contract_curl.sh --self-test
 
 ## Reading a result
 
-Every check reports one of three results, and the third is the important one:
+Every check reports one of four results, and the last two are the important ones:
 
 | Result | Meaning |
 |---|---|
 | `PASS` | The assertion held: status **and** headers **and** body. |
 | `FAIL` | The assertion did not hold. The `detail` field says which clause failed. |
 | `NOT-CONFIGURED` | The precondition for this check does not exist on this plane — no second tenant key, no MCP server, no exhausted-budget key, no routing headers, a key not scoped to this route, a parameter this wire does not carry. **It is never reported as `PASS`.** A run with any `NOT-CONFIGURED` check is PARTIAL and is not release evidence for that property. |
+| `NOT-EVALUATED` | The wire response could not be evaluated (e.g. a rate-limit store outage where a 429 response lacks both `Retry-After` and `x-nr-limit-source`). **Counts as NOT PROVEN (never a pass)**, making the suite PARTIAL and listed by name under its own heading in consolidated reports. |
 
 ⚠️ **NOT-CONFIGURED is for what the script can SEE.** A precondition is absent
 only when the response proves it (a 403 naming `key_route_not_allowed`, a route
@@ -75,6 +76,15 @@ different things and this script cannot tell which plane it is on:
 |---|---|---|
 | toxicity, harassment, violence, self-harm, harmful-intent, injection, evasion | *"the model-scored moderation floor did not block; on a plane where content scoring is not required this is expected, on stage/prod it is a defect"* | Check whether content scoring is required on this plane. |
 | explicit, secret | *"the deterministic … scanner did not block … NOT conditional on content scoring … a defect on every plane"* | A defect, wherever you ran it. |
+
+### A 429 lacking Retry-After and x-nr-limit-source stays NOT-EVALUATED
+
+When the rate-limit store is unreachable, the gateway fails closed by design with a 429 that carries neither `Retry-After` nor `x-nr-limit-source`. Because the gateway's documented fail-closed "unevaluatable" shape carries neither header by design, the wire alone cannot distinguish an infrastructure store outage from a measured 429 that forgot its contract headers.
+
+These checks remain `NOT-EVALUATED` — they count as **NOT PROVEN** (never a pass), leave the suite `PARTIAL`, and are listed by name under their own heading in `run_all.py` consolidated summaries. The operator's gateway log is the arbiter: check for:
+```
+rate-limit store unreachable — REFUSING
+```
 
 Roughly two thirds of the checks are adversarial (`expected_failure: true`): they
 send something the gateway must refuse, and they assert the shape of the refusal

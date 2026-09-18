@@ -147,9 +147,7 @@ DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 
 def __getattr__(name: str) -> Any:
     if name == "DEFAULT_CHAT_MODEL":
-        val = resolve_model()
-        globals()["DEFAULT_CHAT_MODEL"] = val
-        return val
+        return resolve_model()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # Every wire this directory knows. A feature declares which of them its
@@ -1684,13 +1682,22 @@ def run_self_test() -> int:
     finally:
         globals()["FeatureCurlHealthCheck"] = saved_class
 
-    # L2: DEFAULT_CHAT_MODEL and FeatureCurlHealthCheck must resolve model lazily
+    # L2: DEFAULT_CHAT_MODEL and FeatureCurlHealthCheck must resolve model lazily without memoization
     old_model_env = os.environ.get(MODEL_ENV)
     try:
-        os.environ[MODEL_ENV] = "test/lazy-override-model"
+        os.environ[MODEL_ENV] = "test/lazy-model-first"
+        first_read = getattr(sys.modules[__name__], "DEFAULT_CHAT_MODEL")
+        assert first_read == "test/lazy-model-first", f"Expected 'test/lazy-model-first', got {first_read!r}"
+
+        os.environ[MODEL_ENV] = "test/lazy-model-second"
+        second_read = getattr(sys.modules[__name__], "DEFAULT_CHAT_MODEL")
+        assert second_read == "test/lazy-model-second", (
+            f"Expected dynamic re-resolution 'test/lazy-model-second', got stale/memoized {second_read!r}"
+        )
+
         lazy_checker = FeatureCurlHealthCheck(api_key="k")
-        assert lazy_checker.model == "test/lazy-override-model", (
-            f"Expected lazy model resolution 'test/lazy-override-model', got {lazy_checker.model!r}"
+        assert lazy_checker.model == "test/lazy-model-second", (
+            f"Expected lazy model resolution 'test/lazy-model-second', got {lazy_checker.model!r}"
         )
     finally:
         if old_model_env is not None:

@@ -124,6 +124,75 @@ def _kwargs_detection_self_test() -> int:
     return 0
 
 
+def _not_evaluated_summary_self_test() -> int:
+    """NOT-EVALUATED checks must be listed by name under their own heading in consolidated summary."""
+    model_res = {
+        "passed": True,
+        "checks": [],
+        "base_url": "https://api.test/v1",
+        "summary": {"total_models": 0, "total_providers": 0, "probe_latency_ms": 0, "providers": {}},
+        "probe": {"model": "m", "status": 200, "passed": True, "request_id": "r", "latency_ms": 0, "response_sample": ""},
+    }
+    guard_res = {
+        "all_passed": True,
+        "total_cases": 0,
+        "passed_cases": 0,
+        "failed_cases": 0,
+        "base_url": "https://api.test/v1",
+        "route": "/chat/completions",
+        "model": "m",
+        "category_summary": {},
+        "checks": [],
+    }
+    feat_res = {
+        "all_passed": True,
+        "total_features": 0,
+        "passed_features": 0,
+        "failed_features": 0,
+        "base_url": "https://api.test/v1",
+        "route": "/chat/completions",
+        "model": "m",
+        "category_summary": {},
+        "checks": [],
+    }
+
+    # Clean run: no NOT-EVALUATED checks
+    clean_md = render_consolidated_summary("https://api.test/v1", model_res, guard_res, feat_res, [])
+    if "### Not-Evaluated Checks" in clean_md:
+        print("[FAIL] clean run should not render Not-Evaluated heading", file=sys.stderr)
+        return 1
+
+    # Suite with a NOT-EVALUATED check
+    suite_with_ne = [{
+        "feature": "rate_limit",
+        "all_passed": True,
+        "partial": True,
+        "proved_nothing": False,
+        "total_checks": 1,
+        "passed_checks": 0,
+        "failed_checks": 0,
+        "not_configured_checks": 0,
+        "not_evaluated_checks": 1,
+        "adversarial_checks": 1,
+        "checks": [
+            {
+                "name": "burst_returns_429_with_retry_after",
+                "result": "NOT-EVALUATED",
+                "not_evaluated": True,
+            }
+        ],
+    }]
+    ne_md = render_consolidated_summary("https://api.test/v1", model_res, guard_res, feat_res, suite_with_ne)
+    if "### Not-Evaluated Checks" not in ne_md:
+        print("[FAIL] missing '### Not-Evaluated Checks' heading in consolidated summary", file=sys.stderr)
+        return 1
+    if "burst_returns_429_with_retry_after" not in ne_md:
+        print("[FAIL] NOT-EVALUATED check name missing under heading in summary", file=sys.stderr)
+        return 1
+    print("  consolidated summary not-evaluated heading: present by name — OK")
+    return 0
+
+
 def run_all_self_tests() -> int:
     """Run offline self-tests for all consolidated check modules."""
     print("=== Running Consolidated Offline Self-Tests ===")
@@ -135,6 +204,9 @@ def run_all_self_tests() -> int:
     kwargs_code = _kwargs_detection_self_test()
     if kwargs_code != 0:
         return kwargs_code
+    ne_code = _not_evaluated_summary_self_test()
+    if ne_code != 0:
+        return ne_code
 
     print("\n1. Testing model_curl module...")
     model_code = model_curl.run_self_test()
@@ -270,6 +342,24 @@ def render_consolidated_summary(
         + [s["feature"] for s in feature_suites if s.get("proved_nothing")]
     )
 
+    # Collect NOT-EVALUATED checks across all suites:
+    # A 429 lacking both Retry-After and x-nr-limit-source cannot be verified on wire alone.
+    # NOT-EVALUATED counts as NOT PROVEN (never a pass) and is listed by name under its own heading.
+    not_evaluated_checks: List[str] = []
+    for suite in feature_suites:
+        for check in suite.get("checks", []):
+            if check.get("result") == "NOT-EVALUATED" or check.get("not_evaluated"):
+                feature_name = suite.get("feature", "feature")
+                not_evaluated_checks.append(f"{feature_name}: `{check['name']}`")
+    for r, label in [
+        (model_result, "models"),
+        (guard_result, "guardrails"),
+        (feature_result, "features"),
+    ]:
+        for check in r.get("checks", []):
+            if check.get("result") == "NOT-EVALUATED" or check.get("not_evaluated"):
+                not_evaluated_checks.append(f"{label}: `{check.get('name', 'check')}`")
+
     lines = [
         "# 🚀 nRouter Consolidated Health Check Report",
         "",
@@ -290,6 +380,19 @@ def render_consolidated_summary(
             + ", ".join(f"`{name}`" for name in nothing_proven),
             "",
         ])
+    if not_evaluated_checks:
+        lines.extend([
+            "### Not-Evaluated Checks (Not Proven)",
+            "",
+            "> ⚠️ **NOT-EVALUATED counts as NOT PROVEN (never a pass)**: The following checks could not be "
+            "evaluated from the wire alone (e.g. rate-limit store outage fail-closed 429 response lacking "
+            "both `Retry-After` and `x-nr-limit-source`). The operator gateway log is the arbiter: "
+            "check for `rate-limit store unreachable — REFUSING`.",
+            "",
+        ])
+        for item in not_evaluated_checks:
+            lines.append(f"- {item}")
+        lines.append("")
     lines.extend([
         "---",
         "",
@@ -445,6 +548,13 @@ def main() -> int:
         + [s["feature"] for s in feature_suites if s.get("proved_nothing")]
     )
 
+    not_evaluated_checks = [
+        f"{s.get('feature', 'feature')}: {c['name']}"
+        for s in feature_suites
+        for c in s.get("checks", [])
+        if c.get("result") == "NOT-EVALUATED" or c.get("not_evaluated")
+    ]
+
     overall_passed = (
         model_res["passed"]
         and guard_res["all_passed"]
@@ -459,6 +569,12 @@ def main() -> int:
             "PROVED NOTHING:   ⚪ "
             + ", ".join(nothing_proven)
             + "  (a domain that proved nothing is not evidence)"
+        )
+    if not_evaluated_checks:
+        print(
+            "NOT EVALUATED:    ⚠️ "
+            + ", ".join(not_evaluated_checks)
+            + "  (not proven; check gateway logs: 'rate-limit store unreachable — REFUSING')"
         )
     print("============================================================")
 
@@ -483,6 +599,7 @@ def main() -> int:
             # Per module, by name: a consumer reading only `overall_passed` still
             # learns which domains reached the gateway zero times.
             "proved_nothing": nothing_proven,
+            "not_evaluated": not_evaluated_checks,
             "models_and_providers": model_res,
             "guardrails": guard_res,
             "features": feat_res,

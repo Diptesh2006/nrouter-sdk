@@ -584,7 +584,12 @@ def reported_headers(headers: Dict[str, str]) -> Dict[str, str]:
     }
 
 
-def suite_verdict(passed: int, failed: int, not_configured: int) -> Dict[str, bool]:
+def suite_verdict(
+    passed: int,
+    failed: int,
+    not_configured: int,
+    not_evaluated: int = 0,
+) -> Dict[str, bool]:
     """The ONE verdict rule for every module in this directory.
 
     A successful call is not a win, and a domain that proved NOTHING must never
@@ -594,8 +599,9 @@ def suite_verdict(passed: int, failed: int, not_configured: int) -> Dict[str, bo
 
     - `all_passed`    — nothing failed AND at least one check actually proved
                         something. Zero real passes is never a pass.
-    - `partial`       — something was absent on this plane, so the evidence is
-                        incomplete even when `all_passed` is true.
+    - `partial`       — something was absent or could not be evaluated on this
+                        plane, so the evidence is incomplete even when
+                        `all_passed` is true.
     - `proved_nothing`— not a single check ran to a real result. Reported per
                         module by `run_all.py` so an all-absent suite is named,
                         not averaged away.
@@ -603,14 +609,14 @@ def suite_verdict(passed: int, failed: int, not_configured: int) -> Dict[str, bo
     No module keeps its own copy of this arithmetic: one rule, one place, so the
     aggregate and every module agree by construction.
     """
-    if passed < 0 or failed < 0 or not_configured < 0:
+    if passed < 0 or failed < 0 or not_configured < 0 or not_evaluated < 0:
         raise ValueError(
             f"check counts cannot be negative: passed={passed} failed={failed} "
-            f"not_configured={not_configured}"
+            f"not_configured={not_configured} not_evaluated={not_evaluated}"
         )
     return {
         "all_passed": failed == 0 and passed >= 1,
-        "partial": not_configured > 0,
+        "partial": not_configured > 0 or not_evaluated > 0,
         # A FAILURE is a real result — the strongest one this harness produces.
         # "proved nothing" is reserved for a suite with no real result at all;
         # a failing suite must never be filed as benign non-evidence.
@@ -1134,6 +1140,18 @@ def suite_verdict_contract_self_test() -> None:
     assert clean["partial"] is False, clean
     assert clean["proved_nothing"] is False, clean
 
+    # not_evaluated count: partial is True even when not_configured == 0.
+    ev_partial = suite_verdict(passed=5, failed=0, not_configured=0, not_evaluated=2)
+    assert ev_partial["all_passed"] is True, ev_partial
+    assert ev_partial["partial"] is True, ev_partial
+    assert ev_partial["proved_nothing"] is False, ev_partial
+
+    # If nothing passed and nothing failed, but not_evaluated > 0: proved_nothing is True.
+    ev_nothing = suite_verdict(passed=0, failed=0, not_configured=0, not_evaluated=3)
+    assert ev_nothing["all_passed"] is False, ev_nothing
+    assert ev_nothing["proved_nothing"] is True, ev_nothing
+    assert ev_nothing["partial"] is True, ev_nothing
+
     # ANY failure fails the suite, whatever else is in it — and a failure is a
     # REAL result, so a failing suite is never "proved nothing" (a reader
     # triaging by that flag would file a broken domain as benign non-evidence).
@@ -1153,9 +1171,9 @@ def suite_verdict_contract_self_test() -> None:
         assert isinstance(value, bool), clean
 
     # Negative counts are a caller bug, not a verdict to render.
-    for bad in ((-1, 0, 0), (0, -1, 0), (0, 0, -1)):
+    for bad in ((-1, 0, 0, 0), (0, -1, 0, 0), (0, 0, -1, 0), (0, 0, 0, -1)):
         try:
-            suite_verdict(passed=bad[0], failed=bad[1], not_configured=bad[2])
+            suite_verdict(passed=bad[0], failed=bad[1], not_configured=bad[2], not_evaluated=bad[3])
         except ValueError:
             continue
         raise AssertionError(f"negative counts must be refused, not scored: {bad}")

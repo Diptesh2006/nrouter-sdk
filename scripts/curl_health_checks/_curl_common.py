@@ -304,6 +304,61 @@ def route_scope_message(route: str, model: str) -> str:
     )
 
 
+def fixed_route_scope_detail(
+    route: str, status: int, headers: Dict[str, str]
+) -> Optional[str]:
+    """NOT-CONFIGURED prose for a check pinned to a route the key may not use.
+
+    `note_route_scope` covers the route UNDER TEST and short-circuits the module.
+    Some checks are pinned to a different route by their own nature — embeddings
+    billing must ask `/embeddings`, an MCP probe must ask `/mcp` — and a key
+    scoped away from that one route says nothing about the rest of the suite. So
+    this reports the single check NOT-CONFIGURED, names the route, and lets
+    every other check run.
+
+    Deliberately as narrow as the module guard: only a 403 that NAMES
+    `key_route_not_allowed`. Any other 403, and any other status, is a real
+    failure and falls through to the check's own assertions.
+    """
+    if status != 403 or headers.get("x-nr-auth-reason") != "key_route_not_allowed":
+        return None
+    return (
+        f"the gateway answered 403 with x-nr-auth-reason: key_route_not_allowed for "
+        f"{route} — this check can only be made on that route, and this key's route "
+        f"policy does not include it, so nothing about the behaviour was tested. Run "
+        f"it with a key whose route policy covers {route}."
+    )
+
+
+def auth_denial_note(
+    status: int, headers: Dict[str, str], expect_status: Tuple[int, ...]
+) -> str:
+    """Name an unexpected auth denial, and whether the gateway said WHY.
+
+    A 401/403 where the check expected some other refusal means the request never
+    reached the behaviour under test. That is a failure, and the detail has to
+    carry the evidence: the observed status, and the value of `x-nr-auth-reason`
+    or the fact that the header is ABSENT. A denial that names no machine reason
+    leaves a client string-matching prose, so its absence is the finding, not a
+    blank.
+    """
+    if status not in (401, 403) or status in expect_status:
+        return ""
+    reason = headers.get("x-nr-auth-reason")
+    if reason:
+        return (
+            f"the gateway answered {status} with x-nr-auth-reason: {reason} — an "
+            f"authorization denial, not the {expect_status} refusal under test, so "
+            "the behaviour was never reached"
+        )
+    return (
+        f"the gateway answered {status} with NO x-nr-auth-reason header — an "
+        f"authorization denial, not the {expect_status} refusal under test, and it "
+        "names no machine-readable reason, so a client has only the prose to "
+        "classify it by"
+    )
+
+
 def note_route_scope(checker: Any, status: int, headers: Dict[str, str]) -> bool:
     """Record, once, that this key is not scoped to the route under test.
 
@@ -578,6 +633,66 @@ def json_stdout_contract_self_test(suite: Dict[str, Any], markdown: str = "") ->
         pass
     else:  # pragma: no cover - only reachable if the human report disappears
         raise AssertionError("the default path printed a JSON document instead of a report")
+
+
+def main_json_stdout_contract_self_test(
+    main_fn: Callable[[], int],
+    argv: List[str],
+    banner_marker: str,
+    expect_keys: Tuple[str, ...],
+) -> None:
+    """Prove a module's REAL `main()` leaves EXACTLY one JSON document on stdout.
+
+    `json_stdout_contract_self_test` covers modules that report through
+    `emit_results`. The three older modules print their banner and their check
+    list inline in `main()`, so the only honest way to pin the contract is to RUN
+    `main()` — banner included — and parse what it wrote to stdout. Anything that
+    leaks (a banner, a `[FAIL]` line, a trailing summary) makes `json.loads`
+    raise here, which is exactly what it does to the caller's `> report.json`.
+
+    The caller supplies `argv` and is responsible for making `main()` reach its
+    reporting path without a network: it substitutes the module's checker class
+    for a double first. No key ever leaves this process — the placeholder below
+    exists only to get past the "no credential" early return.
+    """
+    saved_argv = sys.argv
+    saved_key = os.environ.get(ENV_VAR)
+    os.environ[ENV_VAR] = "sk-nrouter-self-test-placeholder-not-a-credential"
+    captured_out, captured_err = io.StringIO(), io.StringIO()
+    try:
+        sys.argv = list(argv)
+        with contextlib.redirect_stdout(captured_out), contextlib.redirect_stderr(captured_err):
+            main_fn()
+    finally:
+        sys.argv = saved_argv
+        if saved_key is None:
+            os.environ.pop(ENV_VAR, None)
+        else:
+            os.environ[ENV_VAR] = saved_key
+
+    stdout_text = captured_out.getvalue()
+    stderr_text = captured_err.getvalue()
+    if "--json" in argv:
+        parsed = json.loads(stdout_text)  # raises if ANYTHING else reached stdout
+        for key in expect_keys:
+            assert key in parsed, f"the JSON document lost its {key!r} key"
+        assert banner_marker not in stdout_text, (
+            f"the human banner leaked onto stdout, so `--json > report.json` is "
+            f"unparseable: {stdout_text[:120]!r}"
+        )
+        assert banner_marker in stderr_text, (
+            "the banner vanished instead of moving to stderr — the human report "
+            "must not be lost, only redirected"
+        )
+        return
+
+    # Without --json the human report goes to stdout and NO JSON is printed.
+    assert banner_marker in stdout_text, "the human report vanished from the default path"
+    try:
+        json.loads(stdout_text)
+    except json.JSONDecodeError:
+        return
+    raise AssertionError("the default path printed a JSON document instead of a report")
 
 
 def wire_contract_self_test() -> None:

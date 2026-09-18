@@ -97,6 +97,12 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# Only the shared SELF-TEST contract is borrowed: this module keeps its own
+# transport and its own report shape. `--json` puts exactly one JSON document on
+# stdout in all thirteen modules, so that contract has one home, not three.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _curl_common import main_json_stdout_contract_self_test  # noqa: E402
+
 DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 DEFAULT_CHAT_MODEL = "openai/gpt-4o-mini"
 DEFAULT_MESSAGES_MODEL = "claude-haiku-4-5-20251001"
@@ -1319,6 +1325,35 @@ def run_self_test() -> int:
     broken_result = broken_checker.run_suite(quick=True)
     assert broken_result["all_passed"] is False, "Broken mock should fail"
 
+    # THE `--json` CONTRACT, driven through the REAL main(): a banner on stdout
+    # above the document is what makes `--json > feature.json` unparseable.
+    # The checker is substituted for a double, so nothing touches the network.
+    class _StubChecker:
+        def __init__(self, **_kwargs):
+            pass
+
+        def run_suite(self, quick: bool = False, feature_filter: str = ""):
+            return result
+
+        def render_markdown_summary(self, _result):
+            return "## stub"
+
+    saved_class = globals()["FeatureCurlHealthCheck"]
+    globals()["FeatureCurlHealthCheck"] = _StubChecker
+    try:
+        for argv in (
+            ["feature_curl.py", "--json"],
+            ["feature_curl.py"],
+        ):
+            main_json_stdout_contract_self_test(
+                main,
+                argv,
+                "=== Starting nRouter Feature-by-Feature Pure-Curl Health Check ===",
+                ("all_passed", "checks", "total_features"),
+            )
+    finally:
+        globals()["FeatureCurlHealthCheck"] = saved_class
+
     print("[PASS] feature_curl.py self-test passed cleanly (all 40 features & prefix filters verified offline).")
     return 0
 
@@ -1356,32 +1391,38 @@ def main() -> int:
         embed_model=args.embed_model,
     )
 
+    # THE `--json` CONTRACT: with --json, stdout carries EXACTLY ONE JSON
+    # document and nothing else, so `feature_curl.py --json > out.json` produces
+    # a parseable file. The human report moves to stderr rather than being
+    # discarded. Matches `emit_results` and the ten newer modules.
+    report = sys.stderr if args.json else sys.stdout
+
     mode_label = f"Filtered by '{args.feature}'" if args.feature else ("Quick (10 features)" if args.quick else "Full (40 feature-specific curl commands)")
-    print("=== Starting nRouter Feature-by-Feature Pure-Curl Health Check ===")
-    print(f"Base URL:       {args.base_url}")
-    print(f"Mode:           {mode_label}")
-    print(f"Chat Model:     {args.chat_model}")
-    print(f"Messages Model: {args.messages_model}")
-    print(f"Embed Model:    {args.embed_model}")
-    print("------------------------------------------------------------")
+    print("=== Starting nRouter Feature-by-Feature Pure-Curl Health Check ===", file=report)
+    print(f"Base URL:       {args.base_url}", file=report)
+    print(f"Mode:           {mode_label}", file=report)
+    print(f"Chat Model:     {args.chat_model}", file=report)
+    print(f"Messages Model: {args.messages_model}", file=report)
+    print(f"Embed Model:    {args.embed_model}", file=report)
+    print("------------------------------------------------------------", file=report)
 
     result = checker.run_suite(quick=args.quick, feature_filter=args.feature)
 
     for check in result["checks"]:
         st = "PASS" if check["passed"] else "FAIL"
         params_str = ", ".join(check["parameters_tested"])
-        print(f"[{st}] #{check['index']} [{check['category']}] {check['name']} - HTTP {check['http_status']} ({check['latency_ms']}ms)")
-        print(f"       Endpoint:    {check['method']} {check['endpoint']}")
-        print(f"       Parameters:  {params_str}")
-        print(f"       Response:    {check['response_snippet']}")
+        print(f"[{st}] #{check['index']} [{check['category']}] {check['name']} - HTTP {check['http_status']} ({check['latency_ms']}ms)", file=report)
+        print(f"       Endpoint:    {check['method']} {check['endpoint']}", file=report)
+        print(f"       Parameters:  {params_str}", file=report)
+        print(f"       Response:    {check['response_snippet']}", file=report)
         if not check["passed"] and check.get("error"):
-            print(f"       Error:       {check['error']}")
+            print(f"       Error:       {check['error']}", file=report)
 
-    print("------------------------------------------------------------")
-    print(f"Total Feature Probes: {result['total_features']}")
-    print(f"Passed:               {result['passed_features']}")
-    print(f"Failed:               {result['failed_features']}")
-    print(f"Overall Result:       {'PASS' if result['all_passed'] else 'FAIL'}")
+    print("------------------------------------------------------------", file=report)
+    print(f"Total Feature Probes: {result['total_features']}", file=report)
+    print(f"Passed:               {result['passed_features']}", file=report)
+    print(f"Failed:               {result['failed_features']}", file=report)
+    print(f"Overall Result:       {'PASS' if result['all_passed'] else 'FAIL'}", file=report)
 
     if args.step_summary:
         step_summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -1390,11 +1431,12 @@ def main() -> int:
             try:
                 with open(step_summary_path, "a") as f:
                     f.write("\n" + md_content + "\n")
-                print(f"Appended feature markdown summary to GITHUB_STEP_SUMMARY ({step_summary_path})")
+                print(f"Appended feature markdown summary to GITHUB_STEP_SUMMARY ({step_summary_path})", file=report)
             except Exception as exc:
                 print(f"Warning: Failed to write to GITHUB_STEP_SUMMARY: {exc}", file=sys.stderr)
 
     if args.json:
+        # The one and only thing this function writes to stdout.
         print(json.dumps(result, indent=2))
 
     return 0 if result["all_passed"] else 1

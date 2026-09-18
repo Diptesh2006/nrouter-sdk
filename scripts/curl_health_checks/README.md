@@ -77,6 +77,8 @@ passing:
 | `NROUTER_CONTROL_PLANE_KEY` | the real management-credential refusal check |
 | `NROUTER_DEPLETED_API_KEY` | the 402 limit-source check |
 | `NROUTER_UNPRICED_MODEL` | the "unpriced is never $0" check |
+| `NROUTER_HEALTH_FALLBACK_MODEL` | a **healthy secondary this key can route to**, for the two fallback happy-path checks (see below) |
+| `NROUTER_HEALTH_SECOND_FALLBACK_MODEL` | an optional third target, so the ordered walk has two ranks to walk |
 | `NROUTER_FAILING_PRIMARY_MODEL`, `NROUTER_HEALTHY_FALLBACK_MODEL`, `NROUTER_FAILING_FALLBACK_MODEL` | forced-failover and exhausted-chain checks |
 | `NROUTER_GUARDRAILS_DISABLED_API_KEY` | proof that the platform floor is not tenant-disableable |
 
@@ -140,6 +142,12 @@ python3 scripts/curl_health_checks/cache_curl.py --json > report.json   # parsea
 python3 scripts/curl_health_checks/cache_curl.py --json                 # both, on screen
 ```
 
+This holds for **all thirteen** modules including `model_curl`, `guardrail_curl`
+and `feature_curl`, which used to print their banner above the document and made
+`--json > report.json` unparseable. Each one's self-test now drives its real
+`main()` and parses what it wrote to stdout, so a banner that creeps back onto
+stdout fails the self-test rather than the next consumer.
+
 ## Choosing the route and the model
 
 A virtual key is commonly **scoped** to a subset of routes and models. Pointing
@@ -178,6 +186,44 @@ precondition, so the module reports **NOT-CONFIGURED**, names the header value
 and the variable to set, and stops — rather than reporting every remaining check
 as a gateway failure that never happened. A `403` for any *other* reason, and a
 `401`, are still real failures.
+
+**A check pinned to a DIFFERENT fixed route** — `metering_curl`'s two embeddings
+checks, `mcp_curl`'s `/mcp` probes, `contract_curl`'s `/openapi.json` — behaves
+the same way but does **not** stop the module: a key scoped away from one route
+says nothing about the route under test, so that single check reports
+NOT-CONFIGURED naming the route and every other check still runs.
+
+## Choosing the fallback targets
+
+Same reasoning, one level down. `fallbacks_curl` needs a **secondary this key
+can actually route to**, and the built-in default is only a guess. A key scoped
+to two models refuses the guess with `400 fallback_not_allowed` — which is the
+gateway being **right**, not a defect:
+
+| Variable | Flag | Applies to |
+|---|---|---|
+| `NROUTER_HEALTH_FALLBACK_MODEL` | `--fallback-model` | `direct_serve_with_fallback_list`, `request_list_is_walked_in_order` |
+| `NROUTER_HEALTH_SECOND_FALLBACK_MODEL` | `--second-fallback-model` | `request_list_is_walked_in_order` (the ordered walk) |
+
+```bash
+NROUTER_HEALTH_ROUTE=/messages \
+NROUTER_HEALTH_MODEL=claude-haiku-4-5-20251001 \
+NROUTER_HEALTH_FALLBACK_MODEL=<a second model this key allows> \
+  python3 scripts/curl_health_checks/fallbacks_curl.py
+```
+
+While the variable is **unset**, a `400 fallback_not_allowed` on those two checks
+is reported NOT-CONFIGURED and names the variable. Three narrowings keep that
+from becoming a hiding place, and each is mutation-checked:
+
+* a `400` carrying any **other** code is a real FAIL;
+* any other **status** is a real FAIL;
+* a target you **named yourself** and the gateway refused is a real FAIL — you
+  asserted the key can route it and the gateway disagreed.
+
+The refused-target check (`unpermitted_target_is_400`) is unaffected: it uses a
+deliberately unroutable name, so its `400` is about the policy and never about
+which models your particular key happens to hold.
 
 ## Credentials
 

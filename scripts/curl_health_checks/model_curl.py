@@ -33,6 +33,13 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# Only the shared SELF-TEST contract is borrowed: this module keeps its own
+# transport and its own report shape. `main_json_stdout_contract_self_test` is
+# the one thing all thirteen modules must agree on — `--json` puts exactly one
+# JSON document on stdout — so it has one home rather than three copies.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _curl_common import main_json_stdout_contract_self_test  # noqa: E402
+
 DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 DEFAULT_PROBE_MODEL = "openai/gpt-4o-mini"
 MIN_EXPECTED_MODELS = 10
@@ -387,6 +394,36 @@ def run_self_test() -> int:
     failing_result = failing_checker.run_all()
     assert failing_result["passed"] is False, "Failing checker should report passed=False"
 
+    # THE `--json` CONTRACT, driven through the REAL main(). A banner on stdout
+    # above the document is what makes `model_curl.py --json > model.json`
+    # unparseable, so the only honest test runs main() and parses what it wrote.
+    # The checker is substituted for a double, so nothing touches the network.
+    class _StubChecker:
+        def __init__(self, **_kwargs):
+            self.route = "/chat/completions"
+
+        def run_all(self):
+            return result
+
+        def render_markdown_summary(self, _result):
+            return "## stub"
+
+    saved_class = globals()["ModelCurlHealthCheck"]
+    globals()["ModelCurlHealthCheck"] = _StubChecker
+    try:
+        for argv in (
+            ["model_curl.py", "--json"],
+            ["model_curl.py"],
+        ):
+            main_json_stdout_contract_self_test(
+                main,
+                argv,
+                "=== Starting nRouter Model & Provider Curl Health Check ===",
+                ("passed", "checks", "summary"),
+            )
+    finally:
+        globals()["ModelCurlHealthCheck"] = saved_class
+
     print("[PASS] model_curl.py self-test passed cleanly.")
     return 0
 
@@ -420,23 +457,29 @@ def main() -> int:
         probe_model=args.probe_model,
     )
 
-    print(f"=== Starting nRouter Model & Provider Curl Health Check ===")
-    print(f"Base URL:    {args.base_url}")
-    print(f"Probe Model: {args.probe_model}")
-    print("------------------------------------------------------------")
+    # THE `--json` CONTRACT: with --json, stdout carries EXACTLY ONE JSON
+    # document and nothing else, so `model_curl.py --json > model.json` produces
+    # a parseable file. The human report is not discarded — it moves to stderr,
+    # so a person watching the terminal still sees it. Matches `emit_results`.
+    report = sys.stderr if args.json else sys.stdout
+
+    print(f"=== Starting nRouter Model & Provider Curl Health Check ===", file=report)
+    print(f"Base URL:    {args.base_url}", file=report)
+    print(f"Probe Model: {args.probe_model}", file=report)
+    print("------------------------------------------------------------", file=report)
 
     result = checker.run_all()
 
     for check in result["checks"]:
         st = "PASS" if check["passed"] else "FAIL"
-        print(f"[{st}] {check['name']} - HTTP {check['http_status']} ({check['latency_ms']}ms)")
+        print(f"[{st}] {check['name']} - HTTP {check['http_status']} ({check['latency_ms']}ms)", file=report)
         if not check["passed"] and check.get("error"):
-            print(f"       Error: {check['error']}")
+            print(f"       Error: {check['error']}", file=report)
 
-    print("------------------------------------------------------------")
-    print(f"Catalog Models:    {result['summary']['total_models']}")
-    print(f"Active Providers:  {result['summary']['total_providers']}")
-    print(f"Overall Result:    {'PASS' if result['passed'] else 'FAIL'}")
+    print("------------------------------------------------------------", file=report)
+    print(f"Catalog Models:    {result['summary']['total_models']}", file=report)
+    print(f"Active Providers:  {result['summary']['total_providers']}", file=report)
+    print(f"Overall Result:    {'PASS' if result['passed'] else 'FAIL'}", file=report)
 
     if args.step_summary:
         step_summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -445,11 +488,12 @@ def main() -> int:
             try:
                 with open(step_summary_path, "a") as f:
                     f.write("\n" + md_content + "\n")
-                print(f"Appended markdown summary to GITHUB_STEP_SUMMARY ({step_summary_path})")
+                print(f"Appended markdown summary to GITHUB_STEP_SUMMARY ({step_summary_path})", file=report)
             except Exception as exc:
                 print(f"Warning: Failed to write to GITHUB_STEP_SUMMARY: {exc}", file=sys.stderr)
 
     if args.json:
+        # The one and only thing this function writes to stdout.
         print(json.dumps(result, indent=2))
 
     return 0 if result["passed"] else 1

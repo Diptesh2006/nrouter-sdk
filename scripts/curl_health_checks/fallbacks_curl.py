@@ -58,6 +58,7 @@ from _curl_common import (  # noqa: E402
     PASS,
     add_wire_arguments,
     assert_all,
+    auth_denial_note,
     build_body,
     emit_results,
     error_of,
@@ -78,8 +79,20 @@ from _curl_common import (  # noqa: E402
 
 FEATURE = "fallbacks"
 DEFAULT_PRIMARY_MODEL = "openai/gpt-4o-mini"
+# These two are only a GUESS at a secondary this key can route to. A virtual key
+# is commonly scoped to a handful of models, and a target outside that scope is
+# refused 400 `fallback_not_allowed` — which is the gateway being RIGHT. So the
+# healthy secondary is an override (`NROUTER_HEALTH_FALLBACK_MODEL`), and when it
+# is unset and the default is refused for exactly that reason, the happy-path
+# checks report NOT-CONFIGURED rather than blaming the gateway for correctness.
 DEFAULT_FALLBACK_MODEL = "anthropic/claude-3-5-haiku"
 DEFAULT_SECOND_FALLBACK_MODEL = "google/gemini-2.5-flash"
+FALLBACK_MODEL_ENV = "NROUTER_HEALTH_FALLBACK_MODEL"
+SECOND_FALLBACK_MODEL_ENV = "NROUTER_HEALTH_SECOND_FALLBACK_MODEL"
+FALLBACK_NOT_ALLOWED = "fallback_not_allowed"
+# Deliberately unroutable on every plane: the refused-target check needs a name
+# no catalogue can serve, so its 400 is about the POLICY and not about which
+# models this particular key happens to hold.
 UNPERMITTED_TARGET = "private/unauthorized-enterprise-model"
 AUTO_MODEL = "nrouter/auto"
 MAX_FALLBACK_TARGETS = 4
@@ -97,8 +110,8 @@ class FallbacksCurlHealthCheck:
         route: str = "",
         model: str = "",
         primary_model: str = "",
-        fallback_model: str = DEFAULT_FALLBACK_MODEL,
-        second_fallback_model: str = DEFAULT_SECOND_FALLBACK_MODEL,
+        fallback_model: str = "",
+        second_fallback_model: str = "",
         failing_primary_model: Optional[str] = None,
         healthy_fallback_model: Optional[str] = None,
         curl_fn: Callable = run_curl,
@@ -112,8 +125,20 @@ class FallbacksCurlHealthCheck:
         self.scope_detail: Optional[str] = None
         self._current_path: Optional[str] = None
         self.primary_model = primary_model or self.model
-        self.fallback_model = fallback_model
-        self.second_fallback_model = second_fallback_model
+        # A healthy SECONDARY is plane data, exactly like the route and the
+        # primary model: this key may not be allowed to route the default. Track
+        # whether each was actually named, because that is what tells a refusal
+        # of the guess apart from a refusal of a configured target.
+        configured_fallback = fallback_model or os.environ.get(FALLBACK_MODEL_ENV, "")
+        configured_second = second_fallback_model or os.environ.get(
+            SECOND_FALLBACK_MODEL_ENV, ""
+        )
+        self.fallback_model = configured_fallback or DEFAULT_FALLBACK_MODEL
+        self.second_fallback_model = configured_second or DEFAULT_SECOND_FALLBACK_MODEL
+        self.fallback_target_configured = {
+            FALLBACK_MODEL_ENV: bool(configured_fallback),
+            SECOND_FALLBACK_MODEL_ENV: bool(configured_second),
+        }
         self.failing_primary_model = failing_primary_model or os.environ.get(
             "NROUTER_FAILING_PRIMARY_MODEL", ""
         )
@@ -197,6 +222,48 @@ class FallbacksCurlHealthCheck:
     def _body_payload(self, model: str, **extra: Any) -> Dict[str, Any]:
         return build_body(self.route, model, "ping", max_tokens=8, **extra)
 
+    def _unconfigured_target_detail(
+        self, status: int, body: str, needed: Tuple[str, ...]
+    ) -> Optional[str]:
+        """The NOT-CONFIGURED explanation for a refused GUESS, or None.
+
+        Same shape as the route-scope short-circuit and just as narrow. A key is
+        scoped to a set of models; a fallback target outside it is refused 400
+        `fallback_not_allowed`, and that refusal is the gateway being CORRECT.
+        Reporting it as a happy-path FAIL blames the gateway for a right answer
+        and buries the one actionable fact — that nobody named a secondary this
+        key can route to.
+
+        Three narrowings, each pinned by the self-test:
+          * it applies only while the variable is UNSET. A target someone
+            explicitly named and the gateway refused is a REAL failure.
+          * only status 400, and
+          * only `error.code == fallback_not_allowed`. Any other code (an
+            oversize request, a bad shape) is a real failure.
+
+        Unlike the route guard this does NOT short-circuit the module: a target
+        the key cannot route says nothing about the refusal checks, which are
+        still meaningful and still run.
+        """
+        unset = [name for name in needed if not self.fallback_target_configured[name]]
+        if not unset:
+            return None
+        if status != 400 or error_of(body).get("code") != FALLBACK_NOT_ALLOWED:
+            return None
+        current = {
+            FALLBACK_MODEL_ENV: self.fallback_model,
+            SECOND_FALLBACK_MODEL_ENV: self.second_fallback_model,
+        }
+        return (
+            f"the gateway refused this chain 400 {FALLBACK_NOT_ALLOWED} — the CORRECT "
+            "answer for a target this key may not route to, so nothing about the "
+            "fallback walk was tested. Name a secondary the key allows: "
+            + " ".join(f"{name}=<a model the key allows>" for name in unset)
+            + " (currently the built-in guess: "
+            + ", ".join(f"{name}={current[name]}" for name in unset)
+            + ")"
+        )
+
     # ------------------------------------------------------------ happy checks
 
     def check_direct_serve_with_fallback_list(self) -> Dict[str, Any]:
@@ -214,6 +281,14 @@ class FallbacksCurlHealthCheck:
             ),
         )
         status, headers, body, _ = self.curl_fn(args)
+        unconfigured = self._unconfigured_target_detail(
+            status, body, (FALLBACK_MODEL_ENV,)
+        )
+        if unconfigured:
+            return self._record(
+                name, request, status, headers, assertion, False, False,
+                detail=unconfigured, not_configured=True,
+            )
         routing = headers.get("x-nr-routing")
         attempts = headers.get("x-nr-attempts")
         body_ok, body_detail = served_body_ok(self.route, body)
@@ -316,6 +391,14 @@ class FallbacksCurlHealthCheck:
             ),
         )
         status, headers, body, _ = self.curl_fn(args)
+        unconfigured = self._unconfigured_target_detail(
+            status, body, (FALLBACK_MODEL_ENV, SECOND_FALLBACK_MODEL_ENV)
+        )
+        if unconfigured:
+            return self._record(
+                name, request, status, headers, assertion, False, False,
+                detail=unconfigured, not_configured=True,
+            )
         attempts = headers.get("x-nr-attempts")
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
@@ -339,6 +422,7 @@ class FallbacksCurlHealthCheck:
         raw_body: Optional[str] = None,
         expect_status: Tuple[int, ...] = (400,),
         message_must_match: Optional[str] = None,
+        expect_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Shared adversarial shape: a refusal with a code, no cost, no rank."""
         args, request = self._prepare(
@@ -362,10 +446,23 @@ class FallbacksCurlHealthCheck:
                 "routing headers present on a refusal",
             ),
         ]
+        if expect_type:
+            conditions.append(
+                (
+                    err.get("type") == expect_type,
+                    f"error.type {err.get('type')!r} != {expect_type!r}",
+                )
+            )
         if expect_code:
             conditions.append(
                 (code == expect_code, f"error.code {code!r} != {expect_code!r}")
             )
+        # An authentication/authorization denial is never the refusal under test,
+        # and WHICH one it was is the evidence. Recorded as its own clause so the
+        # transcript names the status and whether the gateway said why.
+        auth_note = auth_denial_note(status, headers, expect_status)
+        if auth_note:
+            conditions.append((False, auth_note))
         if message_must_match:
             conditions.append(
                 (
@@ -399,14 +496,38 @@ class FallbacksCurlHealthCheck:
         )
 
     def check_self_reference_400(self) -> Dict[str, Any]:
+        """The primary listed as its own fallback is refused.
+
+        ⚠️ THIS REFUSAL CARRIES NO MACHINE `code` TODAY — a known contract gap.
+        The gateway raises it as an invalid-request-JSON refusal, which publishes
+        `type: gateway_error` and omits `code` entirely (only the refusals the
+        published spec can name, such as `fallback_not_allowed`, carry one). So
+        the wording is the only handle a caller has, and the only handle this
+        check has. Two consequences, both deliberate:
+
+          * the message pattern is WIDE (`repeat` is the gateway's own word
+            today, and the others cover the phrasings a rewrite would reach for),
+            because a prose assertion that tracks one sentence is a false gate;
+          * the SHAPE is what is really asserted — 400, `type: gateway_error`,
+            no `x-nr-request-cost`, no `x-nr-routing` / `x-nr-attempts`. Those
+            survive any rewording, and the money and rank clauses are the ones
+            that matter.
+
+        If the gateway ever names this refusal, pin the code here and the prose
+        stops being load-bearing. Absence of `code` is NOT asserted: doing so
+        would turn that improvement into a red test.
+        """
         return self._refusal_check(
             "self_reference_400",
-            "400; error.type present; message forbids listing the primary as its own fallback; no cost header",
+            "400; error.type == gateway_error; message forbids repeating the requested "
+            "model as its own fallback (no machine code exists for this refusal today); "
+            "no x-nr-request-cost; no routing headers",
             self._body_payload(
                 self.primary_model, nrouter_fallbacks=[self.primary_model]
             ),
             expect_code=None,
-            message_must_match=r"(itself|self|primary|same)",
+            expect_type="gateway_error",
+            message_must_match=r"(repeat|itself|self|primary|same)",
         )
 
     def check_unknown_nrouter_key_400(self) -> Dict[str, Any]:
@@ -561,7 +682,10 @@ def run_self_test() -> int:
         return {}
 
     def refusal(code: Optional[str], message: str) -> str:
-        error: Dict[str, Any] = {"type": "invalid_request_error", "message": message}
+        # `gateway_error` is the literal the gateway publishes as `type` for every
+        # refusal on this path — the fixture matches the wire, or the assertions
+        # are pinned to a shape no gateway ever sends.
+        error: Dict[str, Any] = {"type": "gateway_error", "message": message}
         if code:
             error["code"] = code
         return json.dumps({"error": error})
@@ -807,6 +931,241 @@ def run_self_test() -> int:
     )
     assert blocked_suite["not_configured_checks"] == 0, blocked_suite
 
+    # ------------------------------------------------------------------ D1 --
+    # A key scoped to two models cannot route the DEFAULT secondary, and the
+    # gateway refuses it 400 `fallback_not_allowed`. That is the gateway being
+    # CORRECT, so the happy-path checks must report NOT-CONFIGURED and name the
+    # variable that would fix it — never FAIL the gateway for a right answer.
+    routable = {
+        "vendor/allowed-secondary",
+        "vendor/allowed-tertiary",
+        "vendor/healthy-secondary",
+        "vendor/down-secondary",
+    }
+
+    def mock_only_scoped_targets_route(args, timeout_s=40, stdin_data=None):
+        """Every rule of `mock_curl`, plus this key's narrow model scope."""
+        body = payload_of(args)
+        model, targets = body.get("model"), body.get("nrouter_fallbacks")
+        if (
+            isinstance(targets, list)
+            and model not in targets                       # not a self-reference
+            and UNPERMITTED_TARGET not in targets          # not the policy probe
+            and len(targets) <= MAX_FALLBACK_TARGETS       # not the ceiling probe
+            and any(target not in routable for target in targets)
+        ):
+            return 400, dict(base_headers), refusal(
+                FALLBACK_NOT_ALLOWED, "fallback model is not available to this key"
+            ), 6.0
+        return mock_curl(args, timeout_s, stdin_data)
+
+    unrouted = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k",
+        curl_fn=mock_only_scoped_targets_route,
+    )
+    unrouted_rows = {r["name"]: r for r in unrouted.run_suite()["checks"]}
+    for check_name, needed in (
+        ("direct_serve_with_fallback_list", FALLBACK_MODEL_ENV),
+        ("request_list_is_walked_in_order", SECOND_FALLBACK_MODEL_ENV),
+    ):
+        row = unrouted_rows[check_name]
+        assert row["result"] == NOT_CONFIGURED, (
+            f"{check_name}: a refused DEFAULT fallback target is an absent "
+            f"precondition, not a gateway failure; got {row['result']} "
+            f"({row.get('detail')})"
+        )
+        assert needed in row.get("detail", ""), (
+            f"{check_name}: NOT-CONFIGURED must name the variable to set; "
+            f"got {row.get('detail')!r}"
+        )
+    assert unrouted.run_suite()["failed_checks"] == 0, "the gateway answered correctly throughout"
+
+    # ...and once the variable NAMES a target this key can route, the same
+    # checks assert for real again, with no other edit.
+    configured = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k",
+        fallback_model="vendor/allowed-secondary",
+        second_fallback_model="vendor/allowed-tertiary",
+        curl_fn=mock_only_scoped_targets_route,
+    )
+    configured_suite = configured.run_suite()
+    assert configured_suite["all_passed"] is True, [
+        (r["name"], r.get("detail")) for r in configured_suite["checks"] if r["result"] == FAIL
+    ]
+    configured_rows = {r["name"]: r for r in configured_suite["checks"]}
+    for check_name in ("direct_serve_with_fallback_list", "request_list_is_walked_in_order"):
+        assert configured_rows[check_name]["result"] == PASS, (
+            f"{check_name} must assert for real once a routable secondary is named; "
+            f"got {configured_rows[check_name]}"
+        )
+    # ...and the OTHER half, which is the one that makes the flag load-bearing:
+    # a target somebody NAMED and the gateway still refused is a REAL failure.
+    # The operator asserted this key can route it; the gateway disagreed, and
+    # that disagreement is a finding, not an absent precondition. Without this
+    # case the "configured" flag can be deleted and every test still passes —
+    # measured: ignoring the flag entirely left the suite green until this case
+    # existed, because a configured target is otherwise SERVED and never reaches
+    # the 400 branch at all.
+    def mock_refuses_every_target(args, timeout_s=40, stdin_data=None):
+        body = payload_of(args)
+        if isinstance(body.get("nrouter_fallbacks"), list):
+            return 400, dict(base_headers), refusal(
+                FALLBACK_NOT_ALLOWED, "fallback model is not available to this key"
+            ), 6.0
+        return mock_curl(args, timeout_s, stdin_data)
+
+    named_but_refused = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k",
+        fallback_model="vendor/allowed-secondary",
+        second_fallback_model="vendor/allowed-tertiary",
+        curl_fn=mock_refuses_every_target,
+    )
+    named_row = {
+        r["name"]: r for r in named_but_refused.run_suite(quick=True)["checks"]
+    }["direct_serve_with_fallback_list"]
+    assert named_row["result"] == FAIL, (
+        f"a {FALLBACK_NOT_ALLOWED} refusal of an EXPLICITLY NAMED target is a real "
+        f"failure, not an absent precondition; got {named_row['result']} "
+        f"({named_row.get('detail')})"
+    )
+
+    # The override is honoured from the environment too, not only the flag.
+    os.environ[FALLBACK_MODEL_ENV] = "vendor/allowed-secondary"
+    os.environ[SECOND_FALLBACK_MODEL_ENV] = "vendor/allowed-tertiary"
+    from_env = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k",
+        curl_fn=mock_only_scoped_targets_route,
+    )
+    from_env_rows = {r["name"]: r for r in from_env.run_suite()["checks"]}
+    assert from_env_rows["direct_serve_with_fallback_list"]["result"] == PASS, (
+        f"{FALLBACK_MODEL_ENV} must be read from the environment, not only the flag; "
+        f"got {from_env_rows['direct_serve_with_fallback_list']}"
+    )
+    assert from_env_rows["request_list_is_walked_in_order"]["result"] == PASS, (
+        f"{SECOND_FALLBACK_MODEL_ENV} must be read from the environment"
+    )
+    os.environ.pop(FALLBACK_MODEL_ENV, None)
+    os.environ.pop(SECOND_FALLBACK_MODEL_ENV, None)
+
+    # THE NARROWING, both halves. NOT-CONFIGURED is reserved for a 400 that
+    # names `fallback_not_allowed`: a 400 with any OTHER code, and any other
+    # status, remain real failures.
+    def mock_other_400_code(args, timeout_s=40, stdin_data=None):
+        body = payload_of(args)
+        model, targets = body.get("model"), body.get("nrouter_fallbacks")
+        if (
+            isinstance(targets, list)
+            and model not in targets
+            and UNPERMITTED_TARGET not in targets
+            and len(targets) <= MAX_FALLBACK_TARGETS
+        ):
+            return 400, dict(base_headers), refusal("input_too_large", "request too large"), 6.0
+        return mock_curl(args, timeout_s, stdin_data)
+
+    other_code = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_other_400_code
+    )
+    other_row = other_code.run_suite(quick=True)["checks"][0]
+    assert other_row["result"] == FAIL, (
+        "a 400 carrying a code other than fallback_not_allowed is a real failure; "
+        f"got {other_row['result']}"
+    )
+
+    def mock_503(args, timeout_s=40, stdin_data=None):
+        return 503, dict(base_headers), refusal(None, "upstream unavailable"), 9.0
+
+    unavailable = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_503
+    )
+    unavailable_suite = unavailable.run_suite(quick=True)
+    assert unavailable_suite["failed_checks"] == unavailable_suite["total_checks"], (
+        "a 503 is never an absent precondition"
+    )
+    assert unavailable_suite["not_configured_checks"] == 0, unavailable_suite
+
+    # ------------------------------------------------------------------ D2 --
+    # The gateway's REAL self-reference refusal: 400, type `gateway_error`, the
+    # word `repeat`, and — today — no machine `code` at all.
+    def mock_real_self_reference(args, timeout_s=40, stdin_data=None):
+        body = payload_of(args)
+        targets = body.get("nrouter_fallbacks")
+        if isinstance(targets, list) and body.get("model") in targets:
+            return 400, dict(base_headers), json.dumps({"error": {
+                "type": "gateway_error",
+                "message": (
+                    "invalid request json: nrouter_fallbacks must not repeat "
+                    "the requested model"
+                ),
+            }}), 6.0
+        return mock_curl(args, timeout_s, stdin_data)
+
+    real_refusal = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_real_self_reference
+    )
+    real_row = {
+        r["name"]: r for r in real_refusal.run_suite(quick=True)["checks"]
+    }["self_reference_400"]
+    assert real_row["result"] == PASS, (
+        "the gateway's real self-reference wording must PASS: "
+        f"{real_row.get('detail')}"
+    )
+
+    # ...and the SHAPE is what is really being asserted, so each facet bites.
+    def _self_reference_variant(mutate):
+        def mocked(args, timeout_s=40, stdin_data=None):
+            status, headers, body, latency = mock_real_self_reference(
+                args, timeout_s, stdin_data
+            )
+            targets = payload_of(args).get("nrouter_fallbacks")
+            if isinstance(targets, list) and payload_of(args).get("model") in targets:
+                status, headers, body = mutate(status, dict(headers), body)
+            return status, headers, body, latency
+
+        checker_ = FallbacksCurlHealthCheck(
+            base_url="https://mock.invalid/v1", api_key="k", curl_fn=mocked
+        )
+        return {
+            r["name"]: r for r in checker_.run_suite(quick=True)["checks"]
+        }["self_reference_400"]
+
+    wrong_type = _self_reference_variant(
+        lambda status, headers, body: (
+            status,
+            headers,
+            json.dumps({"error": {"type": "invalid_request_error", "message": (
+                "invalid request json: nrouter_fallbacks must not repeat the requested model"
+            )}}),
+        )
+    )
+    assert wrong_type["result"] == FAIL and "gateway_error" in wrong_type["detail"], (
+        f"error.type must be asserted, not assumed: {wrong_type}"
+    )
+
+    billed = _self_reference_variant(
+        lambda status, headers, body: (
+            status, {**headers, "x-nr-request-cost": "0.000004"}, body
+        )
+    )
+    assert billed["result"] == FAIL and "cost" in billed["detail"], (
+        f"a billed refusal must go red: {billed}"
+    )
+
+    ranked = _self_reference_variant(
+        lambda status, headers, body: (
+            status, {**headers, "x-nr-attempts": "1"}, body
+        )
+    )
+    assert ranked["result"] == FAIL and "routing" in ranked["detail"], (
+        f"a refusal must not advertise a routing rank: {ranked}"
+    )
+
+    served_200 = _self_reference_variant(
+        lambda status, headers, body: (200, headers, served([""]))
+    )
+    assert served_200["result"] == FAIL, (
+        "a self-referencing chain that is SERVED must go red, not pass on prose"
+    )
+
     markdown = checker.render_markdown_summary(suite)
     assert "Request Fallbacks" in markdown, "markdown summary lost its title"
 
@@ -825,7 +1184,19 @@ def main() -> int:
     parser.add_argument("--base-url", default=os.environ.get("NROUTER_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.environ.get("NROUTER_API_KEY", ""))
     add_wire_arguments(parser)
-    parser.add_argument("--fallback-model", default=DEFAULT_FALLBACK_MODEL)
+    # Empty by default on purpose: the constructor must be able to tell "nobody
+    # named a secondary" from "someone named this one", because only the first
+    # makes a `fallback_not_allowed` refusal an absent precondition.
+    parser.add_argument(
+        "--fallback-model",
+        default="",
+        help=f"A healthy secondary this key can route to (env {FALLBACK_MODEL_ENV})",
+    )
+    parser.add_argument(
+        "--second-fallback-model",
+        default="",
+        help=f"An optional third target for the ordered walk (env {SECOND_FALLBACK_MODEL_ENV})",
+    )
     parser.add_argument("--step-summary", action="store_true", help="Append markdown to GITHUB_STEP_SUMMARY")
     parser.add_argument("--json", action="store_true", help="Emit the JSON report on stdout")
     args = parser.parse_args()
@@ -845,6 +1216,7 @@ def main() -> int:
             route=args.route,
             model=args.model,
             fallback_model=args.fallback_model,
+            second_fallback_model=args.second_fallback_model,
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)

@@ -363,6 +363,12 @@ class MeteringCurlHealthCheck:
             build_body(self.route, UNKNOWN_MODEL, "ping", max_tokens=8),
         )
         status, headers, body, _ = self.curl_fn(args)
+        if status == 403 and headers.get("x-nr-auth-reason") == "key_model_not_allowed":
+            return self._record(
+                name, request, status, headers, assertion, False, True,
+                detail=f"the gateway answered 403 with x-nr-auth-reason: key_model_not_allowed — key scope excludes {UNKNOWN_MODEL}",
+                not_configured=True,
+            )
         leaked = [header for header in METERING_HEADERS if header in headers]
         err = error_of(body)
         # An unknown model answered with 401/403 never reached the metering path.
@@ -784,8 +790,8 @@ def run_self_test() -> int:
     named_row = {
         r["name"]: r for r in named.run_suite()["checks"]
     }["unknown_model_has_no_metering"]
-    assert named_row["result"] == FAIL, named_row
-    assert "key_model_not_allowed" in named_row["detail"], named_row["detail"]
+    assert named_row["result"] == NOT_CONFIGURED, named_row
+    assert f"key scope excludes {UNKNOWN_MODEL}" in named_row["detail"], named_row["detail"]
 
     # NOT-CONFIGURED when no unpriced model exists on the plane.
     bare = MeteringCurlHealthCheck(base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_curl)

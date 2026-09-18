@@ -145,11 +145,12 @@ from _curl_common import (  # noqa: E402
 
 DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 
-# Evaluated at import, exactly as an argparse `default=os.environ.get(...)` is:
-# `run_all.py` passes these as its own flag defaults, so a plain constant here
-# would silently override the operator's NROUTER_HEALTH_MODEL on every
-# consolidated run — which is the bug this round is fixing.
-DEFAULT_CHAT_MODEL = resolve_model()
+def __getattr__(name: str) -> Any:
+    if name == "DEFAULT_CHAT_MODEL":
+        val = resolve_model()
+        globals()["DEFAULT_CHAT_MODEL"] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # Every wire this directory knows. A feature declares which of them its
 # PARAMETERS exist on; on any other wire the parameter is not a gateway defect,
@@ -269,7 +270,7 @@ class FeatureCurlHealthCheck:
         self,
         base_url: str = DEFAULT_BASE_URL,
         api_key: Optional[str] = None,
-        chat_model: str = DEFAULT_CHAT_MODEL,
+        chat_model: Optional[str] = None,
         messages_model: str = DEFAULT_MESSAGES_MODEL,
         embed_model: str = DEFAULT_EMBED_MODEL,
         curl_fn: Callable = run_curl,
@@ -287,7 +288,7 @@ class FeatureCurlHealthCheck:
         # route on this model; `chat_model` survives as the historical name for
         # the same thing, so an explicit `--model` wins over it.
         self.route = resolve_route(route)
-        self.model = resolve_model(model or chat_model)
+        self.model = resolve_model(model or chat_model or "")
         self.chat_model = self.model
         self.messages_model = messages_model
         self.embed_model = embed_model
@@ -397,9 +398,22 @@ class FeatureCurlHealthCheck:
         ))
 
         features.append(self._under_test(
+            "chat_temperature", "Chat Completions", "Sampling Temperature",
+            ["temperature"],
+            build_body(self.route, self.model, "Name a color", max_tokens=5, temperature=0.7),
+        ))
+
+        features.append(self._under_test(
+            "chat_top_p", "Chat Completions", "Sampling Top-P",
+            ["top_p"],
+            build_body(self.route, self.model, "Name a color", max_tokens=5, top_p=0.95),
+        ))
+
+        features.append(self._under_test(
             "chat_sampling_params", "Chat Completions", "Sampling Temperature & Top-P",
             ["temperature", "top_p"],
             build_body(self.route, self.model, "Name a color", max_tokens=5, temperature=0.7, top_p=0.95),
+            wires=("chat",),
         ))
 
         # `stop` on the chat/legacy wires, `stop_sequences` on the Anthropic one.
@@ -1373,7 +1387,7 @@ def run_self_test() -> int:
 
     result = checker.run_suite(quick=False)
     assert result["all_passed"] is True, f"Self-test failed: {result['failed_features']} features failed"
-    assert result["total_features"] == 40, f"Expected 40 feature probes, got {result['total_features']}"
+    assert result["total_features"] == 42, f"Expected 42 feature probes, got {result['total_features']}"
 
     # Verify feature filtering by prefix (fallback_, ratelimit_, cache_)
     fallback_res = checker.run_suite(feature_filter="fallback_")
@@ -1522,15 +1536,17 @@ def run_self_test() -> int:
         assert not any(field in body for body in messages_bodies), (
             f"{field} was sent on the messages wire, which does not accept it"
         )
-    assert all('"model": "claude-haiku-4-5-20251001"' in body or "invalid json" in body
-               for body in messages_bodies), "a probe sent a model the operator did not name"
+    valid_docs = [json.loads(body) for body in messages_bodies if "invalid json" not in body]
+    assert all(doc.get("model") == "claude-haiku-4-5-20251001" for doc in valid_docs), (
+        "a probe sent a model the operator did not name"
+    )
     # ...and the Anthropic wire's own required fields ARE present.
-    assert all('"max_tokens"' in body for body in messages_bodies if "invalid json" not in body), (
+    assert all("max_tokens" in doc for doc in valid_docs), (
         "max_tokens is required on the Anthropic-shaped wire and was omitted"
     )
 
     # 2. A parameter that does not exist on this wire is an absent precondition.
-    for chat_only in ("chat_json_mode", "chat_logprobs"):
+    for chat_only in ("chat_json_mode", "chat_logprobs", "chat_sampling_params"):
         row = rows[chat_only]
         assert row.get("not_configured") is True, f"{chat_only}: {row.get('error')!r}"
         assert "messages" in (row.get("error") or ""), (
@@ -1639,7 +1655,7 @@ def run_self_test() -> int:
     class _StubChecker:
         def __init__(self, **_kwargs):
             self.route = "/chat/completions"
-            self.model = DEFAULT_CHAT_MODEL
+            self.model = resolve_model()
             self.messages_model = DEFAULT_MESSAGES_MODEL
             self.embed_model = DEFAULT_EMBED_MODEL
 
@@ -1668,7 +1684,21 @@ def run_self_test() -> int:
     finally:
         globals()["FeatureCurlHealthCheck"] = saved_class
 
-    print("[PASS] feature_curl.py self-test passed cleanly (all 40 features & prefix filters verified offline).")
+    # L2: DEFAULT_CHAT_MODEL and FeatureCurlHealthCheck must resolve model lazily
+    old_model_env = os.environ.get(MODEL_ENV)
+    try:
+        os.environ[MODEL_ENV] = "test/lazy-override-model"
+        lazy_checker = FeatureCurlHealthCheck(api_key="k")
+        assert lazy_checker.model == "test/lazy-override-model", (
+            f"Expected lazy model resolution 'test/lazy-override-model', got {lazy_checker.model!r}"
+        )
+    finally:
+        if old_model_env is not None:
+            os.environ[MODEL_ENV] = old_model_env
+        else:
+            os.environ.pop(MODEL_ENV, None)
+
+    print("[PASS] feature_curl.py self-test passed cleanly (all 42 features & prefix filters verified offline).")
     return 0
 
 

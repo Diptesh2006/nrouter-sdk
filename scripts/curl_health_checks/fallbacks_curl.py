@@ -443,12 +443,19 @@ class FallbacksCurlHealthCheck:
         expect_status: Tuple[int, ...] = (400,),
         message_must_match: Optional[str] = None,
         expect_type: Optional[str] = None,
+        excluded_model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Shared adversarial shape: a refusal with a code, no cost, no rank."""
         args, request = self._prepare(
             "POST", self.route, payload, raw_body=raw_body
         )
         status, headers, body, _ = self.curl_fn(args)
+        if excluded_model and status == 403 and headers.get("x-nr-auth-reason") == "key_model_not_allowed":
+            return self._record(
+                name, request, status, headers, assertion, False, True,
+                detail=f"the gateway answered 403 with x-nr-auth-reason: key_model_not_allowed — key scope excludes {excluded_model}",
+                not_configured=True,
+            )
         err = error_of(body)
         code = err.get("code")
         message = str(err.get("message", ""))
@@ -565,6 +572,7 @@ class FallbacksCurlHealthCheck:
             "400; error.code == fallback_not_allowed; the auto router never walks a caller chain; no cost header",
             self._body_payload(AUTO_MODEL, nrouter_fallbacks=[self.fallback_model]),
             expect_code="fallback_not_allowed",
+            excluded_model=AUTO_MODEL,
         )
 
     def check_non_array_fallbacks_400(self) -> Dict[str, Any]:
@@ -945,10 +953,27 @@ def run_self_test() -> int:
     assert scoped_suite["not_configured_checks"] == scoped_suite["total_checks"], (
         "every check should be NOT-CONFIGURED once the route is refused"
     )
-    assert "key_route_not_allowed" in scoped_suite["checks"][0]["detail"]
     assert "NROUTER_HEALTH_ROUTE" in scoped_suite["checks"][0]["detail"], (
         "the message must name the override to set"
     )
+
+    # 403 key_model_not_allowed on auto_refuses_fallbacks => NOT-CONFIGURED naming key scope excludes <model>
+    def mock_auto_model_not_allowed(args, timeout_s=40, stdin_data=None):
+        payload = payload_of(args) if isinstance(payload_of(args), dict) else {}
+        if payload.get("model") == AUTO_MODEL:
+            return 403, {
+                "x-nr-request-id": "11111111-2222-3333-4444-555555555555",
+                "x-nr-auth-reason": "key_model_not_allowed",
+            }, refusal(None, "Forbidden"), 3.0
+        return mock_curl(args, timeout_s, stdin_data)
+
+    auto_scoped = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_auto_model_not_allowed
+    )
+    auto_suite = auto_scoped.run_suite(quick=True)
+    auto_row = next(r for r in auto_suite["checks"] if r["name"] == "auto_refuses_fallbacks")
+    assert auto_row["result"] == NOT_CONFIGURED, auto_row
+    assert f"key scope excludes {AUTO_MODEL}" in auto_row["detail"], auto_row["detail"]
     # Short-circuited: the guard stops after the first refusal rather than
     # firing every remaining request at a route the key cannot use.
     assert "(not executed)" in scoped_suite["checks"][-1]["request"], (

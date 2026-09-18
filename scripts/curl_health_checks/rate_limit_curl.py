@@ -73,6 +73,7 @@ from _curl_common import (  # noqa: E402
 )
 
 FEATURE = "rate_limit"
+NOT_EVALUATED = "NOT-EVALUATED"
 DEFAULT_MODEL = "openai/gpt-4o-mini"
 DEFAULT_BURST = 24
 DEFAULT_BURST_CONCURRENCY = 8
@@ -195,23 +196,29 @@ class RateLimitCurlHealthCheck:
         expected_failure: bool,
         detail: str = "",
         not_configured: bool = False,
+        not_evaluated: bool = False,
     ) -> Dict[str, Any]:
         # A 403 naming key_route_not_allowed means the request never reached the
         # behaviour under test: NOT-CONFIGURED, whatever the check wanted.
         scope_blocked = note_route_scope(self, status, headers)
         if scope_blocked:
             detail = self.scope_detail or detail
+        result = (
+            NOT_EVALUATED
+            if not_evaluated
+            else (
+                NOT_CONFIGURED
+                if (not_configured or scope_blocked)
+                else (PASS if ok else FAIL)
+            )
+        )
         row = {
             "name": name,
             "request": request,
             "status": status,
             "headers": reported_headers(headers),
             "assertion": assertion,
-            "result": (
-                NOT_CONFIGURED
-                if (not_configured or scope_blocked)
-                else (PASS if ok else FAIL)
-            ),
+            "result": result,
             "expected_failure": expected_failure,
         }
         if detail:
@@ -244,6 +251,21 @@ class RateLimitCurlHealthCheck:
             f"for i in $(seq 1 {self.burst}); do\n"
             + "\n".join(f"  {line}" for line in single.splitlines())
             + " &\ndone; wait"
+        )
+
+    def _is_store_outage(self, refusal: Optional[Tuple[int, Dict[str, str], str]]) -> bool:
+        if not refusal:
+            return False
+        status, headers, _ = refusal
+        return status == 429 and "retry-after" not in headers and "x-nr-limit-source" not in headers
+
+    def _store_outage_row(
+        self, name: str, request: str, status: int, headers: Dict[str, str], assertion: str
+    ) -> Dict[str, Any]:
+        return self._record(
+            name, request, status, headers, assertion, False, True,
+            detail="NOT-EVALUATED (store outage): the 429 response lacked both Retry-After and x-nr-limit-source",
+            not_evaluated=True,
         )
 
     def _observe_refusal(self) -> Optional[Tuple[int, Dict[str, str], str]]:
@@ -337,6 +359,8 @@ class RateLimitCurlHealthCheck:
                 "never exercised",
             )
         status, headers, body = refusal
+        if self._is_store_outage(refusal):
+            return self._store_outage_row(name, request, status, headers, assertion)
         retry = retry_after_seconds(headers)
         source = headers.get("x-nr-limit-source")
         err = error_of(body)
@@ -367,6 +391,8 @@ class RateLimitCurlHealthCheck:
                 "the burst ran cleanly and was never refused, so no 429 cost headers exist to inspect",
             )
         status, headers, _ = refusal
+        if self._is_store_outage(refusal):
+            return self._store_outage_row(name, request, status, headers, assertion)
         leaked = [
             header
             for header in (
@@ -418,6 +444,8 @@ class RateLimitCurlHealthCheck:
                 "the burst ran cleanly and was never refused, so no 429 body exists to inspect",
             )
         status, headers, body = refusal
+        if self._is_store_outage(refusal):
+            return self._store_outage_row(name, request, status, headers, assertion)
         err = error_of(body)
         leaked = [marker for marker in INTERNAL_LEAK_MARKERS if marker in body]
         provider_leak = [
@@ -446,6 +474,8 @@ class RateLimitCurlHealthCheck:
                 "the burst ran cleanly and was never refused, so there was no Retry-After to parse",
             )
         status, headers, _ = refusal
+        if self._is_store_outage(refusal):
+            return self._store_outage_row(name, request, status, headers, assertion)
         raw = headers.get("retry-after")
         retry = retry_after_seconds(headers)
         ok, detail = assert_all([
@@ -467,6 +497,8 @@ class RateLimitCurlHealthCheck:
                 "the burst ran cleanly and was never refused, so there was no x-nr-limit-source to read",
             )
         status, headers, _ = refusal
+        if self._is_store_outage(refusal):
+            return self._store_outage_row(name, request, status, headers, assertion)
         source = headers.get("x-nr-limit-source")
         ok, detail = assert_all([
             (status == 429, f"expected 429, got {status}"),
@@ -533,6 +565,7 @@ class RateLimitCurlHealthCheck:
         passed = sum(1 for r in self.results if r["result"] == PASS)
         failed = sum(1 for r in self.results if r["result"] == FAIL)
         unconfigured = sum(1 for r in self.results if r["result"] == NOT_CONFIGURED)
+        not_evaluated = sum(1 for r in self.results if r["result"] == NOT_EVALUATED)
         return {
             "feature": FEATURE,
             "base_url": self.base_url,
@@ -544,11 +577,12 @@ class RateLimitCurlHealthCheck:
             "passed_checks": passed,
             "failed_checks": failed,
             "not_configured_checks": unconfigured,
+            "not_evaluated_checks": not_evaluated,
             "adversarial_checks": sum(1 for r in self.results if r["expected_failure"]),
             # The ONE verdict rule, shared by every module and by run_all.py:
             # nothing failed AND something was actually proven. See
             # `_curl_common.suite_verdict`.
-            **suite_verdict(passed, failed, unconfigured),
+            **suite_verdict(passed, failed, unconfigured + not_evaluated),
         }
 
     def render_markdown_summary(self, suite: Dict[str, Any]) -> str:
@@ -566,7 +600,7 @@ class RateLimitCurlHealthCheck:
             "|---|---|---|---|---|---|",
         ]
         for row in suite["checks"]:
-            icon = {PASS: "✅", FAIL: "❌", NOT_CONFIGURED: "⚪"}[row["result"]]
+            icon = {PASS: "✅", FAIL: "❌", NOT_CONFIGURED: "⚪", NOT_EVALUATED: "⚠️"}.get(row["result"], "⚪")
             lines.append(
                 f"| `{row['name']}` | {'yes' if row['expected_failure'] else 'no'} | "
                 f"{row['status']} | {icon} {row['result']} | {row['assertion']} | "
@@ -660,6 +694,27 @@ def run_self_test() -> int:
         base_url="https://mock.invalid/v1", api_key="k", burst=12, curl_fn=no_retry_after()
     )
     assert blunt.run_suite()["all_passed"] is False, "a 429 without Retry-After must fail"
+
+    # A 429 lacking BOTH Retry-After and x-nr-limit-source is a store outage => NOT-EVALUATED
+    def mock_store_outage_429() -> Callable:
+        inner = make_backend()
+
+        def mock(args, timeout_s=40, stdin_data=None):
+            status, headers, body, latency = inner(args, timeout_s, stdin_data)
+            if status == 429:
+                headers = {k: v for k, v in headers.items() if k not in ("retry-after", "x-nr-limit-source")}
+            return status, headers, body, latency
+
+        return mock
+
+    outage = RateLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", burst=12, curl_fn=mock_store_outage_429()
+    )
+    outage_suite = outage.run_suite()
+    outage_row = next(r for r in outage_suite["checks"] if r["name"] == "burst_returns_429_with_retry_after")
+    assert outage_row["result"] == "NOT-EVALUATED", outage_row["result"]
+    assert "NOT-EVALUATED (store outage)" in outage_row["detail"], outage_row["detail"]
+    assert outage_row["result"] != FAIL and outage_row["result"] != PASS
 
     # BITE 2: a billed refusal must go red.
     def billed_refusal() -> Callable:

@@ -55,10 +55,8 @@ from _curl_common import (  # noqa: E402
     build_body,
     emit_results,
     error_of,
-    json_stdout_contract_self_test,
     note_route_scope,
     parse_json,
-    parser_contract_self_test,
     prompt_field,
     reported_headers,
     resolve_api_key,
@@ -68,7 +66,6 @@ from _curl_common import (  # noqa: E402
     run_curl,
     sanitize,
     suite_verdict,
-    wire_contract_self_test,
 )
 
 FEATURE = "contract"
@@ -558,6 +555,12 @@ class ContractCurlHealthCheck:
 def run_self_test() -> int:
     print("Running contract_curl.py --self-test (offline mode)...")
 
+    from _curl_common import (
+        json_stdout_contract_self_test,
+        parser_contract_self_test,
+        wire_contract_self_test,
+    )
+
     parser_contract_self_test()
     wire_contract_self_test()
 
@@ -871,14 +874,30 @@ def run_self_test() -> int:
 
     _source = Path(__file__).read_text()
     _tree = _ast.parse(_source)
+    _self_test_fns = {
+        node
+        for node in _tree.body
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+        and "self_test" in node.name
+    }
+    _outside_nodes = [node for node in _tree.body if node not in _self_test_fns]
     _imported = {
         alias.name
-        for node in _ast.walk(_tree)
+        for top in _outside_nodes
+        for node in _ast.walk(top)
         if isinstance(node, _ast.ImportFrom) and node.module == "_curl_common"
         for alias in node.names
     }
-    _used = {n.id for n in _ast.walk(_tree) if isinstance(n, _ast.Name)} | {
-        n.attr for n in _ast.walk(_tree) if isinstance(n, _ast.Attribute)
+    _used = {
+        n.id
+        for top in _outside_nodes
+        for n in _ast.walk(top)
+        if isinstance(n, _ast.Name)
+    } | {
+        n.attr
+        for top in _outside_nodes
+        for n in _ast.walk(top)
+        if isinstance(n, _ast.Attribute)
     }
     assert not (_imported - _used), (
         f"imported from _curl_common and never used: {sorted(_imported - _used)}"

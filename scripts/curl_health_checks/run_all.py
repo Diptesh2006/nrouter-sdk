@@ -72,13 +72,13 @@ FEATURE_MODULES = [
     ("fallbacks", fallbacks_curl, "FallbacksCurlHealthCheck"),
     ("guardrails_request", guardrails_request_curl, "GuardrailsRequestCurlHealthCheck"),
     ("cache", cache_curl, "CacheCurlHealthCheck"),
-    ("rate_limit", rate_limit_curl, "RateLimitCurlHealthCheck"),
     ("context_limit", context_limit_curl, "ContextLimitCurlHealthCheck"),
     ("metering", metering_curl, "MeteringCurlHealthCheck"),
     ("tracing", tracing_curl, "TracingCurlHealthCheck"),
     ("moderation_floor", moderation_floor_curl, "ModerationFloorCurlHealthCheck"),
     ("mcp", mcp_curl, "McpCurlHealthCheck"),
     ("contract", contract_curl, "ContractCurlHealthCheck"),
+    ("rate_limit", rate_limit_curl, "RateLimitCurlHealthCheck"),
 ]
 
 

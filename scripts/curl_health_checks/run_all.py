@@ -39,6 +39,7 @@ if str(CURRENT_DIR) not in sys.path:
 
 import model_curl
 import guardrail_curl
+import feature_curl
 
 
 def run_all_self_tests() -> int:
@@ -56,6 +57,12 @@ def run_all_self_tests() -> int:
         print("[FAIL] guardrail_curl self-test failed", file=sys.stderr)
         return guard_code
 
+    print("\n3. Testing feature_curl module...")
+    feat_code = feature_curl.run_self_test()
+    if feat_code != 0:
+        print("[FAIL] feature_curl self-test failed", file=sys.stderr)
+        return feat_code
+
     print("\n[PASS] All consolidated self-tests passed cleanly (100% offline verification).")
     return 0
 
@@ -64,9 +71,10 @@ def render_consolidated_summary(
     base_url: str,
     model_result: Dict[str, Any],
     guard_result: Dict[str, Any],
+    feature_result: Dict[str, Any],
 ) -> str:
     """Render unified markdown summary for GitHub Step Summary or terminal reporting."""
-    overall_passed = model_result["passed"] and guard_result["all_passed"]
+    overall_passed = model_result["passed"] and guard_result["all_passed"] and feature_result["all_passed"]
     overall_badge = "🟢 **ALL CHECKS OPERATIONAL**" if overall_passed else "🔴 **FAILURES DETECTED**"
 
     lines = [
@@ -80,6 +88,7 @@ def render_consolidated_summary(
         "|---|---|---|---|---|---|",
         f"| **Models & Providers** | Catalog & Live Provider Inference | {len(model_result['checks'])} | {sum(1 for c in model_result['checks'] if c['passed'])} | {sum(1 for c in model_result['checks'] if not c['passed'])} | {'✅ Pass' if model_result['passed'] else '❌ Fail'} |",
         f"| **Guardrails & WAF** | Moderation, Injection, Secrets, Evasions | {guard_result['total_cases']} | {guard_result['passed_cases']} | {guard_result['failed_cases']} | {'✅ Pass' if guard_result['all_passed'] else '❌ Fail'} |",
+        f"| **Endpoints & Features** | Feature Probes Across All Endpoints & Params | {feature_result['total_features']} | {feature_result['passed_features']} | {feature_result['failed_features']} | {'✅ Pass' if feature_result['all_passed'] else '❌ Fail'} |",
         "",
         "---",
         "",
@@ -90,6 +99,9 @@ def render_consolidated_summary(
     lines.append("\n---\n")
     # Include Guardrails summary
     lines.append(guardrail_curl.GuardrailCurlHealthCheck().render_markdown_summary(guard_result))
+    lines.append("\n---\n")
+    # Include Features summary
+    lines.append(feature_curl.FeatureCurlHealthCheck().render_markdown_summary(feature_result))
 
     return "\n".join(lines)
 
@@ -103,6 +115,9 @@ def main() -> int:
     parser.add_argument("--probe-model", default=model_curl.DEFAULT_PROBE_MODEL, help="Model to probe for chat completions")
     parser.add_argument("--guardrail-route", default=guardrail_curl.DEFAULT_GUARDRAIL_ROUTE, help="Route for guardrails check")
     parser.add_argument("--guardrail-model", default=guardrail_curl.DEFAULT_GUARDRAIL_MODEL, help="Model for guardrails check")
+    parser.add_argument("--chat-model", default=feature_curl.DEFAULT_CHAT_MODEL, help="Model for feature chat completions")
+    parser.add_argument("--messages-model", default=feature_curl.DEFAULT_MESSAGES_MODEL, help="Model for feature messages")
+    parser.add_argument("--embed-model", default=feature_curl.DEFAULT_EMBED_MODEL, help="Model for feature embeddings")
     parser.add_argument("--step-summary", action="store_true", help="Write consolidated markdown summary to GITHUB_STEP_SUMMARY")
     parser.add_argument("--json", action="store_true", help="Output aggregated JSON results to stdout")
     args = parser.parse_args()
@@ -135,10 +150,13 @@ def main() -> int:
     print(f"Mode:             {'Quick' if args.quick else 'Full Comprehensive'}")
     print(f"Probe Model:      {args.probe_model}")
     print(f"Guardrail Model:  {args.guardrail_model}")
+    print(f"Chat Model:       {args.chat_model}")
+    print(f"Messages Model:   {args.messages_model}")
+    print(f"Embed Model:      {args.embed_model}")
     print("------------------------------------------------------------\n")
 
     # 1. Models & Providers
-    print("▶ Running [1/2] Models & Providers Health Check...")
+    print("▶ Running [1/3] Models & Providers Health Check...")
     model_checker = model_curl.ModelCurlHealthCheck(
         base_url=args.base_url,
         api_key=api_key,
@@ -151,7 +169,7 @@ def main() -> int:
     print(f"  Result:              {'PASS' if model_res['passed'] else 'FAIL'}\n")
 
     # 2. Guardrails
-    print("▶ Running [2/2] Guardrails & WAF Health Check...")
+    print("▶ Running [2/3] Guardrails & WAF Health Check...")
     guard_checker = guardrail_curl.GuardrailCurlHealthCheck(
         base_url=args.base_url,
         api_key=api_key,
@@ -164,7 +182,22 @@ def main() -> int:
     print(f"  ✓ Cases Failed:      {guard_res['failed_cases']}")
     print(f"  Result:              {'PASS' if guard_res['all_passed'] else 'FAIL'}\n")
 
-    overall_passed = model_res["passed"] and guard_res["all_passed"]
+    # 3. Endpoints & Features
+    print("▶ Running [3/3] Endpoints & Parameters Health Check...")
+    feat_checker = feature_curl.FeatureCurlHealthCheck(
+        base_url=args.base_url,
+        api_key=api_key,
+        chat_model=args.chat_model,
+        messages_model=args.messages_model,
+        embed_model=args.embed_model,
+    )
+    feat_res = feat_checker.run_suite(quick=args.quick)
+    print(f"  ✓ Total Probes:      {feat_res['total_features']}")
+    print(f"  ✓ Probes Passed:     {feat_res['passed_features']}")
+    print(f"  ✓ Probes Failed:     {feat_res['failed_features']}")
+    print(f"  Result:              {'PASS' if feat_res['all_passed'] else 'FAIL'}\n")
+
+    overall_passed = model_res["passed"] and guard_res["all_passed"] and feat_res["all_passed"]
 
     print("============================================================")
     print(f"OVERALL STATUS:   {'🟢 ALL OPERATIONAL (PASS)' if overall_passed else '🔴 FAILURES DETECTED (FAIL)'}")
@@ -173,7 +206,7 @@ def main() -> int:
     if args.step_summary:
         step_summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
         if step_summary_path:
-            summary_md = render_consolidated_summary(args.base_url, model_res, guard_res)
+            summary_md = render_consolidated_summary(args.base_url, model_res, guard_res, feat_res)
             try:
                 with open(step_summary_path, "a") as f:
                     f.write("\n" + summary_md + "\n")
@@ -188,6 +221,7 @@ def main() -> int:
             "overall_passed": overall_passed,
             "models_and_providers": model_res,
             "guardrails": guard_res,
+            "features": feat_res,
         }
         print(json.dumps(combined, indent=2))
 

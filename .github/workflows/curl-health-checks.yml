@@ -14,6 +14,7 @@ on:
           - all
           - model
           - guardrail
+          - feature
           - consolidated
       base_url:
         description: 'Gateway Base URL'
@@ -29,6 +30,11 @@ on:
         description: 'Model for guardrail checks'
         required: false
         default: 'claude-haiku-4-5-20251001'
+        type: string
+      feature:
+        description: 'Filter feature checks by prefix (e.g. fallback_, ratelimit_, cache_, context_limit_, chat_)'
+        required: false
+        default: ''
         type: string
   push:
     branches: [main]
@@ -106,6 +112,39 @@ jobs:
           bash scripts/curl_health_checks/guardrail_curl.sh \
             --base-url "${{ env.NROUTER_BASE_URL }}" \
             --model "${{ env.GUARDRAIL_MODEL }}" \
+            --step-summary
+
+  feature-curl:
+    name: Feature-by-Feature Pure-Curl Health Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'feature'
+    env:
+      NROUTER_API_KEY: ${{ secrets.NROUTER_API_KEY }}
+      NROUTER_BASE_URL: ${{ inputs.base_url || 'https://api.nrouter.ai/v1' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+
+      - name: Run offline self-test
+        run: python3 scripts/curl_health_checks/feature_curl.py --self-test
+
+      - name: Run Feature-by-Feature Health Check
+        if: env.NROUTER_API_KEY != ''
+        run: |
+          EXTRA_ARGS=()
+          if [[ -n "${{ inputs.feature || '' }}" ]]; then
+            EXTRA_ARGS+=(--feature "${{ inputs.feature }}")
+          fi
+          bash scripts/curl_health_checks/feature_curl.sh \
+            --base-url "${{ env.NROUTER_BASE_URL }}" \
+            "${EXTRA_ARGS[@]}" \
             --step-summary
 
   consolidated-curl:

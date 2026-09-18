@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# nRouter Consolidated Pure-Curl Health Checks Runner Shell Script
+# nRouter Feature-by-Feature Pure-Curl Health Check Shell Runner
 #
-# Runs all consolidated curl health checks (Models & Providers, Guardrails, Endpoints & Parameters).
+# Runs feature-specific curl health checks against Gateway endpoints and parameters.
 # Usage:
-#   bash scripts/curl_health_checks/run_all.sh --self-test
-#   bash scripts/curl_health_checks/run_all.sh --quick
-#   bash scripts/curl_health_checks/run_all.sh
-#   bash scripts/curl_health_checks/run_all.sh --step-summary
+#   bash scripts/curl_health_checks/feature_curl.sh --self-test
+#   bash scripts/curl_health_checks/feature_curl.sh --quick
+#   bash scripts/curl_health_checks/feature_curl.sh
+#   bash scripts/curl_health_checks/feature_curl.sh --step-summary
 
 set -euo pipefail
 
@@ -15,6 +15,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 export NROUTER_BASE_URL="${NROUTER_BASE_URL:-https://api.nrouter.ai/v1}"
 
+# Check if running offline self-test
 IS_SELF_TEST=false
 for arg in "$@"; do
   if [[ "$arg" == "--self-test" ]]; then
@@ -24,6 +25,7 @@ for arg in "$@"; do
 done
 
 if [[ "$IS_SELF_TEST" != "true" && -z "${NROUTER_API_KEY:-}" ]]; then
+  # Fall back to local admin test key if available
   TEST_ENV_FILE="${HOME}/.nrouter_admin_keys/nrouter-test/prod/credentials.env"
   if [[ -f "${TEST_ENV_FILE}" ]]; then
     # shellcheck disable=SC1090
@@ -38,4 +40,4 @@ if [[ "$IS_SELF_TEST" != "true" && -z "${NROUTER_API_KEY:-}" ]]; then
   exit 1
 fi
 
-python3 "${SCRIPT_DIR}/run_all.py" "$@"
+python3 "${SCRIPT_DIR}/feature_curl.py" "$@"

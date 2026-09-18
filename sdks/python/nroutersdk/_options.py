@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from nroutersdk._errors import nRouterRequestError
+from nroutersdk._errors import nRouterConfigurationError
 
 PROMPT_TEMPLATE_ID_FIELD = "nrouter_prompt_template_id"
 PROMPT_VARIABLES_FIELD = "nrouter_prompt_variables"
@@ -36,8 +36,17 @@ def _normalize_key(key: str) -> str:
     return key.lower().replace("_", "")
 
 
-def _configuration_error(message: str) -> nRouterRequestError:
-    return nRouterRequestError(message)
+def _configuration_error(message: str) -> nRouterConfigurationError:
+    """Every refusal in this module is CONFIGURATION kind: permanent, never
+    retried, raised before anything left the process.
+
+    It said so and then built `nRouterRequestError`, the class the gateway's
+    own `invalid_request` 400s arrive as — so a caller branching on the class
+    could not tell a locally refused ceiling from a billed round trip. JS
+    raises `nRouterConfigurationError` here and Go returns `KindConfiguration`
+    with `Status: 0`; this is the same classification in Python.
+    """
+    return nRouterConfigurationError(message)
 
 
 def _names(value: Sequence[str], *, argument: str, ceiling: int) -> list[str]:

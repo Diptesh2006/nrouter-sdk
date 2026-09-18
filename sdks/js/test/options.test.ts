@@ -211,6 +211,44 @@ test('the emittable fields and the SPEC agree in BOTH directions', () => {
   );
 });
 
+test('the RETIRED guardrailIds name is REFUSED at runtime, never silently dropped', () => {
+  // The test above proves the name is absent from the SPEC. Absence from the
+  // spec is not a refusal: TypeScript types are ERASED, so a plain-JS caller —
+  // or a TS caller spreading a widened options object — passing the old name
+  // gets no compile error and, without this, no runtime error either. Their
+  // guardrail selection is then dropped in silence, which is the one outcome
+  // this file refuses everywhere else: a request the caller believes was
+  // inspected and was not.
+  //
+  // Python and Go are already safe by construction (`TypeError` on an unknown
+  // kwarg; a compile error on a removed struct field). JS is the only surface
+  // where the rename can pass unnoticed, so the guard lives here.
+  const retired = { model: 'gpt-4o', prompt: 'hi', guardrailIds: ['pii-strict'] } as never;
+
+  for (const build of [() => buildExtraBody(retired), () => buildChatBody(retired, {})]) {
+    assert.throws(build, (err: unknown) => {
+      assert.equal((err as { kind?: string }).kind, 'configuration');
+      // The message must name the REPLACEMENT. A refusal that only says "not
+      // supported" leaves the caller with a safety control they cannot reach.
+      assert.match((err as Error).message, /guardrailIds/);
+      assert.match((err as Error).message, /\bguardrails\b/);
+      return true;
+    });
+  }
+
+  // Scoped to a NON-EMPTY list, exactly as the old refusal was: `[]` selects
+  // nothing, so nothing the caller asked for goes unserved, and refusing it
+  // would break `guardrailIds: state.selected` with an empty default.
+  assert.deepEqual(buildExtraBody({ model: 'gpt-4o', guardrailIds: [] } as never), {});
+
+  // And the rename's destination still works — the guard must refuse the old
+  // name without taking the new one down with it.
+  assert.deepEqual(buildExtraBody({ model: 'gpt-4o', guardrails: ['pii-strict'], fallbacks: ['gpt-4o-mini'] }), {
+    nrouter_guardrails: ['pii-strict'],
+    nrouter_fallbacks: ['gpt-4o-mini'],
+  });
+});
+
 test('NO tenancy identifier is ever written into a body', () => {
   // Gateway gate 5: tenancy comes from the authenticated key alone. A
   // body-supplied org/team id is the spend-attribution spoof that gate exists

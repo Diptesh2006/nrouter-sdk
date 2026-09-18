@@ -107,6 +107,55 @@ class nRouterRequestError(nRouterError):
         )
 
 
+class nRouterConfigurationError(nRouterRequestError):
+    """The SDK refused BEFORE sending anything.
+
+    A missing key, a key not shaped like an nRouter key, an override list past
+    its published ceiling, a tenancy identifier in ``extra_body``. Nothing left
+    this process, nothing was reserved, nothing was billed.
+
+    Separate from every gateway error on purpose, and the same separation the
+    other SDKs already publish: JS raises ``nRouterConfigurationError`` (kind
+    ``configuration``) and Go returns ``KindConfiguration`` with ``Status: 0``.
+    The property that earns the class is PERMANENCE — an ``if is_retryable(e)``
+    loop around one of these would spin forever without ever making a request,
+    so it must never be confused with a 429 or a 503.
+
+    SUBCLASS of :class:`nRouterRequestError`, deliberately. This package is
+    published (PyPI ``nrouter-sdk``), and ``except nRouterRequestError:`` is
+    already wrapped around these builders in caller code; a sibling class would
+    be a silent break shipped as a fix. What it does not inherit is the part
+    that was untrue: ``status_code`` stays ``None``, because a refusal that
+    never reached the gateway has no HTTP status, and 400 would be a number no
+    gateway ever sent.
+    """
+
+    code = "configuration"
+    status_code = None
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_id: str | None = None,
+        code: str | None = None,
+        param: str | None = None,
+        type: str | None = None,
+    ) -> None:
+        # Skips nRouterRequestError.__init__ ON PURPOSE: it hardcodes
+        # status_code=400, which is exactly the claim this class exists to stop
+        # making. The grandparent is called directly rather than reimplemented.
+        nRouterError.__init__(
+            self,
+            message,
+            request_id=request_id,
+            code=code or self.code,
+            status_code=None,
+            param=param,
+            type=type,
+        )
+
+
 class nRouterGuardrailBlockedError(nRouterError):
     """A guardrail denied the request (PII, prompt injection, keyword, ...).
 
@@ -530,6 +579,7 @@ __all__ = [
     "is_retryable",
     "nRouterAuthenticationError",
     "nRouterBudgetExceededError",
+    "nRouterConfigurationError",
     "nRouterCreditError",
     "nRouterError",
     "nRouterGuardrailBlockedError",

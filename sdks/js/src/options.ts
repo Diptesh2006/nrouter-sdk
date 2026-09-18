@@ -130,6 +130,33 @@ export function buildExtraBody(opts: NRouterFeatureOptions): NRouterExtraBody {
   // goes unserved — the org's own fallback policy and guardrails apply exactly
   // as before — and refusing it would break `guardrails: state.selected` with
   // an empty default on a request that is, and stays, correct.
+  // The RENAME still has to be refused, and for the SAME reason the option
+  // itself now exists.
+  //
+  // Deleting the old `guardrailIds` branch left the name unmodelled rather than
+  // rejected, and TypeScript types are ERASED: a plain-JS caller — or a TS
+  // caller spreading a widened options object, which is the shape excess-
+  // property checking does not see — upgrading from the previous release keeps
+  // `guardrailIds: [...]` and gets no error and no guardrails. That is the
+  // fake-success this whole file is written against, arriving on the safety
+  // option. Python refuses it (unknown kwarg -> TypeError) and Go refuses it
+  // (removed struct field -> compile error); JS is the only surface that can
+  // swallow it, so the guard belongs here.
+  //
+  // NON-EMPTY only, the same scoping the old refusal had: `[]` selects nothing,
+  // so a caller passing an empty default has asked for nothing and lost nothing.
+  const retiredGuardrailIds = (opts as { guardrailIds?: readonly string[] }).guardrailIds;
+  if (Array.isArray(retiredGuardrailIds) && retiredGuardrailIds.length > 0) {
+    throw configurationError(
+      'guardrailIds was renamed to `guardrails` and is no longer read by this SDK. ' +
+        'Rename the option: `guardrails` maps onto the gateway field ' +
+        '`nrouter_guardrails` (up to 8 org-owned ids or names, ADD-ONLY on top of ' +
+        'the guardrails your key, team or org already assigns). This is refused ' +
+        'rather than ignored because a dropped guardrail list is a request you ' +
+        'believe was inspected and was not.',
+    );
+  }
+
   if (opts.fallbacks && opts.fallbacks.length > 0) {
     extra.nrouter_fallbacks = overrideNames(opts.fallbacks, 'fallbacks', MAX_FALLBACKS);
   }

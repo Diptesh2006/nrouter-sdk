@@ -140,6 +140,45 @@ python3 scripts/curl_health_checks/cache_curl.py --json > report.json   # parsea
 python3 scripts/curl_health_checks/cache_curl.py --json                 # both, on screen
 ```
 
+## Choosing the route and the model
+
+A virtual key is commonly **scoped** to a subset of routes and models. Pointing
+the suite at a route your key may not use does not test the gateway — it tests
+the key policy, once per check. So both are a runtime choice:
+
+| Variable | Flag | Default | Values |
+|---|---|---|---|
+| `NROUTER_HEALTH_ROUTE` | `--route` | `/chat/completions` | `/chat/completions`, `/messages`, `/responses`, `/completions` |
+| `NROUTER_HEALTH_MODEL` | `--model` | `openai/gpt-4o-mini` | any model your key may use |
+
+```bash
+# A key scoped to the Anthropic-shaped wire:
+NROUTER_HEALTH_ROUTE=/messages \
+NROUTER_HEALTH_MODEL=claude-haiku-4-5-20251001 \
+  python3 scripts/curl_health_checks/run_all.py
+```
+
+Each wire has its own request shape and its own place for a completion, and the
+checks follow both — a chat-shaped assertion would fail a perfectly good
+Anthropic response:
+
+| Route | Request carries | A completion lives at |
+|---|---|---|
+| `/chat/completions` | `messages` + `max_tokens` | `choices[0].message.content` |
+| `/messages` | `messages` + `max_tokens` (**required**) | `content[0].text` |
+| `/responses` | `input` + `max_output_tokens` | `output_text` / `output[0].content[0].text` |
+| `/completions` | `prompt` + `max_tokens` | `choices[0].text` |
+
+`mcp_curl` is the one exception: `/mcp` is its own fixed path, so it accepts the
+flags for symmetry and ignores them.
+
+**If the key may not use the route**, the gateway answers `403` with
+`x-nr-auth-reason: key_route_not_allowed`. That is a provably absent
+precondition, so the module reports **NOT-CONFIGURED**, names the header value
+and the variable to set, and stops — rather than reporting every remaining check
+as a gateway failure that never happened. A `403` for any *other* reason, and a
+`401`, are still real failures.
+
 ## Credentials
 
 The key is read from `NROUTER_API_KEY` (or `--api-key`) and **nowhere else**.

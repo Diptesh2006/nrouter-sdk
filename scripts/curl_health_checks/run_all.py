@@ -119,11 +119,26 @@ def run_all_self_tests() -> int:
     return 0
 
 
-def run_feature_suites(base_url: str, api_key: str, quick: bool) -> List[Dict[str, Any]]:
-    """Run every per-feature proof module and return their JSON reports."""
+def run_feature_suites(
+    base_url: str, api_key: str, quick: bool, route: str = "", model: str = ""
+) -> List[Dict[str, Any]]:
+    """Run every per-feature proof module and return their JSON reports.
+
+    The route and model reach every module, because a virtual key is commonly
+    scoped to a subset of both — pointing the suite at a route the key may not
+    use tests the key policy, not the gateway. `mcp_curl` has its own fixed path
+    and ignores them.
+    """
     suites: List[Dict[str, Any]] = []
     for feature, module, class_name in FEATURE_MODULES:
-        checker = getattr(module, class_name)(base_url=base_url, api_key=api_key)
+        factory = getattr(module, class_name)
+        kwargs: Dict[str, Any] = {"base_url": base_url, "api_key": api_key}
+        accepted = factory.__init__.__code__.co_varnames
+        if "route" in accepted:
+            kwargs["route"] = route
+        if "model" in accepted:
+            kwargs["model"] = model
+        checker = factory(**kwargs)
         suite = checker.run_suite(quick=quick)
         suite["_markdown"] = checker.render_markdown_summary(suite)
         suites.append(suite)
@@ -227,6 +242,7 @@ def main() -> int:
     parser.add_argument("--chat-model", default=feature_curl.DEFAULT_CHAT_MODEL, help="Model for feature chat completions")
     parser.add_argument("--messages-model", default=feature_curl.DEFAULT_MESSAGES_MODEL, help="Model for feature messages")
     parser.add_argument("--embed-model", default=feature_curl.DEFAULT_EMBED_MODEL, help="Model for feature embeddings")
+    _curl_common.add_wire_arguments(parser)
     parser.add_argument("--step-summary", action="store_true", help="Write consolidated markdown summary to GITHUB_STEP_SUMMARY")
     parser.add_argument("--json", action="store_true", help="Output aggregated JSON results to stdout")
     args = parser.parse_args()
@@ -254,6 +270,7 @@ def main() -> int:
     print("      nRouter Consolidated Pure-Curl Health Checks          ")
     print("============================================================")
     print(f"Base URL:         {args.base_url}")
+    print(f"Route / Model:    {args.route} / {args.model}")
     print(f"Mode:             {'Quick' if args.quick else 'Full Comprehensive'}")
     print(f"Probe Model:      {args.probe_model}")
     print(f"Guardrail Model:  {args.guardrail_model}")
@@ -306,7 +323,9 @@ def main() -> int:
 
     # 4. Per-feature curl proofs (ten modules, adversarial-heavy)
     print("▶ Running [4/4] Per-Feature Curl Proofs...")
-    feature_suites = run_feature_suites(args.base_url, api_key, args.quick)
+    feature_suites = run_feature_suites(
+        args.base_url, api_key, args.quick, route=args.route, model=args.model
+    )
     feature_failures = sum(suite["failed_checks"] for suite in feature_suites)
     feature_unconfigured = sum(suite["not_configured_checks"] for suite in feature_suites)
     print(

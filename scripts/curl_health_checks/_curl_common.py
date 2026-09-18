@@ -45,6 +45,41 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 ENV_VAR = "NROUTER_API_KEY"
 
+# ---------------------------------------------------------------- the wire
+#
+# A virtual key can be scoped to a subset of routes and models, and most keys
+# worth testing with ARE. So the route and the model are a RUNTIME choice, not a
+# constant: a module that hardcodes `/chat/completions` against a key scoped to
+# `/messages` does not test the gateway, it tests the key policy, 95 times.
+#
+# The names match the pair `guardrail_curl.py` already exposes, so there is one
+# convention across the directory rather than two.
+ROUTE_ENV = "NROUTER_HEALTH_ROUTE"
+MODEL_ENV = "NROUTER_HEALTH_MODEL"
+DEFAULT_HEALTH_ROUTE = "/chat/completions"
+DEFAULT_HEALTH_MODEL = "openai/gpt-4o-mini"
+
+# route -> the wire shape it speaks. Each wire names its request body fields and
+# where a served completion actually lives, because they genuinely differ: a
+# check that asserts `body.choices` on the Anthropic-shaped wire is asserting
+# against a key that is never there, and would fail a perfectly good response.
+WIRE_OF_ROUTE = {
+    "/chat/completions": "chat",
+    "/messages": "messages",
+    "/responses": "responses",
+    "/completions": "completions",
+}
+ALLOWED_ROUTES = tuple(WIRE_OF_ROUTE)
+
+# wire -> (prompt field, output-ceiling field, human description of where a
+# served completion lives)
+WIRE_SHAPE = {
+    "chat": ("messages", "max_tokens", "choices[0].message.content"),
+    "messages": ("messages", "max_tokens", "content[0].text"),
+    "responses": ("input", "max_output_tokens", "output_text / output[0].content[0].text"),
+    "completions": ("prompt", "max_tokens", "choices[0].text"),
+}
+
 # Check results. NOT-CONFIGURED is not a soft PASS: it means the PRECONDITION
 # for the check is provably absent on this plane (a route answered 404, an
 # organization opted out, an operator supplied no fixture). It is never used to
@@ -96,6 +131,218 @@ def resolve_api_key(explicit: str = "") -> str:
     repository leaks a path convention and can send a key to an arbitrary host.
     """
     return explicit or os.environ.get(ENV_VAR, "")
+
+
+def resolve_route(explicit: str = "") -> str:
+    """The route under test: `--route`, then NROUTER_HEALTH_ROUTE, then chat."""
+    route = explicit or os.environ.get(ROUTE_ENV, "") or DEFAULT_HEALTH_ROUTE
+    if not route.startswith("/"):
+        route = "/" + route
+    if route not in WIRE_OF_ROUTE:
+        raise ValueError(
+            f"{route!r} is not a supported health-check route. "
+            f"Choose one of: {', '.join(ALLOWED_ROUTES)}"
+        )
+    return route
+
+
+def resolve_model(explicit: str = "") -> str:
+    """The model under test: `--model`, then NROUTER_HEALTH_MODEL, then default."""
+    return explicit or os.environ.get(MODEL_ENV, "") or DEFAULT_HEALTH_MODEL
+
+
+def wire_of(route: str) -> str:
+    return WIRE_OF_ROUTE.get(route, "chat")
+
+
+def prompt_field(route: str) -> str:
+    """The request field carrying the prompt on this wire (`input` on /responses)."""
+    return WIRE_SHAPE[wire_of(route)][0]
+
+
+def max_tokens_field(route: str) -> str:
+    """The output-ceiling field name for this wire (`max_output_tokens` on /responses)."""
+    return WIRE_SHAPE[wire_of(route)][1]
+
+
+def served_location(route: str) -> str:
+    """Where a served completion lives on this wire, for assertion prose."""
+    return WIRE_SHAPE[wire_of(route)][2]
+
+
+def add_wire_arguments(parser: Any) -> None:
+    """Add the shared `--route` / `--model` flags, matching guardrail_curl's pair."""
+    parser.add_argument(
+        "--route",
+        default=os.environ.get(ROUTE_ENV, DEFAULT_HEALTH_ROUTE),
+        help=f"Route under test, one of: {', '.join(ALLOWED_ROUTES)} (env {ROUTE_ENV})",
+    )
+    parser.add_argument(
+        "--model",
+        default=os.environ.get(MODEL_ENV, DEFAULT_HEALTH_MODEL),
+        help=f"Model under test (env {MODEL_ENV})",
+    )
+
+
+def build_body(
+    route: str,
+    model: str,
+    prompt: str,
+    max_tokens: Optional[int] = 16,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Build a request body in the shape the route's wire actually accepts.
+
+    `max_tokens` is REQUIRED on the Anthropic-shaped wire, so it is always sent
+    rather than defaulted away; pass `max_tokens=None` to omit it deliberately.
+    """
+    wire = wire_of(route)
+    body: Dict[str, Any] = {"model": model}
+    if wire in ("chat", "messages"):
+        body["messages"] = [{"role": "user", "content": prompt}]
+    elif wire == "responses":
+        body["input"] = prompt
+    else:  # completions
+        body["prompt"] = prompt
+    if max_tokens is not None:
+        body[max_tokens_field(route)] = max_tokens
+    body.update(extra)
+    return body
+
+
+def build_multiturn_body(
+    route: str,
+    model: str,
+    turns: List[str],
+    max_tokens: Optional[int] = 16,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """The same, for a multi-turn conversation.
+
+    The single-field wires (`/responses`, `/completions`) have nowhere to put a
+    turn structure, so the turns are joined — the request still carries the same
+    text, which is what a ceiling or a guardrail is reading.
+    """
+    wire = wire_of(route)
+    body: Dict[str, Any] = {"model": model}
+    if wire in ("chat", "messages"):
+        body["messages"] = [
+            {"role": "user" if index % 2 == 0 else "assistant", "content": turn}
+            for index, turn in enumerate(turns)
+        ]
+        # The Anthropic-shaped wire requires the conversation to end on a user
+        # turn, so drop a trailing assistant turn rather than send a 400 that
+        # has nothing to do with what is under test.
+        if body["messages"] and body["messages"][-1]["role"] == "assistant":
+            body["messages"].pop()
+    elif wire == "responses":
+        body["input"] = "\n\n".join(turns)
+    else:
+        body["prompt"] = "\n\n".join(turns)
+    if max_tokens is not None:
+        body[max_tokens_field(route)] = max_tokens
+    body.update(extra)
+    return body
+
+
+def served_text(route: str, body_text: str) -> Optional[str]:
+    """The completion text a served response carries, per wire. None if absent."""
+    doc = parse_json(body_text)
+    wire = wire_of(route)
+    if wire == "chat":
+        choices = doc.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            message = choices[0].get("message")
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content
+    elif wire == "messages":
+        content = doc.get("content")
+        if isinstance(content, list) and content and isinstance(content[0], dict):
+            text = content[0].get("text")
+            if isinstance(text, str):
+                return text
+    elif wire == "responses":
+        text = doc.get("output_text")
+        if isinstance(text, str):
+            return text
+        output = doc.get("output")
+        if isinstance(output, list) and output and isinstance(output[0], dict):
+            parts = output[0].get("content")
+            if isinstance(parts, list) and parts and isinstance(parts[0], dict):
+                inner = parts[0].get("text")
+                if isinstance(inner, str):
+                    return inner
+    else:  # completions
+        choices = doc.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            text = choices[0].get("text")
+            if isinstance(text, str):
+                return text
+    return None
+
+
+def served_body_ok(route: str, body_text: str) -> Tuple[bool, str]:
+    """Assert a served body actually carries a completion, at THIS wire's location."""
+    if served_text(route, body_text) is None:
+        return False, (
+            f"the served body carries no completion at {served_location(route)}, "
+            f"which is where the {wire_of(route)} wire puts one"
+        )
+    return True, ""
+
+
+def route_scope_message(route: str, model: str) -> str:
+    """The NOT-CONFIGURED explanation for a key that may not use this route."""
+    return (
+        f"the gateway answered 403 with x-nr-auth-reason: key_route_not_allowed for "
+        f"{route} — this key's route policy does not include it, so nothing about the "
+        f"gateway was tested. Point the suite at a route the key allows, e.g. "
+        f"{ROUTE_ENV}=/messages {MODEL_ENV}=<a model the key allows> "
+        f"(current: {ROUTE_ENV}={route}, {MODEL_ENV}={model})"
+    )
+
+
+def note_route_scope(checker: Any, status: int, headers: Dict[str, str]) -> bool:
+    """Record, once, that this key is not scoped to the route under test.
+
+    This IS a provably absent precondition — the request never reached the
+    behaviour under test — so it reports NOT-CONFIGURED rather than FAIL. It is
+    deliberately narrow: only a 403 that NAMES `key_route_not_allowed`, and only
+    for a request actually made on the route under test. A 403 for any other
+    reason, or on some other path, still fails the check that saw it.
+    """
+    if status != 403 or headers.get("x-nr-auth-reason") != "key_route_not_allowed":
+        return False
+    route = getattr(checker, "route", None)
+    if getattr(checker, "_current_path", None) != route:
+        return False
+    if not getattr(checker, "scope_detail", None):
+        checker.scope_detail = route_scope_message(route, getattr(checker, "model", "?"))
+    return True
+
+
+def run_checks_with_scope_guard(checker: Any, checks: List[Callable]) -> None:
+    """Run checks, short-circuiting the whole module on a route-scope refusal.
+
+    Without this, a key scoped to another route reports 95 gateway failures, and
+    the one fact worth knowing — that the suite was pointed at a route this key
+    may not use — is buried under them.
+    """
+    for index, check in enumerate(checks):
+        check()
+        if getattr(checker, "scope_detail", None):
+            for skipped in checks[index + 1:]:
+                name = skipped.__name__
+                if name.startswith("check_"):
+                    name = name[len("check_"):]
+                checker._record(
+                    name, "(not executed)", 0, {},
+                    "(skipped: this key is not scoped to the route under test)",
+                    False, False, detail=checker.scope_detail, not_configured=True,
+                )
+            return
 
 
 def split_head_body(raw: str) -> Tuple[str, str]:
@@ -333,6 +580,137 @@ def json_stdout_contract_self_test(suite: Dict[str, Any], markdown: str = "") ->
         raise AssertionError("the default path printed a JSON document instead of a report")
 
 
+def wire_contract_self_test() -> None:
+    """Prove each wire builds the body it accepts and reads the body it returns.
+
+    The point of this is the NEGATIVE half: a chat-shaped assertion must not
+    pass on the Anthropic-shaped wire, and vice versa. Without that, "it works
+    on both wires" means "it looks at neither".
+    """
+    served = {
+        "/chat/completions": '{"choices":[{"message":{"role":"assistant","content":"hello"}}]}',
+        "/messages": '{"content":[{"type":"text","text":"hello"}],"role":"assistant"}',
+        "/responses": '{"output":[{"content":[{"type":"output_text","text":"hello"}]}]}',
+        "/completions": '{"choices":[{"text":"hello"}]}',
+    }
+    for route, document in served.items():
+        assert served_text(route, document) == "hello", (
+            f"{route}: the completion was not found at {served_location(route)}"
+        )
+        ok, detail = served_body_ok(route, document)
+        assert ok, f"{route}: {detail}"
+
+        # A body from ANOTHER wire must NOT satisfy this one.
+        for other_route, other_document in served.items():
+            if other_route == route or wire_of(other_route) == wire_of(route):
+                continue
+            wrong_ok, _ = served_body_ok(route, other_document)
+            assert not wrong_ok, (
+                f"{route} accepted a {wire_of(other_route)}-shaped body; the assertion "
+                "is not actually reading this wire"
+            )
+
+    # `/responses` also accepts the convenience field.
+    assert served_text("/responses", '{"output_text":"hi"}') == "hi"
+
+    # A refusal envelope is never a served completion, on any wire.
+    refusal = '{"error":{"type":"invalid_request_error","message":"nope"}}'
+    for route in served:
+        ok, _ = served_body_ok(route, refusal)
+        assert not ok, f"{route} read a refusal envelope as a served completion"
+
+    # Request bodies carry the fields each wire requires, and no foreign ones.
+    chat = build_body("/chat/completions", "m", "ping")
+    assert chat["messages"][0]["content"] == "ping" and chat["max_tokens"] == 16, chat
+
+    messages = build_body("/messages", "m", "ping")
+    assert messages["messages"][0]["content"] == "ping", messages
+    assert "max_tokens" in messages, "max_tokens is REQUIRED on the messages wire"
+    assert "input" not in messages and "prompt" not in messages, messages
+
+    responses = build_body("/responses", "m", "ping")
+    assert responses["input"] == "ping", responses
+    assert responses["max_output_tokens"] == 16, "the responses wire names its ceiling differently"
+    assert "messages" not in responses and "max_tokens" not in responses, responses
+
+    completions = build_body("/completions", "m", "ping")
+    assert completions["prompt"] == "ping" and completions["max_tokens"] == 16, completions
+    assert "messages" not in completions and "input" not in completions, completions
+
+    assert max_tokens_field("/responses") == "max_output_tokens"
+    assert max_tokens_field("/messages") == "max_tokens"
+    assert prompt_field("/responses") == "input"
+    assert prompt_field("/completions") == "prompt"
+    assert prompt_field("/messages") == "messages"
+    for route in ALLOWED_ROUTES:
+        assert prompt_field(route) in build_body(route, "m", "ping"), route
+    assert build_body("/messages", "m", "ping", max_tokens=None).get("max_tokens") is None
+
+    # Multi-turn: structured where the wire has turns, joined where it does not.
+    turns = ["first", "second", "third"]
+    for route in ("/chat/completions", "/messages"):
+        multi = build_multiturn_body(route, "m", turns)
+        assert len(multi["messages"]) == 3, multi
+        assert multi["messages"][-1]["role"] == "user", (
+            "the messages wire requires the conversation to end on a user turn"
+        )
+    joined = build_multiturn_body("/responses", "m", turns)
+    assert all(turn in joined["input"] for turn in turns), joined
+    # An even number of turns would otherwise end on an assistant turn.
+    trimmed = build_multiturn_body("/messages", "m", ["a", "b"])
+    assert trimmed["messages"][-1]["role"] == "user", trimmed
+
+    # Route resolution, and its refusal of anything outside the allowed set.
+    previous_route = os.environ.pop(ROUTE_ENV, None)
+    previous_model = os.environ.pop(MODEL_ENV, None)
+    try:
+        assert resolve_route("") == DEFAULT_HEALTH_ROUTE
+        assert resolve_model("") == DEFAULT_HEALTH_MODEL
+        assert resolve_route("messages") == "/messages", "a bare route name should normalize"
+        os.environ[ROUTE_ENV] = "/messages"
+        os.environ[MODEL_ENV] = "claude-haiku-4-5-20251001"
+        assert resolve_route("") == "/messages"
+        assert resolve_model("") == "claude-haiku-4-5-20251001"
+        assert resolve_route("/responses") == "/responses", "an explicit flag outranks the env"
+        try:
+            resolve_route("/v1/embeddings")
+        except ValueError as exc:
+            assert "not a supported health-check route" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError("an unsupported route was accepted")
+    finally:
+        os.environ.pop(ROUTE_ENV, None)
+        os.environ.pop(MODEL_ENV, None)
+        if previous_route is not None:
+            os.environ[ROUTE_ENV] = previous_route
+        if previous_model is not None:
+            os.environ[MODEL_ENV] = previous_model
+
+    # The route-scope guard: narrow, and NOT-CONFIGURED rather than FAIL.
+    class _Checker:
+        route = "/messages"
+        model = "claude-haiku-4-5-20251001"
+        scope_detail = None
+        _current_path = "/messages"
+
+    checker = _Checker()
+    assert note_route_scope(checker, 403, {"x-nr-auth-reason": "key_route_not_allowed"})
+    assert "key_route_not_allowed" in checker.scope_detail
+    assert ROUTE_ENV in checker.scope_detail, "the message must name the override to set"
+
+    other = _Checker()
+    assert not note_route_scope(other, 403, {"x-nr-auth-reason": "key_blocked"}), (
+        "a 403 for a different reason is a real failure, not a scope refusal"
+    )
+    assert not note_route_scope(other, 401, {"x-nr-auth-reason": "key_route_not_allowed"})
+    off_route = _Checker()
+    off_route._current_path = "/openapi.json"
+    assert not note_route_scope(
+        off_route, 403, {"x-nr-auth-reason": "key_route_not_allowed"}
+    ), "a refusal on some other path must not short-circuit the route under test"
+    assert other.scope_detail is None and off_route.scope_detail is None
+
+
 def parser_contract_self_test() -> None:
     """Mutation checks for the two transport rules. Every module calls this.
 
@@ -464,6 +842,7 @@ def run_self_test() -> int:
     """Offline verification of the shared plumbing."""
     print("Running _curl_common.py --self-test (offline mode)...")
     parser_contract_self_test()
+    wire_contract_self_test()
     print("[PASS] _curl_common.py self-test passed cleanly.")
     return 0
 

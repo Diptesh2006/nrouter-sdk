@@ -50,16 +50,26 @@ from _curl_common import (  # noqa: E402
     MISSING_KEY_MESSAGE,
     NOT_CONFIGURED,
     PASS,
+    add_wire_arguments,
     assert_all,
+    build_body,
+    build_multiturn_body,
     emit_results,
     error_of,
     json_stdout_contract_self_test,
+    max_tokens_field,
+    note_route_scope,
     parse_json,
     parser_contract_self_test,
     reported_headers,
     resolve_api_key,
+    resolve_model,
+    resolve_route,
+    run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    served_body_ok,
+    wire_contract_self_test,
 )
 
 FEATURE = "context_limit"
@@ -69,6 +79,16 @@ DEFAULT_ANTHROPIC_MODEL = "anthropic/claude-3-5-haiku"
 # while staying cheap to build and to send.
 OVERSIZE_WORD_COUNT = 280_000
 OVER_CEILING_MAX_TOKENS = 9_999_999
+
+def wire_of_route_label(path: str) -> str:
+    """A short human label for the wire a path speaks, for report prose."""
+    return {
+        "/chat/completions": "chat-completions",
+        "/messages": "messages",
+        "/responses": "responses",
+        "/completions": "completions",
+    }.get(path, "chat-completions")
+
 
 METERING_HEADERS = (
     "x-nr-request-cost",
@@ -86,15 +106,17 @@ class ContextLimitCurlHealthCheck:
         self,
         base_url: str = DEFAULT_BASE_URL,
         api_key: Optional[str] = None,
-        model: str = DEFAULT_MODEL,
-        anthropic_model: str = DEFAULT_ANTHROPIC_MODEL,
+        route: str = "",
+        model: str = "",
         oversize_words: int = OVERSIZE_WORD_COUNT,
         curl_fn: Callable = run_curl,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.environ.get("NROUTER_API_KEY", "")
-        self.model = model
-        self.anthropic_model = anthropic_model
+        self.route = resolve_route(route)
+        self.model = resolve_model(model)
+        self.scope_detail: Optional[str] = None
+        self._current_path: Optional[str] = None
         self.oversize_words = oversize_words
         self.curl_fn = curl_fn
         self.results: List[Dict[str, Any]] = []
@@ -105,6 +127,7 @@ class ContextLimitCurlHealthCheck:
         self, path: str, body: Any, via_stdin: bool = False
     ) -> Tuple[List[str], Optional[str], str]:
         """Return (curl argv, stdin payload or None, reproducible curl string)."""
+        self._current_path = path
         url = f"{self.base_url}{path}"
         payload = json.dumps(body)
         args = [
@@ -122,9 +145,9 @@ class ContextLimitCurlHealthCheck:
             args += ["-d", "@-"]
             shown_lines.append("  -d @-")
             shown = (
-                f"python3 -c 'import json,sys; sys.stdout.write(json.dumps("
-                f'{{"model": "{body.get("model")}", "messages": '
-                f'[{{"role": "user", "content": "test " * {self.oversize_words}}}]}}))\' | \\\n'
+                "python3 -c 'import json,sys; sys.stdout.write(json.dumps(BODY))' | \\\n"
+                f"  # BODY = a {wire_of_route_label(path)} request for "
+                f'"{body.get("model")}" carrying "test " * {self.oversize_words}\n'
                 + " \\\n".join(shown_lines)
             )
             args.append(url)
@@ -146,13 +169,22 @@ class ContextLimitCurlHealthCheck:
         detail: str = "",
         not_configured: bool = False,
     ) -> Dict[str, Any]:
+        # A 403 naming key_route_not_allowed means the request never reached the
+        # behaviour under test: NOT-CONFIGURED, whatever the check wanted.
+        scope_blocked = note_route_scope(self, status, headers)
+        if scope_blocked:
+            detail = self.scope_detail or detail
         row = {
             "name": name,
             "request": request,
             "status": status,
             "headers": reported_headers(headers),
             "assertion": assertion,
-            "result": NOT_CONFIGURED if not_configured else (PASS if ok else FAIL),
+            "result": (
+                NOT_CONFIGURED
+                if (not_configured or scope_blocked)
+                else (PASS if ok else FAIL)
+            ),
             "expected_failure": expected_failure,
         }
         if detail:
@@ -160,38 +192,36 @@ class ContextLimitCurlHealthCheck:
         self.results.append(row)
         return row
 
-    def _oversize_body(self, model: str, anthropic_shape: bool = False) -> Dict[str, Any]:
-        content = "test " * self.oversize_words
-        body: Dict[str, Any] = {
-            "model": model,
-            "messages": [{"role": "user", "content": content}],
-        }
-        if anthropic_shape:
-            body["max_tokens"] = 16
-        return body
+    def _oversize_body(self, model: str) -> Dict[str, Any]:
+        return build_body(self.route, model, "test " * self.oversize_words, max_tokens=16)
+
+    def _oversize_multiturn_body(self, model: str) -> Dict[str, Any]:
+        """The same volume of text spread across a conversation.
+
+        The ceiling counts the WHOLE request, not the last turn, so this must be
+        refused exactly as the single-turn version is. On the single-field wires
+        the turns are joined, which is the same bytes by another name.
+        """
+        chunk = "test " * max(1, self.oversize_words // 4)
+        return build_multiturn_body(self.route, model, [chunk] * 4, max_tokens=16)
 
     # ------------------------------------------------------------ happy checks
 
     def check_ordinary_prompt_serves(self) -> Dict[str, Any]:
         name = "ordinary_prompt_serves"
         assertion = (
-            "200; body.choices non-empty; x-nr-input-tokens present and > 0; "
-            "no error object"
+            "200; the wire's served body carries a completion; x-nr-input-tokens "
+            "present and > 0; no error object"
         )
         args, stdin_data, request = self._prepare(
-            "/chat/completions",
-            {
-                "model": self.model,
-                "messages": [{"role": "user", "content": "ping"}],
-                "max_tokens": 8,
-            },
+            self.route, build_body(self.route, self.model, "ping", max_tokens=8)
         )
         status, headers, body, _ = self.curl_fn(args, stdin_data=stdin_data)
         input_tokens = headers.get("x-nr-input-tokens")
-        choices = parse_json(body).get("choices")
+        body_ok, body_detail = served_body_ok(self.route, body)
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
-            (isinstance(choices, list) and len(choices) > 0, "body.choices missing or empty"),
+            (body_ok, body_detail),
             (not error_of(body), "a served response carries an error object"),
             (
                 input_tokens is not None and input_tokens.isdigit() and int(input_tokens) > 0,
@@ -203,24 +233,22 @@ class ContextLimitCurlHealthCheck:
     def check_max_tokens_within_ceiling_serves(self) -> Dict[str, Any]:
         name = "max_tokens_within_ceiling_serves"
         assertion = (
-            "200; body.choices non-empty; x-nr-output-tokens present and "
-            "<= the requested max_tokens"
+            f"200; the wire's served body carries a completion; x-nr-output-tokens "
+            f"present and <= the requested {max_tokens_field(self.route)}"
         )
         requested = 16
         args, stdin_data, request = self._prepare(
-            "/chat/completions",
-            {
-                "model": self.model,
-                "messages": [{"role": "user", "content": "Reply with one short word."}],
-                "max_tokens": requested,
-            },
+            self.route,
+            build_body(
+                self.route, self.model, "Reply with one short word.", max_tokens=requested
+            ),
         )
         status, headers, body, _ = self.curl_fn(args, stdin_data=stdin_data)
         output_tokens = headers.get("x-nr-output-tokens")
-        choices = parse_json(body).get("choices")
+        body_ok, body_detail = served_body_ok(self.route, body)
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
-            (isinstance(choices, list) and len(choices) > 0, "body.choices missing or empty"),
+            (body_ok, body_detail),
             (
                 output_tokens is None
                 or (output_tokens.isdigit() and int(output_tokens) <= requested),
@@ -238,7 +266,7 @@ class ContextLimitCurlHealthCheck:
             "x-nr-request-cost ABSENT (refused before the provider was paid)"
         )
         args, stdin_data, request = self._prepare(
-            "/chat/completions", self._oversize_body(self.model), via_stdin=True
+            self.route, self._oversize_body(self.model), via_stdin=True
         )
         status, headers, body, _ = self.curl_fn(args, stdin_data=stdin_data)
         err = error_of(body)
@@ -258,12 +286,8 @@ class ContextLimitCurlHealthCheck:
             "no cost header"
         )
         args, stdin_data, request = self._prepare(
-            "/chat/completions",
-            {
-                "model": self.model,
-                "messages": [{"role": "user", "content": "ping"}],
-                "max_tokens": OVER_CEILING_MAX_TOKENS,
-            },
+            self.route,
+            build_body(self.route, self.model, "ping", max_tokens=OVER_CEILING_MAX_TOKENS),
         )
         status, headers, body, _ = self.curl_fn(args, stdin_data=stdin_data)
         err = error_of(body)
@@ -285,7 +309,7 @@ class ContextLimitCurlHealthCheck:
             "x-nr-output-tokens, x-nr-total-tokens is present"
         )
         args, stdin_data, request = self._prepare(
-            "/chat/completions", self._oversize_body(self.model), via_stdin=True
+            self.route, self._oversize_body(self.model), via_stdin=True
         )
         status, headers, body, _ = self.curl_fn(args, stdin_data=stdin_data)
         leaked = [header for header in METERING_HEADERS if header in headers]
@@ -303,12 +327,7 @@ class ContextLimitCurlHealthCheck:
             "clamped to a silent default; no cost header"
         )
         args, stdin_data, request = self._prepare(
-            "/chat/completions",
-            {
-                "model": self.model,
-                "messages": [{"role": "user", "content": "ping"}],
-                "max_tokens": -1,
-            },
+            self.route, build_body(self.route, self.model, "ping", max_tokens=-1)
         )
         status, headers, body, _ = self.curl_fn(args, stdin_data=stdin_data)
         err = error_of(body)
@@ -320,27 +339,18 @@ class ContextLimitCurlHealthCheck:
         ])
         return self._record(name, request, status, headers, assertion, ok, True, detail)
 
-    def check_oversize_refused_on_messages_route(self) -> Dict[str, Any]:
-        name = "oversize_refused_on_messages_route"
+    def check_oversize_multiturn_is_input_too_large(self) -> Dict[str, Any]:
+        name = "oversize_multiturn_is_input_too_large"
         assertion = (
-            "400 on /messages too; error.code == input_too_large; the ceiling is "
-            "enforced per request, not per wire shape; no cost header"
+            "400; error.code == input_too_large; the ceiling counts the WHOLE "
+            "request, not just the last turn, so the same volume split across a "
+            "conversation is refused identically; no cost header"
         )
         args, stdin_data, request = self._prepare(
-            "/messages",
-            self._oversize_body(self.anthropic_model, anthropic_shape=True),
-            via_stdin=True,
+            self.route, self._oversize_multiturn_body(self.model), via_stdin=True
         )
         status, headers, body, _ = self.curl_fn(args, stdin_data=stdin_data)
         err = error_of(body)
-        # A 404 from the route itself is a provably absent precondition. Any
-        # other unexpected status is a FAIL below, never an excuse.
-        if status == 404 and err.get("code") != "input_too_large":
-            return self._record(
-                name, request, status, headers, assertion, False, True,
-                detail="/messages is not served on this plane",
-                not_configured=True,
-            )
         ok, detail = assert_all([
             (status == 400, f"expected 400, got {status}"),
             (err.get("code") == "input_too_large", f"error.code {err.get('code')!r} != input_too_large"),
@@ -355,7 +365,7 @@ class ContextLimitCurlHealthCheck:
             "was attempted); x-nr-request-id still present for support"
         )
         args, stdin_data, request = self._prepare(
-            "/chat/completions", self._oversize_body(self.model), via_stdin=True
+            self.route, self._oversize_body(self.model), via_stdin=True
         )
         status, headers, _, _ = self.curl_fn(args, stdin_data=stdin_data)
         ok, detail = assert_all([
@@ -383,11 +393,10 @@ class ContextLimitCurlHealthCheck:
                 self.check_max_tokens_over_ceiling_is_refused,
                 self.check_oversize_refusal_has_no_metering_headers,
                 self.check_negative_max_tokens_is_refused,
-                self.check_oversize_refused_on_messages_route,
+                self.check_oversize_multiturn_is_input_too_large,
                 self.check_ceiling_refusal_has_no_routing_headers,
             ]
-        for check in checks:
-            check()
+        run_checks_with_scope_guard(self, checks)
         return self.summarize()
 
     def summarize(self) -> Dict[str, Any]:
@@ -397,6 +406,8 @@ class ContextLimitCurlHealthCheck:
         return {
             "feature": FEATURE,
             "base_url": self.base_url,
+            "route": self.route,
+            "model": self.model,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "checks": self.results,
             "total_checks": len(self.results),
@@ -416,6 +427,7 @@ class ContextLimitCurlHealthCheck:
             "## 📏 nRouter Pure-Curl Health Check: Context & Output Ceilings",
             "",
             f"**Status**: {badge} | **Base URL**: `{suite['base_url']}` | "
+            f"**Route**: `{suite['route']}` | **Model**: `{suite['model']}` | "
             f"**Adversarial**: {suite['adversarial_checks']}/{suite['total_checks']}",
             "",
             "| Check | Adversarial | HTTP | Result | Assertion | Detail |",
@@ -435,6 +447,7 @@ def run_self_test() -> int:
     print("Running context_limit_curl.py --self-test (offline mode)...")
 
     parser_contract_self_test()
+    wire_contract_self_test()
 
     def payload_of(args: List[str], stdin_data: Optional[str]) -> Dict[str, Any]:
         for index, arg in enumerate(args):
@@ -453,10 +466,24 @@ def run_self_test() -> int:
     base = {"x-nr-request-id": "eeeeeeee-0000-1111-2222-333333333333"}
     ceiling_chars = 100_000
 
+    def request_text(body: Dict[str, Any]) -> str:
+        """Every byte of prompt in the request, on whichever wire it arrived.
+
+        The ceiling counts the WHOLE request, so the double models that: the
+        multi-turn probe must be refused even though no single turn is oversize.
+        """
+        if isinstance(body.get("messages"), list):
+            return "".join(
+                str(turn.get("content", ""))
+                for turn in body["messages"]
+                if isinstance(turn, dict)
+            )
+        return str(body.get("input") or body.get("prompt") or "")
+
     def mock_curl(args, timeout_s=60, stdin_data=None):
         body = payload_of(args, stdin_data)
-        content = body.get("messages", [{}])[0].get("content", "")
-        max_tokens = body.get("max_tokens")
+        content = request_text(body)
+        max_tokens = body.get("max_tokens", body.get("max_output_tokens"))
         if isinstance(max_tokens, int) and max_tokens < 0:
             return 400, dict(base), json.dumps(
                 {"error": {"type": "invalid_request_error", "message": "max_tokens must be positive"}}
@@ -584,26 +611,75 @@ def run_self_test() -> int:
         "a transport failure must never be reported as NOT-CONFIGURED"
     )
 
-    # A 404 carrying the ceiling code is the ceiling firing, not an absent
-    # route, and must be judged as a refusal rather than excused.
-    def messages_404_with_code(args, timeout_s=60, stdin_data=None):
-        if endpoint_of(args).endswith("/messages"):
-            return 404, dict(base), json.dumps({
-                "error": {"type": "gateway_error", "code": "input_too_large", "message": "too large"}
-            }), 5.0
+    # A gateway that measures only the LAST turn lets the same volume of text
+    # through when it is split across a conversation. That must FAIL.
+    def counts_only_last_turn(args, timeout_s=60, stdin_data=None):
+        body = payload_of(args, stdin_data)
+        turns = body.get("messages")
+        if isinstance(turns, list) and len(turns) > 1:
+            last = str(turns[-1].get("content", ""))
+            if len(last) <= ceiling_chars:
+                headers = dict(base)
+                headers.update({"x-nr-request-cost": "3.100000", "x-nr-cost-status": "exact"})
+                return 200, headers, json.dumps({"choices": [{"message": {"content": "ok"}}]}), 800.0
         return mock_curl(args, timeout_s, stdin_data)
 
-    odd = ContextLimitCurlHealthCheck(
+    partial_counter = ContextLimitCurlHealthCheck(
         base_url="https://mock.invalid/v1", api_key="k", oversize_words=40_000,
-        curl_fn=messages_404_with_code,
+        curl_fn=counts_only_last_turn,
     )
-    odd_row = next(
-        r for r in odd.run_suite()["checks"] if r["name"] == "oversize_refused_on_messages_route"
+    partial_row = next(
+        r for r in partial_counter.run_suite()["checks"]
+        if r["name"] == "oversize_multiturn_is_input_too_large"
     )
-    assert odd_row["result"] == FAIL, (
-        "a 404 that carries the ceiling code is the route answering, not an absent "
-        f"route; got {odd_row['result']}"
+    assert partial_row["result"] == FAIL, (
+        "a ceiling that counts only the last turn must FAIL; got "
+        f"{partial_row['result']}"
     )
+
+    # BOTH WIRES: the ceiling is the same on the Anthropic-shaped wire, where
+    # the served body has no `choices` and max_tokens is mandatory.
+    messages_suite = ContextLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/messages",
+        model="claude-haiku-4-5-20251001", oversize_words=40_000, curl_fn=mock_curl,
+    ).run_suite()
+    assert messages_suite["route"] == "/messages"
+    assert messages_suite["all_passed"] is True, [
+        (r["name"], r.get("detail")) for r in messages_suite["checks"] if r["result"] == FAIL
+    ]
+
+    # The /responses wire names its ceiling `max_output_tokens`, and the probe
+    # must send THAT field or it is testing nothing.
+    responses_checker = ContextLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/responses",
+        model="openai/gpt-4o-mini", oversize_words=40_000, curl_fn=mock_curl,
+    )
+    responses_suite = responses_checker.run_suite()
+    ceiling_request = next(
+        r["request"] for r in responses_suite["checks"]
+        if r["name"] == "max_tokens_over_ceiling_is_refused"
+    )
+    assert "max_output_tokens" in ceiling_request, ceiling_request
+    assert '"max_tokens"' not in ceiling_request, (
+        "the responses wire was sent a chat-shaped ceiling field"
+    )
+
+    # A route-scoped key short-circuits as NOT-CONFIGURED, not as failures.
+    def mock_route_not_allowed(args, timeout_s=60, stdin_data=None):
+        return 403, {"x-nr-request-id": "r", "x-nr-auth-reason": "key_route_not_allowed"}, json.dumps(
+            {"error": {"type": "invalid_request_error", "message": "Forbidden"}}
+        ), 3.0
+
+    scoped_suite = ContextLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", oversize_words=1_000,
+        curl_fn=mock_route_not_allowed,
+    ).run_suite()
+    assert scoped_suite["failed_checks"] == 0, (
+        f"{[r['name'] for r in scoped_suite['checks'] if r['result'] == FAIL]}"
+    )
+    assert any(
+        "NROUTER_HEALTH_ROUTE" in r.get("detail", "") for r in scoped_suite["checks"]
+    ), "the scope refusal must name the override to set"
 
     assert "Context & Output Ceilings" in checker.render_markdown_summary(suite)
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
@@ -617,7 +693,7 @@ def main() -> int:
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--base-url", default=os.environ.get("NROUTER_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.environ.get("NROUTER_API_KEY", ""))
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    add_wire_arguments(parser)
     parser.add_argument("--oversize-words", type=int, default=OVERSIZE_WORD_COUNT)
     parser.add_argument("--step-summary", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -631,14 +707,20 @@ def main() -> int:
         print(MISSING_KEY_MESSAGE, file=sys.stderr)
         return EXIT_UNRUNNABLE
 
-    checker = ContextLimitCurlHealthCheck(
-        base_url=args.base_url,
-        api_key=api_key,
-        model=args.model,
-        oversize_words=args.oversize_words,
-    )
+    try:
+        checker = ContextLimitCurlHealthCheck(
+            base_url=args.base_url,
+            api_key=api_key,
+            route=args.route,
+            model=args.model,
+            oversize_words=args.oversize_words,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_UNRUNNABLE
     print(
-        f"=== nRouter Context & Output Ceiling Curl Health Check ===\nBase URL: {args.base_url}",
+        f"=== nRouter Context & Output Ceiling Curl Health Check ===\n"
+        f"Base URL: {args.base_url} | route: {checker.route} | model: {checker.model}",
         file=sys.stderr if args.json else sys.stdout,
     )
     suite = checker.run_suite(quick=args.quick)

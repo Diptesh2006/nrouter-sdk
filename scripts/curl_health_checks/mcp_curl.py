@@ -52,16 +52,24 @@ from _curl_common import (  # noqa: E402
     MISSING_KEY_MESSAGE,
     NOT_CONFIGURED,
     PASS,
+    add_wire_arguments,
     assert_all,
+    build_body,
     emit_results,
     error_of,
     json_stdout_contract_self_test,
+    note_route_scope,
     parse_json,
     parser_contract_self_test,
     reported_headers,
     resolve_api_key,
+    resolve_model,
+    resolve_route,
+    run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    served_body_ok,
+    wire_contract_self_test,
 )
 
 FEATURE = "mcp"
@@ -96,6 +104,12 @@ class McpCurlHealthCheck:
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.environ.get("NROUTER_API_KEY", "")
+        # The MCP surface has its own fixed path; the scope guard reports against
+        # THAT, since a key scoped away from /mcp is the same absent precondition.
+        self.route = MCP_PATH
+        self.model = resolve_model("")
+        self.scope_detail: Optional[str] = None
+        self._current_path: Optional[str] = None
         self.server = server or os.environ.get("NROUTER_MCP_SERVER", "")
         self.control_plane_key = (
             control_plane_key
@@ -116,6 +130,7 @@ class McpCurlHealthCheck:
         raw_body: Optional[str] = None,
     ) -> Tuple[List[str], str]:
         """`key=''` means the default customer key; `key=None` means send none."""
+        self._current_path = MCP_PATH
         url = f"{self.base_url}{MCP_PATH}"
         payload = raw_body if raw_body is not None else json.dumps(body)
         args: List[str] = []
@@ -149,13 +164,22 @@ class McpCurlHealthCheck:
         detail: str = "",
         not_configured: bool = False,
     ) -> Dict[str, Any]:
+        # A 403 naming key_route_not_allowed means the request never reached the
+        # behaviour under test: NOT-CONFIGURED, whatever the check wanted.
+        scope_blocked = note_route_scope(self, status, headers)
+        if scope_blocked:
+            detail = self.scope_detail or detail
         row = {
             "name": name,
             "request": request,
             "status": status,
             "headers": reported_headers(headers),
             "assertion": assertion,
-            "result": NOT_CONFIGURED if not_configured else (PASS if ok else FAIL),
+            "result": (
+                NOT_CONFIGURED
+                if (not_configured or scope_blocked)
+                else (PASS if ok else FAIL)
+            ),
             "expected_failure": expected_failure,
         }
         if detail:
@@ -403,8 +427,7 @@ class McpCurlHealthCheck:
                 self.check_refusal_carries_no_cost,
                 self.check_traversal_server_name_is_refused,
             ]
-        for check in checks:
-            check()
+        run_checks_with_scope_guard(self, checks)
         return self.summarize()
 
     def summarize(self) -> Dict[str, Any]:
@@ -414,6 +437,8 @@ class McpCurlHealthCheck:
         return {
             "feature": FEATURE,
             "base_url": self.base_url,
+            "route": self.route,
+            "model": self.model,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "checks": self.results,
             "total_checks": len(self.results),
@@ -433,6 +458,7 @@ class McpCurlHealthCheck:
             "## 🔌 nRouter Pure-Curl Health Check: MCP",
             "",
             f"**Status**: {badge} | **Base URL**: `{suite['base_url']}` | "
+            f"**Route**: `{suite['route']}` | **Model**: `{suite['model']}` | "
             f"**Adversarial**: {suite['adversarial_checks']}/{suite['total_checks']}",
             "",
             "| Check | Adversarial | HTTP | Result | Assertion | Detail |",
@@ -452,6 +478,7 @@ def run_self_test() -> int:
     print("Running mcp_curl.py --self-test (offline mode)...")
 
     parser_contract_self_test()
+    wire_contract_self_test()
 
     configured_server = "example-server"
 
@@ -618,6 +645,29 @@ def run_self_test() -> int:
         "a transport failure must never be reported as NOT-CONFIGURED"
     )
 
+    # A key scoped away from /mcp is an absent precondition for THIS module, and
+    # reports as NOT-CONFIGURED naming the header value — not as nine failures.
+    def mock_route_not_allowed(args, timeout_s=40, stdin_data=None):
+        return 403, {"x-nr-request-id": "r", "x-nr-auth-reason": "key_route_not_allowed"}, json.dumps(
+            {"error": {"type": "invalid_request_error", "message": "Forbidden"}}
+        ), 3.0
+
+    scoped_suite = McpCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", server=configured_server,
+        curl_fn=mock_route_not_allowed,
+    ).run_suite()
+    assert scoped_suite["failed_checks"] == 0, (
+        f"{[r['name'] for r in scoped_suite['checks'] if r['result'] == FAIL]}"
+    )
+    scope_details = [
+        r.get("detail", "") for r in scoped_suite["checks"]
+        if "key_route_not_allowed" in r.get("detail", "")
+    ]
+    assert scope_details, "no check reported the route-scope refusal"
+    assert "/mcp" in scope_details[0], (
+        "the MCP module must name /mcp as the route it could not reach"
+    )
+
     assert "MCP" in checker.render_markdown_summary(suite)
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] mcp_curl.py self-test passed cleanly.")
@@ -630,6 +680,7 @@ def main() -> int:
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--base-url", default=os.environ.get("NROUTER_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.environ.get("NROUTER_API_KEY", ""))
+    add_wire_arguments(parser)  # accepted for symmetry; MCP has its own fixed path
     parser.add_argument("--server", default=os.environ.get("NROUTER_MCP_SERVER", ""))
     parser.add_argument("--step-summary", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -645,7 +696,9 @@ def main() -> int:
 
     checker = McpCurlHealthCheck(base_url=args.base_url, api_key=api_key, server=args.server)
     print(
-        f"=== nRouter MCP Curl Health Check ===\nBase URL: {args.base_url}",
+        f"=== nRouter MCP Curl Health Check ===\n"
+        f"Base URL: {args.base_url} | route: {checker.route} | "
+        f"server: {checker.server or '(none configured)'}",
         file=sys.stderr if args.json else sys.stdout,
     )
     suite = checker.run_suite(quick=args.quick)

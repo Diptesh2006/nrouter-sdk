@@ -56,16 +56,24 @@ from _curl_common import (  # noqa: E402
     MISSING_KEY_MESSAGE,
     NOT_CONFIGURED,
     PASS,
+    add_wire_arguments,
     assert_all,
+    build_body,
     emit_results,
     error_of,
     json_stdout_contract_self_test,
+    note_route_scope,
     parse_json,
     parser_contract_self_test,
     reported_headers,
     resolve_api_key,
+    resolve_model,
+    resolve_route,
+    run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    served_body_ok,
+    wire_contract_self_test,
 )
 
 FEATURE = "fallbacks"
@@ -86,7 +94,9 @@ class FallbacksCurlHealthCheck:
         self,
         base_url: str = DEFAULT_BASE_URL,
         api_key: Optional[str] = None,
-        primary_model: str = DEFAULT_PRIMARY_MODEL,
+        route: str = "",
+        model: str = "",
+        primary_model: str = "",
         fallback_model: str = DEFAULT_FALLBACK_MODEL,
         second_fallback_model: str = DEFAULT_SECOND_FALLBACK_MODEL,
         failing_primary_model: Optional[str] = None,
@@ -95,7 +105,13 @@ class FallbacksCurlHealthCheck:
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.environ.get("NROUTER_API_KEY", "")
-        self.primary_model = primary_model
+        # The route and model under test are a runtime choice: a virtual key is
+        # commonly scoped to a subset of both.
+        self.route = resolve_route(route)
+        self.model = resolve_model(model)
+        self.scope_detail: Optional[str] = None
+        self._current_path: Optional[str] = None
+        self.primary_model = primary_model or self.model
         self.fallback_model = fallback_model
         self.second_fallback_model = second_fallback_model
         self.failing_primary_model = failing_primary_model or os.environ.get(
@@ -121,6 +137,7 @@ class FallbacksCurlHealthCheck:
         The key is NEVER interpolated into the reported string: it is always
         rendered as `$NROUTER_API_KEY`, and the host as `$NROUTER_BASE_URL`.
         """
+        self._current_path = path
         url = f"{self.base_url}{path}"
         args = [
             "-H", f"Authorization: Bearer {self.api_key}",
@@ -154,13 +171,22 @@ class FallbacksCurlHealthCheck:
         detail: str = "",
         not_configured: bool = False,
     ) -> Dict[str, Any]:
+        # A 403 naming key_route_not_allowed means the request never reached the
+        # behaviour under test, so it is NOT-CONFIGURED whatever the check wanted.
+        scope_blocked = note_route_scope(self, status, headers)
+        if scope_blocked:
+            detail = self.scope_detail or detail
         row = {
             "name": name,
             "request": request,
             "status": status,
             "headers": reported_headers(headers),
             "assertion": assertion,
-            "result": NOT_CONFIGURED if not_configured else (PASS if ok else FAIL),
+            "result": (
+                NOT_CONFIGURED
+                if (not_configured or scope_blocked)
+                else (PASS if ok else FAIL)
+            ),
             "expected_failure": expected_failure,
         }
         if detail:
@@ -169,13 +195,7 @@ class FallbacksCurlHealthCheck:
         return row
 
     def _body_payload(self, model: str, **extra: Any) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 8,
-        }
-        payload.update(extra)
-        return payload
+        return build_body(self.route, model, "ping", max_tokens=8, **extra)
 
     # ------------------------------------------------------------ happy checks
 
@@ -183,12 +203,12 @@ class FallbacksCurlHealthCheck:
         """A served request names the answering rank in its routing headers."""
         name = "direct_serve_with_fallback_list"
         assertion = (
-            "200; body.choices non-empty; x-nr-routing matches ^(direct|fallback:N)$ "
+            "200; the wire's served body carries a completion; x-nr-routing matches ^(direct|fallback:N)$ "
             "and x-nr-attempts is an integer >= 1"
         )
         args, request = self._prepare(
             "POST",
-            "/chat/completions",
+            self.route,
             self._body_payload(
                 self.primary_model, nrouter_fallbacks=[self.fallback_model]
             ),
@@ -196,7 +216,7 @@ class FallbacksCurlHealthCheck:
         status, headers, body, _ = self.curl_fn(args)
         routing = headers.get("x-nr-routing")
         attempts = headers.get("x-nr-attempts")
-        choices = parse_json(body).get("choices")
+        body_ok, body_detail = served_body_ok(self.route, body)
         # NOT-CONFIGURED only when the PRECONDITION is provably absent: the
         # request was served correctly and the plane emits NEITHER routing
         # header (they are planned, not released). A served response that is
@@ -204,8 +224,7 @@ class FallbacksCurlHealthCheck:
         # FAIL and falls through to the assertions below.
         if (
             status == 200
-            and isinstance(choices, list)
-            and choices
+            and body_ok
             and routing is None
             and attempts is None
         ):
@@ -219,7 +238,7 @@ class FallbacksCurlHealthCheck:
             )
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
-            (isinstance(choices, list) and len(choices) > 0, "body.choices missing or empty"),
+            (body_ok, body_detail),
             (
                 routing is not None and bool(ROUTING_RE.match(routing)),
                 f"x-nr-routing {routing!r} is not direct|fallback:N",
@@ -235,7 +254,7 @@ class FallbacksCurlHealthCheck:
         """A forced failover is served and reports `fallback:1` over 2 attempts."""
         name = "served_via_fallback_names_rank"
         assertion = (
-            "200; body.choices non-empty; x-nr-routing == fallback:1; "
+            "200; the wire's served body carries a completion; x-nr-routing == fallback:1; "
             "x-nr-attempts == 2"
         )
         if not (self.failing_primary_model and self.healthy_fallback_model):
@@ -249,7 +268,7 @@ class FallbacksCurlHealthCheck:
             )
         args, request = self._prepare(
             "POST",
-            "/chat/completions",
+            self.route,
             self._body_payload(
                 self.failing_primary_model,
                 nrouter_fallbacks=[self.healthy_fallback_model],
@@ -258,11 +277,10 @@ class FallbacksCurlHealthCheck:
         status, headers, body, _ = self.curl_fn(args)
         routing = headers.get("x-nr-routing")
         attempts = headers.get("x-nr-attempts")
-        choices = parse_json(body).get("choices")
+        body_ok, body_detail = served_body_ok(self.route, body)
         if (
             status == 200
-            and isinstance(choices, list)
-            and choices
+            and body_ok
             and routing is None
             and attempts is None
         ):
@@ -276,7 +294,7 @@ class FallbacksCurlHealthCheck:
             )
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
-            (isinstance(choices, list) and len(choices) > 0, "body.choices missing or empty"),
+            (body_ok, body_detail),
             (routing == "fallback:1", f"x-nr-routing {routing!r} != fallback:1"),
             (attempts == "2", f"x-nr-attempts {attempts!r} != 2"),
         ])
@@ -291,7 +309,7 @@ class FallbacksCurlHealthCheck:
         )
         args, request = self._prepare(
             "POST",
-            "/chat/completions",
+            self.route,
             self._body_payload(
                 self.primary_model,
                 nrouter_fallbacks=[self.fallback_model, self.second_fallback_model],
@@ -324,7 +342,7 @@ class FallbacksCurlHealthCheck:
     ) -> Dict[str, Any]:
         """Shared adversarial shape: a refusal with a code, no cost, no rank."""
         args, request = self._prepare(
-            "POST", "/chat/completions", payload, raw_body=raw_body
+            "POST", self.route, payload, raw_body=raw_body
         )
         status, headers, body, _ = self.curl_fn(args)
         err = error_of(body)
@@ -436,7 +454,7 @@ class FallbacksCurlHealthCheck:
             )
         args, request = self._prepare(
             "POST",
-            "/chat/completions",
+            self.route,
             self._body_payload(failing, nrouter_fallbacks=[second]),
         )
         status, headers, body, _ = self.curl_fn(args)
@@ -476,8 +494,7 @@ class FallbacksCurlHealthCheck:
                 self.check_non_array_fallbacks_400,
                 self.check_exhausted_chain_has_no_attempts_header,
             ]
-        for check in checks:
-            check()
+        run_checks_with_scope_guard(self, checks)
         return self.summarize()
 
     def summarize(self) -> Dict[str, Any]:
@@ -487,6 +504,8 @@ class FallbacksCurlHealthCheck:
         return {
             "feature": FEATURE,
             "base_url": self.base_url,
+            "route": self.route,
+            "model": self.model,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "checks": self.results,
             "total_checks": len(self.results),
@@ -506,6 +525,7 @@ class FallbacksCurlHealthCheck:
             "## 🔀 nRouter Pure-Curl Health Check: Request Fallbacks",
             "",
             f"**Status**: {badge} | **Base URL**: `{suite['base_url']}` | "
+            f"**Route**: `{suite['route']}` | **Model**: `{suite['model']}` | "
             f"**Adversarial**: {suite['adversarial_checks']}/{suite['total_checks']}",
             "",
             "| Check | Adversarial | HTTP | Result | Assertion | Detail |",
@@ -528,6 +548,7 @@ def run_self_test() -> int:
     # The shared transport contract: an SSE body survives intact, and a curl
     # rc 56 with a partial body on stdout is a transport failure, not a 200.
     parser_contract_self_test()
+    wire_contract_self_test()
 
     def payload_of(args: List[str]) -> Dict[str, Any]:
         for index, arg in enumerate(args):
@@ -546,6 +567,17 @@ def run_self_test() -> int:
         return json.dumps({"error": error})
 
     base_headers = {"x-nr-request-id": "11111111-2222-3333-4444-555555555555"}
+
+    def served(args: List[str], text: str = "pong") -> str:
+        """A served body in the shape of the wire the request was made on."""
+        endpoint = args[-1]
+        if endpoint.endswith("/messages"):
+            return json.dumps({"content": [{"type": "text", "text": text}], "role": "assistant"})
+        if endpoint.endswith("/responses"):
+            return json.dumps({"output": [{"content": [{"type": "output_text", "text": text}]}]})
+        if endpoint.endswith("/completions") and not endpoint.endswith("/chat/completions"):
+            return json.dumps({"choices": [{"text": text}]})
+        return json.dumps({"choices": [{"message": {"content": text}}]})
 
     def mock_curl(args, timeout_s=40, stdin_data=None):
         body = payload_of(args)
@@ -569,7 +601,7 @@ def run_self_test() -> int:
                     return 502, dict(base_headers), refusal(None, "all candidates failed"), 12.0
                 headers = dict(base_headers)
                 headers.update({"x-nr-routing": "fallback:1", "x-nr-attempts": "2", "x-nr-model": targets[0]})
-                return 200, headers, json.dumps({"choices": [{"message": {"content": "ok"}}]}), 40.0
+                return 200, headers, served(args, "ok"), 40.0
         headers = dict(base_headers)
         headers.update({
             "x-nr-routing": "direct",
@@ -578,7 +610,7 @@ def run_self_test() -> int:
             "x-nr-request-cost": "0.000042",
             "x-nr-cost-status": "exact",
         })
-        return 200, headers, json.dumps({"choices": [{"message": {"content": "pong"}}]}), 38.0
+        return 200, headers, served(args), 38.0
 
     checker = FallbacksCurlHealthCheck(
         base_url="https://mock.invalid/v1",
@@ -662,7 +694,7 @@ def run_self_test() -> int:
     def mock_no_routing_and_empty_body(args, timeout_s=40, stdin_data=None):
         status, headers, body, latency = mock_no_routing_headers(args, timeout_s, stdin_data)
         if status == 200:
-            body = json.dumps({"choices": []})
+            body = json.dumps({"choices": [], "content": []})  # served, but empty on every wire
         return status, headers, body, latency
 
     masked = FallbacksCurlHealthCheck(
@@ -688,6 +720,93 @@ def run_self_test() -> int:
         "a transport failure must never be reported as NOT-CONFIGURED"
     )
 
+    # BOTH WIRES. The same suite must pass against the Anthropic-shaped wire,
+    # where a served completion lives at content[0].text and there are no
+    # `choices` at all — a chat-shaped assertion would fail a good response.
+    messages_checker = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1",
+        api_key="sk-nrouter-mock-key",
+        route="/messages",
+        model="claude-haiku-4-5-20251001",
+        failing_primary_model="vendor/down-primary",
+        healthy_fallback_model="vendor/healthy-secondary",
+        curl_fn=mock_curl,
+    )
+    messages_suite = messages_checker.run_suite()
+    assert messages_suite["route"] == "/messages", messages_suite["route"]
+    assert messages_suite["all_passed"] is True, [
+        (r["name"], r.get("detail")) for r in messages_suite["checks"] if r["result"] == FAIL
+    ]
+    # The request really was built for that wire, and never carries chat fields.
+    messages_request = messages_suite["checks"][0]["request"]
+    assert "$NROUTER_BASE_URL/messages" in messages_request, messages_request
+    assert '"max_tokens"' in messages_request, "max_tokens is required on the messages wire"
+
+    # ...and a chat-shaped body must NOT satisfy the messages wire, or the
+    # per-wire assertion is decorative.
+    def mock_always_chat_shaped(args, timeout_s=40, stdin_data=None):
+        status, headers, body, latency = mock_curl(args, timeout_s, stdin_data)
+        if status == 200:
+            body = json.dumps({"choices": [{"message": {"content": "pong"}}]})
+        return status, headers, body, latency
+
+    mismatched = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/messages",
+        model="claude-haiku-4-5-20251001", curl_fn=mock_always_chat_shaped,
+    )
+    mismatched_row = mismatched.run_suite(quick=True)["checks"][0]
+    assert mismatched_row["result"] == FAIL, (
+        "a chat-shaped body on the messages wire must FAIL; got "
+        f"{mismatched_row['result']}"
+    )
+    assert "content[0].text" in mismatched_row.get("detail", ""), mismatched_row.get("detail")
+
+    # A route-scoped key short-circuits the module as NOT-CONFIGURED, rather
+    # than reporting ten gateway failures that never happened.
+    def mock_route_not_allowed(args, timeout_s=40, stdin_data=None):
+        return 403, {
+            "x-nr-request-id": "22222222-3333-4444-5555-666666666666",
+            "x-nr-auth-reason": "key_route_not_allowed",
+        }, refusal(None, "Forbidden"), 4.0
+
+    scoped = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/chat/completions",
+        curl_fn=mock_route_not_allowed,
+    )
+    scoped_suite = scoped.run_suite()
+    assert scoped_suite["failed_checks"] == 0, (
+        "a route-scoped key must not read as gateway failures: "
+        f"{[r['name'] for r in scoped_suite['checks'] if r['result'] == FAIL]}"
+    )
+    assert scoped_suite["not_configured_checks"] == scoped_suite["total_checks"], (
+        "every check should be NOT-CONFIGURED once the route is refused"
+    )
+    assert "key_route_not_allowed" in scoped_suite["checks"][0]["detail"]
+    assert "NROUTER_HEALTH_ROUTE" in scoped_suite["checks"][0]["detail"], (
+        "the message must name the override to set"
+    )
+    # Short-circuited: the guard stops after the first refusal rather than
+    # firing every remaining request at a route the key cannot use.
+    assert "(not executed)" in scoped_suite["checks"][-1]["request"], (
+        "the suite kept running after the route refusal"
+    )
+
+    # A 403 for a DIFFERENT reason is a real failure, not a scope refusal.
+    def mock_key_blocked(args, timeout_s=40, stdin_data=None):
+        return 403, {
+            "x-nr-request-id": "33333333-4444-5555-6666-777777777777",
+            "x-nr-auth-reason": "key_blocked",
+        }, refusal(None, "Forbidden"), 4.0
+
+    blocked = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_key_blocked
+    )
+    blocked_suite = blocked.run_suite(quick=True)
+    assert blocked_suite["all_passed"] is False, (
+        "a blocked key is a failure, not an absent precondition"
+    )
+    assert blocked_suite["not_configured_checks"] == 0, blocked_suite
+
     markdown = checker.render_markdown_summary(suite)
     assert "Request Fallbacks" in markdown, "markdown summary lost its title"
 
@@ -705,7 +824,7 @@ def main() -> int:
     parser.add_argument("--quick", action="store_true", help="Run the four-check quick lane")
     parser.add_argument("--base-url", default=os.environ.get("NROUTER_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.environ.get("NROUTER_API_KEY", ""))
-    parser.add_argument("--primary-model", default=DEFAULT_PRIMARY_MODEL)
+    add_wire_arguments(parser)
     parser.add_argument("--fallback-model", default=DEFAULT_FALLBACK_MODEL)
     parser.add_argument("--step-summary", action="store_true", help="Append markdown to GITHUB_STEP_SUMMARY")
     parser.add_argument("--json", action="store_true", help="Emit the JSON report on stdout")
@@ -719,15 +838,21 @@ def main() -> int:
         print(MISSING_KEY_MESSAGE, file=sys.stderr)
         return EXIT_UNRUNNABLE
 
-    checker = FallbacksCurlHealthCheck(
-        base_url=args.base_url,
-        api_key=api_key,
-        primary_model=args.primary_model,
-        fallback_model=args.fallback_model,
-    )
+    try:
+        checker = FallbacksCurlHealthCheck(
+            base_url=args.base_url,
+            api_key=api_key,
+            route=args.route,
+            model=args.model,
+            fallback_model=args.fallback_model,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_UNRUNNABLE
     # With --json this banner goes to stderr, so stdout carries only the report.
     print(
-        f"=== nRouter Request Fallbacks Curl Health Check ===\nBase URL: {args.base_url}",
+        f"=== nRouter Request Fallbacks Curl Health Check ===\n"
+        f"Base URL: {args.base_url} | route: {checker.route} | model: {checker.model}",
         file=sys.stderr if args.json else sys.stdout,
     )
     suite = checker.run_suite(quick=args.quick)

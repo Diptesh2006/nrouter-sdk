@@ -48,17 +48,26 @@ from _curl_common import (  # noqa: E402
     MISSING_KEY_MESSAGE,
     NOT_CONFIGURED,
     PASS,
+    add_wire_arguments,
     assert_all,
+    build_body,
     emit_results,
     error_of,
     header_float,
     json_stdout_contract_self_test,
+    note_route_scope,
     parse_json,
     parser_contract_self_test,
     reported_headers,
     resolve_api_key,
+    resolve_model,
+    resolve_route,
+    run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    served_body_ok,
+    served_text,
+    wire_contract_self_test,
 )
 
 FEATURE = "cache"
@@ -80,14 +89,18 @@ class CacheCurlHealthCheck:
         self,
         base_url: str = DEFAULT_BASE_URL,
         api_key: Optional[str] = None,
-        model: str = DEFAULT_MODEL,
+        route: str = "",
+        model: str = "",
         second_api_key: Optional[str] = None,
         guardrail_id: Optional[str] = None,
         curl_fn: Callable = run_curl,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.environ.get("NROUTER_API_KEY", "")
-        self.model = model
+        self.route = resolve_route(route)
+        self.model = resolve_model(model)
+        self.scope_detail: Optional[str] = None
+        self._current_path: Optional[str] = None
         self.second_api_key = second_api_key or os.environ.get("NROUTER_API_KEY_B", "")
         self.guardrail_id = guardrail_id or os.environ.get("NROUTER_GUARDRAIL_ID", "")
         self.curl_fn = curl_fn
@@ -100,7 +113,8 @@ class CacheCurlHealthCheck:
     def _prepare(
         self, body: Any, key: Optional[str] = None, key_label: str = "$NROUTER_API_KEY"
     ) -> Tuple[List[str], str]:
-        path = "/chat/completions"
+        path = self.route
+        self._current_path = path
         url = f"{self.base_url}{path}"
         payload = json.dumps(body)
         args = [
@@ -131,13 +145,22 @@ class CacheCurlHealthCheck:
         detail: str = "",
         not_configured: bool = False,
     ) -> Dict[str, Any]:
+        # A 403 naming key_route_not_allowed means the request never reached the
+        # behaviour under test: NOT-CONFIGURED, whatever the check wanted.
+        scope_blocked = note_route_scope(self, status, headers)
+        if scope_blocked:
+            detail = self.scope_detail or detail
         row = {
             "name": name,
             "request": request,
             "status": status,
             "headers": reported_headers(headers),
             "assertion": assertion,
-            "result": NOT_CONFIGURED if not_configured else (PASS if ok else FAIL),
+            "result": (
+                NOT_CONFIGURED
+                if (not_configured or scope_blocked)
+                else (PASS if ok else FAIL)
+            ),
             "expected_failure": expected_failure,
         }
         if detail:
@@ -146,14 +169,14 @@ class CacheCurlHealthCheck:
         return row
 
     def _payload(self, suffix: str = "", **extra: Any) -> Dict[str, Any]:
-        body: Dict[str, Any] = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": f"{self.salt}{suffix}"}],
-            "max_tokens": 16,
-            "temperature": 0,
-        }
-        body.update(extra)
-        return body
+        # `temperature` is a default a caller may deliberately override (the
+        # altered-sampling check does exactly that), so it must not be passed
+        # twice into the builder.
+        fields: Dict[str, Any] = {"temperature": 0}
+        fields.update(extra)
+        return build_body(
+            self.route, self.model, f"{self.salt}{suffix}", max_tokens=16, **fields
+        )
 
     def _prime(
         self,
@@ -179,7 +202,7 @@ class CacheCurlHealthCheck:
 
         if status != 200:
             return PRIME_FAILED, f"priming call returned HTTP {status}, not 200"
-        if not parse_json(body).get("choices"):
+        if served_text(self.route, body) is None:
             return PRIME_FAILED, "priming call returned no completion to cache"
         if state is None:
             return PRIME_ABSENT, "this plane emits no x-nr-response-cache header"
@@ -209,7 +232,7 @@ class CacheCurlHealthCheck:
         name = "miss_then_hit"
         assertion = (
             "both 200; first x-nr-response-cache == miss; second == hit; "
-            "both bodies carry choices; hit carries x-nr-response-cache-age when emitted"
+            "both bodies carry a completion at this wire's location; hit carries x-nr-response-cache-age when emitted"
         )
         first_args, _ = self._prepare(self._payload())
         first_status, first_headers, first_body, _ = self.curl_fn(first_args)
@@ -222,8 +245,8 @@ class CacheCurlHealthCheck:
         both_served = (
             first_status == 200
             and status == 200
-            and parse_json(first_body).get("choices")
-            and parse_json(body).get("choices")
+            and served_text(self.route, first_body) is not None
+            and served_text(self.route, body) is not None
         )
         if (
             both_served
@@ -248,7 +271,7 @@ class CacheCurlHealthCheck:
                 not_configured=True,
             )
         age = headers.get("x-nr-response-cache-age")
-        choices = parse_json(body).get("choices")
+        body_ok, body_detail = served_body_ok(self.route, body)
         ok, detail = assert_all([
             (first_status == 200, f"seed request expected 200, got {first_status}"),
             (status == 200, f"replay request expected 200, got {status}"),
@@ -260,7 +283,7 @@ class CacheCurlHealthCheck:
                 headers.get("x-nr-response-cache") == "hit",
                 f"replay x-nr-response-cache {headers.get('x-nr-response-cache')!r} != hit",
             ),
-            (isinstance(choices, list) and len(choices) > 0, "replayed body carries no choices"),
+            (body_ok, f"replayed {body_detail}" if body_detail else ""),
             (
                 age is None or (age.isdigit() and int(age) >= 0),
                 f"x-nr-response-cache-age {age!r} is not a non-negative integer",
@@ -339,7 +362,7 @@ class CacheCurlHealthCheck:
         name = "cache_false_bypasses"
         assertion = (
             "200; x-nr-response-cache == bypass; x-nr-response-cache-age ABSENT; "
-            "body carries choices"
+            "the wire's served body carries a completion"
         )
         # Seed the entry first, so `bypass` on the next call is demonstrably the
         # opt-out taking effect and not simply a cold cache.
@@ -356,7 +379,7 @@ class CacheCurlHealthCheck:
             )
         args, request = self._prepare(self._payload("-bypass", nrouter_cache=False))
         status, headers, body, _ = self.curl_fn(args)
-        choices = parse_json(body).get("choices")
+        body_ok, body_detail = served_body_ok(self.route, body)
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
             (
@@ -367,7 +390,7 @@ class CacheCurlHealthCheck:
                 "x-nr-response-cache-age" not in headers,
                 "x-nr-response-cache-age present on a bypass (it replayed an entry)",
             ),
-            (isinstance(choices, list) and len(choices) > 0, "body carries no choices"),
+            (body_ok, body_detail),
         ])
         return self._record(name, request, status, headers, assertion, ok, True, detail)
 
@@ -580,8 +603,7 @@ class CacheCurlHealthCheck:
                 self.check_guardrail_addition_misses,
                 self.check_hit_carries_no_routing_headers,
             ]
-        for check in checks:
-            check()
+        run_checks_with_scope_guard(self, checks)
         return self.summarize()
 
     def summarize(self) -> Dict[str, Any]:
@@ -591,6 +613,8 @@ class CacheCurlHealthCheck:
         return {
             "feature": FEATURE,
             "base_url": self.base_url,
+            "route": self.route,
+            "model": self.model,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "checks": self.results,
             "total_checks": len(self.results),
@@ -610,6 +634,7 @@ class CacheCurlHealthCheck:
             "## 💾 nRouter Pure-Curl Health Check: Response Cache",
             "",
             f"**Status**: {badge} | **Base URL**: `{suite['base_url']}` | "
+            f"**Route**: `{suite['route']}` | **Model**: `{suite['model']}` | "
             f"**Adversarial**: {suite['adversarial_checks']}/{suite['total_checks']}",
             "",
             "| Check | Adversarial | HTTP | Result | Assertion | Detail |",
@@ -629,6 +654,7 @@ def run_self_test() -> int:
     print("Running cache_curl.py --self-test (offline mode)...")
 
     parser_contract_self_test()
+    wire_contract_self_test()
 
     def payload_of(args: List[str]) -> Dict[str, Any]:
         for index, arg in enumerate(args):
@@ -657,7 +683,11 @@ def run_self_test() -> int:
                 return 400, dict(base), json.dumps(
                     {"error": {"type": "invalid_request_error", "message": "nrouter_cache must be a boolean"}}
                 ), 3.0
-            served = json.dumps({"choices": [{"message": {"content": "cached answer"}}]})
+            served = (
+                json.dumps({"content": [{"type": "text", "text": "cached answer"}]})
+                if args[-1].endswith("/messages")
+                else json.dumps({"choices": [{"message": {"content": "cached answer"}}]})
+            )
             if body.get("stream"):
                 headers = dict(base)
                 headers.update({
@@ -887,6 +917,41 @@ def run_self_test() -> int:
         "a transport failure must never be reported as NOT-CONFIGURED"
     )
 
+    # BOTH WIRES: miss/hit/bypass are wire-independent, but the served-body
+    # assertion is not — on /messages there are no `choices` to find.
+    messages_checker = CacheCurlHealthCheck(
+        base_url="https://mock.invalid/v1",
+        api_key="sk-nrouter-mock-key-a",
+        route="/messages",
+        model="claude-haiku-4-5-20251001",
+        second_api_key="sk-nrouter-mock-key-b",
+        guardrail_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        curl_fn=make_backend(),
+    )
+    messages_suite = messages_checker.run_suite()
+    assert messages_suite["route"] == "/messages"
+    assert messages_suite["all_passed"] is True, [
+        (r["name"], r.get("detail")) for r in messages_suite["checks"] if r["result"] == FAIL
+    ]
+    assert "$NROUTER_BASE_URL/messages" in messages_suite["checks"][0]["request"]
+
+    # A route-scoped key short-circuits as NOT-CONFIGURED, not as failures.
+    def mock_route_not_allowed(args, timeout_s=45, stdin_data=None):
+        return 403, {"x-nr-request-id": "r", "x-nr-auth-reason": "key_route_not_allowed"}, json.dumps(
+            {"error": {"type": "invalid_request_error", "message": "Forbidden"}}
+        ), 3.0
+
+    scoped_suite = CacheCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_route_not_allowed
+    ).run_suite()
+    assert scoped_suite["failed_checks"] == 0, (
+        f"{[r['name'] for r in scoped_suite['checks'] if r['result'] == FAIL]}"
+    )
+    assert scoped_suite["not_configured_checks"] == scoped_suite["total_checks"]
+    assert any(
+        "NROUTER_HEALTH_ROUTE" in r.get("detail", "") for r in scoped_suite["checks"]
+    ), "the scope refusal must name the override to set"
+
     assert "Response Cache" in checker.render_markdown_summary(suite)
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] cache_curl.py self-test passed cleanly.")
@@ -899,7 +964,7 @@ def main() -> int:
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--base-url", default=os.environ.get("NROUTER_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.environ.get("NROUTER_API_KEY", ""))
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    add_wire_arguments(parser)
     parser.add_argument("--step-summary", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -912,9 +977,16 @@ def main() -> int:
         print(MISSING_KEY_MESSAGE, file=sys.stderr)
         return EXIT_UNRUNNABLE
 
-    checker = CacheCurlHealthCheck(base_url=args.base_url, api_key=api_key, model=args.model)
+    try:
+        checker = CacheCurlHealthCheck(
+            base_url=args.base_url, api_key=api_key, route=args.route, model=args.model
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_UNRUNNABLE
     print(
-        f"=== nRouter Response Cache Curl Health Check ===\nBase URL: {args.base_url}",
+        f"=== nRouter Response Cache Curl Health Check ===\n"
+        f"Base URL: {args.base_url} | route: {checker.route} | model: {checker.model}",
         file=sys.stderr if args.json else sys.stdout,
     )
     suite = checker.run_suite(quick=args.quick)

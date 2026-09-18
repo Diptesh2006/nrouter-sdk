@@ -54,16 +54,25 @@ from _curl_common import (  # noqa: E402
     MISSING_KEY_MESSAGE,
     NOT_CONFIGURED,
     PASS,
+    add_wire_arguments,
     assert_all,
+    build_body,
     emit_results,
     error_of,
     json_stdout_contract_self_test,
+    build_multiturn_body,
+    note_route_scope,
     parse_json,
     parser_contract_self_test,
     reported_headers,
     resolve_api_key,
+    resolve_model,
+    resolve_route,
+    run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    served_body_ok,
+    wire_contract_self_test,
 )
 
 FEATURE = "moderation_floor"
@@ -126,15 +135,17 @@ class ModerationFloorCurlHealthCheck:
         self,
         base_url: str = DEFAULT_BASE_URL,
         api_key: Optional[str] = None,
-        model: str = DEFAULT_MODEL,
-        anthropic_model: str = DEFAULT_ANTHROPIC_MODEL,
+        route: str = "",
+        model: str = "",
         guardrails_disabled_api_key: Optional[str] = None,
         curl_fn: Callable = run_curl,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.environ.get("NROUTER_API_KEY", "")
-        self.model = model
-        self.anthropic_model = anthropic_model
+        self.route = resolve_route(route)
+        self.model = resolve_model(model)
+        self.scope_detail: Optional[str] = None
+        self._current_path: Optional[str] = None
         self.guardrails_disabled_api_key = guardrails_disabled_api_key or os.environ.get(
             "NROUTER_GUARDRAILS_DISABLED_API_KEY", ""
         )
@@ -150,6 +161,7 @@ class ModerationFloorCurlHealthCheck:
         key: Optional[str] = None,
         key_label: str = "$NROUTER_API_KEY",
     ) -> Tuple[List[str], str]:
+        self._current_path = path
         url = f"{self.base_url}{path}"
         payload = json.dumps(body)
         args = [
@@ -180,13 +192,22 @@ class ModerationFloorCurlHealthCheck:
         detail: str = "",
         not_configured: bool = False,
     ) -> Dict[str, Any]:
+        # A 403 naming key_route_not_allowed means the request never reached the
+        # behaviour under test: NOT-CONFIGURED, whatever the check wanted.
+        scope_blocked = note_route_scope(self, status, headers)
+        if scope_blocked:
+            detail = self.scope_detail or detail
         row = {
             "name": name,
             "request": request,
             "status": status,
             "headers": reported_headers(headers),
             "assertion": assertion,
-            "result": NOT_CONFIGURED if not_configured else (PASS if ok else FAIL),
+            "result": (
+                NOT_CONFIGURED
+                if (not_configured or scope_blocked)
+                else (PASS if ok else FAIL)
+            ),
             "expected_failure": expected_failure,
         }
         if detail:
@@ -195,20 +216,20 @@ class ModerationFloorCurlHealthCheck:
         return row
 
     def _chat(self, prompt: str, model: Optional[str] = None) -> Dict[str, Any]:
-        return {
-            "model": model or self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 32,
-        }
+        return build_body(self.route, model or self.model, prompt, max_tokens=32)
+
+    def _history(self, turns: List[str]) -> Dict[str, Any]:
+        """A conversation, for probing a floor that might read only the last turn."""
+        return build_multiturn_body(self.route, self.model, turns, max_tokens=32)
 
     def _served_check(
         self, name: str, prompt: str, assertion: str, why: str
     ) -> Dict[str, Any]:
         """The floor must NOT fire: assert served, with a posture token."""
-        args, request = self._prepare("/chat/completions", self._chat(prompt))
+        args, request = self._prepare(self.route, self._chat(prompt))
         status, headers, body, _ = self.curl_fn(args)
         posture = headers.get("x-nr-guardrails")
-        choices = parse_json(body).get("choices")
+        body_ok, body_detail = served_body_ok(self.route, body)
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status} — {why}"),
             (posture != "blocked", f"the floor blocked this prompt — {why}"),
@@ -216,7 +237,7 @@ class ModerationFloorCurlHealthCheck:
                 posture is None or posture in GUARDRAIL_HEADER_VALUES,
                 f"x-nr-guardrails {posture!r} outside the spec enum",
             ),
-            (isinstance(choices, list) and len(choices) > 0, "body.choices missing or empty"),
+            (body_ok, body_detail),
         ])
         return self._record(name, request, status, headers, assertion, ok, False, detail)
 
@@ -226,7 +247,7 @@ class ModerationFloorCurlHealthCheck:
         return self._served_check(
             "benign_prompt_is_served",
             BENIGN_PROMPT,
-            "200; x-nr-guardrails present and != blocked; body.choices non-empty",
+            "200; x-nr-guardrails present and != blocked; the wire's served body carries a completion",
             "an ordinary technical question is not a policy violation",
         )
 
@@ -234,7 +255,7 @@ class ModerationFloorCurlHealthCheck:
         return self._served_check(
             "email_prompt_is_served_not_refused",
             EMAIL_PROMPT,
-            "200 (NEVER 400); x-nr-guardrails != blocked; body.choices non-empty — "
+            "200 (NEVER 400); x-nr-guardrails != blocked; the wire's served body carries a completion — "
             "personal data is redacted before egress, never a reason to refuse",
             "a prompt that merely contains an email address must be served; refusing "
             "it is the 2026-09-17 regression that broke real customer traffic",
@@ -244,7 +265,7 @@ class ModerationFloorCurlHealthCheck:
         return self._served_check(
             "technical_phrasing_is_served",
             TECHNICAL_PROMPT,
-            "200; x-nr-guardrails != blocked; body.choices non-empty",
+            "200; x-nr-guardrails != blocked; the wire's served body carries a completion",
             "'kill the process' is engineering vocabulary, not violence",
         )
 
@@ -256,7 +277,7 @@ class ModerationFloorCurlHealthCheck:
             "400; x-nr-guardrails == blocked; error classifies as guardrail_blocked; "
             "x-nr-request-cost ABSENT ($0 held, $0 spent)"
         )
-        args, request = self._prepare("/chat/completions", self._chat(INJECTION_PROMPT))
+        args, request = self._prepare(self.route, self._chat(INJECTION_PROMPT))
         status, headers, body, _ = self.curl_fn(args)
         ok, detail = assert_all([
             (status == 400, f"expected 400, got {status} — an injection prompt was served"),
@@ -275,7 +296,7 @@ class ModerationFloorCurlHealthCheck:
             "400; x-nr-guardrails == blocked; error classifies as guardrail_blocked; "
             "no cost header"
         )
-        args, request = self._prepare("/chat/completions", self._chat(EXPLICIT_PROMPT))
+        args, request = self._prepare(self.route, self._chat(EXPLICIT_PROMPT))
         status, headers, body, _ = self.curl_fn(args)
         ok, detail = assert_all([
             (status == 400, f"expected 400, got {status} — explicit content was served"),
@@ -285,26 +306,20 @@ class ModerationFloorCurlHealthCheck:
         ])
         return self._record(name, request, status, headers, assertion, ok, True, detail)
 
-    def check_injection_blocked_on_messages_route(self) -> Dict[str, Any]:
-        name = "injection_blocked_on_messages_route"
+    def check_injection_blocked_in_conversation_history(self) -> Dict[str, Any]:
+        name = "injection_blocked_in_conversation_history"
         assertion = (
-            "400 on /messages too; x-nr-guardrails == blocked; the floor is per "
-            "request, not per wire shape; no cost header"
+            "400; x-nr-guardrails == blocked; the floor reads the WHOLE "
+            "conversation, so an injection in an EARLIER turn is caught even "
+            "when the final turn is innocuous; no cost header"
         )
         args, request = self._prepare(
-            "/messages", self._chat(INJECTION_PROMPT, model=self.anthropic_model)
+            self.route,
+            self._history([INJECTION_PROMPT, "Understood.", "Now continue please."]),
         )
         status, headers, body, _ = self.curl_fn(args)
-        # Only a plain 404 from the route is an absent precondition. A 404 that
-        # carries a guardrail verdict is the floor answering, and is judged.
-        if status == 404 and not is_guardrail_block(400, headers, body):
-            return self._record(
-                name, request, status, headers, assertion, False, True,
-                detail="/messages is not served on this plane",
-                not_configured=True,
-            )
         ok, detail = assert_all([
-            (status == 400, f"expected 400, got {status} — the floor did not fire on /messages"),
+            (status == 400, f"expected 400, got {status} — the floor read only the final turn"),
             (headers.get("x-nr-guardrails") == "blocked", "x-nr-guardrails != blocked"),
             (is_guardrail_block(status, headers, body), "body does not classify as guardrail_blocked"),
             ("x-nr-request-cost" not in headers, "x-nr-request-cost present on a blocked prompt"),
@@ -316,13 +331,13 @@ class ModerationFloorCurlHealthCheck:
         name = "contact_details_are_served_not_refused"
         assertion = (
             "200 (NEVER 400); x-nr-guardrails in the spec enum and != blocked; "
-            "body.choices non-empty — a phone number and a card number are redacted "
+            "the wire's served body carries a completion — a phone number and a card number are redacted "
             "before egress, not grounds for refusal"
         )
-        args, request = self._prepare("/chat/completions", self._chat(CONTACT_DETAILS_PROMPT))
+        args, request = self._prepare(self.route, self._chat(CONTACT_DETAILS_PROMPT))
         status, headers, body, _ = self.curl_fn(args)
         posture = headers.get("x-nr-guardrails")
-        choices = parse_json(body).get("choices")
+        body_ok, body_detail = served_body_ok(self.route, body)
         ok, detail = assert_all([
             (
                 status == 200,
@@ -331,7 +346,7 @@ class ModerationFloorCurlHealthCheck:
             ),
             (posture != "blocked", "the floor blocked a redactable prompt instead of redacting it"),
             (posture is None or posture in GUARDRAIL_HEADER_VALUES, f"x-nr-guardrails {posture!r} outside the spec enum"),
-            (isinstance(choices, list) and len(choices) > 0, "body.choices missing or empty"),
+            (body_ok, body_detail),
         ])
         return self._record(name, request, status, headers, assertion, ok, True, detail)
 
@@ -341,7 +356,7 @@ class ModerationFloorCurlHealthCheck:
             "400; NONE of x-nr-request-cost, x-nr-cost-status, x-nr-input-tokens, "
             "x-nr-output-tokens, x-nr-total-tokens is present"
         )
-        args, request = self._prepare("/chat/completions", self._chat(INJECTION_PROMPT))
+        args, request = self._prepare(self.route, self._chat(INJECTION_PROMPT))
         status, headers, body, _ = self.curl_fn(args)
         leaked = [header for header in METERING_HEADERS if header in headers]
         ok, detail = assert_all([
@@ -358,7 +373,7 @@ class ModerationFloorCurlHealthCheck:
             "threshold, scorer, checkpoint or internal component; response carries "
             "no non-x-nr- vendor headers"
         )
-        args, request = self._prepare("/chat/completions", self._chat(INJECTION_PROMPT))
+        args, request = self._prepare(self.route, self._chat(INJECTION_PROMPT))
         status, headers, body, _ = self.curl_fn(args)
         err = error_of(body)
         lowered = body.lower()
@@ -425,14 +440,13 @@ class ModerationFloorCurlHealthCheck:
                 self.check_technical_phrasing_is_served,
                 self.check_injection_is_blocked_at_zero_cost,
                 self.check_explicit_content_is_blocked,
-                self.check_injection_blocked_on_messages_route,
+                self.check_injection_blocked_in_conversation_history,
                 self.check_contact_details_are_served_not_refused,
                 self.check_block_carries_no_metering_headers,
                 self.check_block_names_no_internal_detail,
                 self.check_floor_holds_for_guardrails_disabled_org,
             ]
-        for check in checks:
-            check()
+        run_checks_with_scope_guard(self, checks)
         return self.summarize()
 
     def summarize(self) -> Dict[str, Any]:
@@ -442,6 +456,8 @@ class ModerationFloorCurlHealthCheck:
         return {
             "feature": FEATURE,
             "base_url": self.base_url,
+            "route": self.route,
+            "model": self.model,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "checks": self.results,
             "total_checks": len(self.results),
@@ -461,6 +477,7 @@ class ModerationFloorCurlHealthCheck:
             "## 🧱 nRouter Pure-Curl Health Check: Moderation Floor",
             "",
             f"**Status**: {badge} | **Base URL**: `{suite['base_url']}` | "
+            f"**Route**: `{suite['route']}` | **Model**: `{suite['model']}` | "
             f"**Adversarial**: {suite['adversarial_checks']}/{suite['total_checks']}",
             "",
             "Both directions are proved: a hostile prompt must be refused, and an "
@@ -483,6 +500,7 @@ def run_self_test() -> int:
     print("Running moderation_floor_curl.py --self-test (offline mode)...")
 
     parser_contract_self_test()
+    wire_contract_self_test()
 
     def payload_of(args: List[str]) -> Dict[str, Any]:
         for index, arg in enumerate(args):
@@ -497,10 +515,25 @@ def run_self_test() -> int:
     base = {"x-nr-request-id": "abcdabcd-0000-1111-2222-333333333333"}
     hostile = (INJECTION_PROMPT, EXPLICIT_PROMPT)
 
+    def all_prompt_text(body: Dict[str, Any]) -> str:
+        """Every turn of the request, on whichever wire it arrived.
+
+        The floor reads the whole conversation, so the double must too — a
+        double that only sees the last turn would let the history probe pass
+        against a gateway that has exactly that defect.
+        """
+        if isinstance(body.get("messages"), list):
+            return "\n".join(
+                str(turn.get("content", ""))
+                for turn in body["messages"]
+                if isinstance(turn, dict)
+            )
+        return str(body.get("input") or body.get("prompt") or "")
+
     def mock_curl(args, timeout_s=45, stdin_data=None):
         body = payload_of(args)
-        prompt = body.get("messages", [{}])[0].get("content", "")
-        if prompt in hostile:
+        prompt = all_prompt_text(body)
+        if any(needle in prompt for needle in hostile):
             headers = dict(base)
             headers["x-nr-guardrails"] = "blocked"
             return 400, headers, json.dumps({
@@ -636,6 +669,61 @@ def run_self_test() -> int:
         "a transport failure must never be reported as NOT-CONFIGURED"
     )
 
+    # A floor that reads only the FINAL turn lets an injection through in the
+    # history. That must FAIL — it is the whole point of the history probe.
+    def reads_only_last_turn(args, timeout_s=45, stdin_data=None):
+        body = payload_of(args)
+        turns = body.get("messages")
+        if isinstance(turns, list) and len(turns) > 1:
+            last = str(turns[-1].get("content", ""))
+            if not any(needle in last for needle in hostile):
+                headers = dict(base)
+                headers.update({"x-nr-guardrails": "pass", "x-nr-request-cost": "0.000050"})
+                return 200, headers, json.dumps(
+                    {"choices": [{"message": {"content": "sure"}}]}
+                ), 40.0
+        return mock_curl(args, timeout_s, stdin_data)
+
+    shallow = ModerationFloorCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=reads_only_last_turn
+    )
+    shallow_row = next(
+        r for r in shallow.run_suite()["checks"]
+        if r["name"] == "injection_blocked_in_conversation_history"
+    )
+    assert shallow_row["result"] == FAIL, (
+        "a floor that reads only the final turn must FAIL; got "
+        f"{shallow_row['result']}"
+    )
+
+    # BOTH WIRES: the floor is wire-independent, the served body is not.
+    messages_suite = ModerationFloorCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/messages",
+        model="claude-haiku-4-5-20251001",
+        guardrails_disabled_api_key="sk-nrouter-mock-key-disabled",
+        curl_fn=mock_curl,
+    ).run_suite()
+    assert messages_suite["route"] == "/messages"
+    assert messages_suite["all_passed"] is True, [
+        (r["name"], r.get("detail")) for r in messages_suite["checks"] if r["result"] == FAIL
+    ]
+
+    # A route-scoped key short-circuits as NOT-CONFIGURED, not as failures.
+    def mock_route_not_allowed(args, timeout_s=45, stdin_data=None):
+        return 403, {"x-nr-request-id": "r", "x-nr-auth-reason": "key_route_not_allowed"}, json.dumps(
+            {"error": {"type": "invalid_request_error", "message": "Forbidden"}}
+        ), 3.0
+
+    scoped_suite = ModerationFloorCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_route_not_allowed
+    ).run_suite()
+    assert scoped_suite["failed_checks"] == 0, (
+        f"{[r['name'] for r in scoped_suite['checks'] if r['result'] == FAIL]}"
+    )
+    assert any(
+        "NROUTER_HEALTH_ROUTE" in r.get("detail", "") for r in scoped_suite["checks"]
+    ), "the scope refusal must name the override to set"
+
     assert "Moderation Floor" in checker.render_markdown_summary(suite)
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] moderation_floor_curl.py self-test passed cleanly.")
@@ -648,7 +736,7 @@ def main() -> int:
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--base-url", default=os.environ.get("NROUTER_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.environ.get("NROUTER_API_KEY", ""))
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    add_wire_arguments(parser)
     parser.add_argument("--step-summary", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -661,11 +749,16 @@ def main() -> int:
         print(MISSING_KEY_MESSAGE, file=sys.stderr)
         return EXIT_UNRUNNABLE
 
-    checker = ModerationFloorCurlHealthCheck(
-        base_url=args.base_url, api_key=api_key, model=args.model
-    )
+    try:
+        checker = ModerationFloorCurlHealthCheck(
+            base_url=args.base_url, api_key=api_key, route=args.route, model=args.model
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_UNRUNNABLE
     print(
-        f"=== nRouter Moderation Floor Curl Health Check ===\nBase URL: {args.base_url}",
+        f"=== nRouter Moderation Floor Curl Health Check ===\n"
+        f"Base URL: {args.base_url} | route: {checker.route} | model: {checker.model}",
         file=sys.stderr if args.json else sys.stdout,
     )
     suite = checker.run_suite(quick=args.quick)

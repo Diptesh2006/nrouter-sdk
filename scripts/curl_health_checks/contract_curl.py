@@ -52,16 +52,25 @@ from _curl_common import (  # noqa: E402
     MISSING_KEY_MESSAGE,
     NOT_CONFIGURED,
     PASS,
+    add_wire_arguments,
     assert_all,
+    build_body,
     emit_results,
     error_of,
     json_stdout_contract_self_test,
+    note_route_scope,
+    prompt_field,
     parse_json,
     parser_contract_self_test,
     reported_headers,
     resolve_api_key,
+    resolve_model,
+    resolve_route,
+    run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    served_body_ok,
+    wire_contract_self_test,
 )
 
 FEATURE = "contract"
@@ -93,13 +102,17 @@ class ContractCurlHealthCheck:
         self,
         base_url: str = DEFAULT_BASE_URL,
         api_key: Optional[str] = None,
-        model: str = DEFAULT_MODEL,
+        route: str = "",
+        model: str = "",
         spec: Optional[Dict[str, Any]] = None,
         curl_fn: Callable = run_curl,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.environ.get("NROUTER_API_KEY", "")
-        self.model = model
+        self.route = resolve_route(route)
+        self.model = resolve_model(model)
+        self.scope_detail: Optional[str] = None
+        self._current_path: Optional[str] = None
         self.spec = spec if spec is not None else load_spec()
         self.curl_fn = curl_fn
         self.results: List[Dict[str, Any]] = []
@@ -128,6 +141,7 @@ class ContractCurlHealthCheck:
         extra_headers: Optional[List[Tuple[str, str]]] = None,
         raw_body: Optional[str] = None,
     ) -> Tuple[List[str], str]:
+        self._current_path = path
         url = f"{self.base_url}{path}"
         args = ["-H", f"Authorization: Bearer {key or self.api_key}"]
         shown = [
@@ -160,13 +174,22 @@ class ContractCurlHealthCheck:
         detail: str = "",
         not_configured: bool = False,
     ) -> Dict[str, Any]:
+        # A 403 naming key_route_not_allowed means the request never reached the
+        # behaviour under test: NOT-CONFIGURED, whatever the check wanted.
+        scope_blocked = note_route_scope(self, status, headers)
+        if scope_blocked:
+            detail = self.scope_detail or detail
         row = {
             "name": name,
             "request": request,
             "status": status,
             "headers": reported_headers(headers),
             "assertion": assertion,
-            "result": NOT_CONFIGURED if not_configured else (PASS if ok else FAIL),
+            "result": (
+                NOT_CONFIGURED
+                if (not_configured or scope_blocked)
+                else (PASS if ok else FAIL)
+            ),
             "expected_failure": expected_failure,
         }
         if detail:
@@ -175,11 +198,7 @@ class ContractCurlHealthCheck:
         return row
 
     def _chat(self, prompt: str = "contract probe") -> Dict[str, Any]:
-        return {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 16,
-        }
+        return build_body(self.route, self.model, prompt, max_tokens=16)
 
     # ------------------------------------------------------------ happy checks
 
@@ -219,7 +238,7 @@ class ContractCurlHealthCheck:
             "200; every x-nr-* response header is a key of the spec's "
             "response_headers (no undocumented header on the customer wire)"
         )
-        args, request = self._prepare("POST", "/chat/completions", self._chat())
+        args, request = self._prepare("POST", self.route, self._chat())
         status, headers, _, _ = self.curl_fn(args)
         expected = self.spec_headers()
         if not expected:
@@ -240,7 +259,7 @@ class ContractCurlHealthCheck:
     def check_response_cache_value_in_enum(self) -> Dict[str, Any]:
         name = "response_cache_value_in_enum"
         assertion = "200; x-nr-response-cache, when present, is one of hit|miss|bypass"
-        args, request = self._prepare("POST", "/chat/completions", self._chat("cache enum probe"))
+        args, request = self._prepare("POST", self.route, self._chat("cache enum probe"))
         status, headers, _, _ = self.curl_fn(args)
         allowed = self.spec_header_values("x-nr-response-cache")
         value = headers.get("x-nr-response-cache")
@@ -267,9 +286,12 @@ class ContractCurlHealthCheck:
         )
         args, request = self._prepare(
             "POST",
-            "/chat/completions",
+            self.route,
             None,
-            raw_body=json.dumps({"model": self.model, "messages": "not-an-array"}),
+            # Malformed for THIS wire: the prompt field is present, wrong type.
+            raw_body=json.dumps(
+                {"model": self.model, **{prompt_field(self.route): "not-an-array"}}
+            ),
         )
         status, headers, body, _ = self.curl_fn(args)
         parsed = parse_json(body)
@@ -293,9 +315,12 @@ class ContractCurlHealthCheck:
         )
         args, request = self._prepare(
             "POST",
-            "/chat/completions",
+            self.route,
             None,
-            raw_body=json.dumps({"model": self.model, "messages": "not-an-array"}),
+            # Malformed for THIS wire: the prompt field is present, wrong type.
+            raw_body=json.dumps(
+                {"model": self.model, **{prompt_field(self.route): "not-an-array"}}
+            ),
         )
         status, headers, body, _ = self.curl_fn(args)
         err = error_of(body)
@@ -325,7 +350,7 @@ class ContractCurlHealthCheck:
             "200; no openai-*, anthropic-*, x-ratelimit-*, cf-ray or server header "
             "survives egress; the response is ours, not the provider's"
         )
-        args, request = self._prepare("POST", "/chat/completions", self._chat("egress probe"))
+        args, request = self._prepare("POST", self.route, self._chat("egress probe"))
         status, headers, _, _ = self.curl_fn(args)
         leaked = sorted(
             header
@@ -346,7 +371,7 @@ class ContractCurlHealthCheck:
         )
         args, request = self._prepare(
             "POST",
-            "/chat/completions",
+            self.route,
             self._chat("reflection probe"),
             extra_headers=[(SPOOF_HEADER, "evil")],
         )
@@ -364,7 +389,7 @@ class ContractCurlHealthCheck:
             "200; no server-only header (x-nr-internal*, x-nr-signature, x-nr-org*, "
             "x-nr-probe*) is visible to the customer"
         )
-        args, request = self._prepare("POST", "/chat/completions", self._chat("internal probe"))
+        args, request = self._prepare("POST", self.route, self._chat("internal probe"))
         status, headers, _, _ = self.curl_fn(args)
         leaked = sorted(
             header for header in headers if any(header.startswith(marker) for marker in INTERNAL_HEADER_MARKERS)
@@ -381,7 +406,7 @@ class ContractCurlHealthCheck:
             "200; x-nr-cost-status is exact or unpriced; and unpriced NEVER ships "
             "alongside an x-nr-request-cost header"
         )
-        args, request = self._prepare("POST", "/chat/completions", self._chat("cost enum probe"))
+        args, request = self._prepare("POST", self.route, self._chat("cost enum probe"))
         status, headers, _, _ = self.curl_fn(args)
         allowed = self.spec_header_values("x-nr-cost-status")
         value = headers.get("x-nr-cost-status")
@@ -407,7 +432,7 @@ class ContractCurlHealthCheck:
             "200; x-nr-guardrails, when present, is one of the six values the spec "
             "enumerates; a served response never reports blocked"
         )
-        args, request = self._prepare("POST", "/chat/completions", self._chat("guardrail enum probe"))
+        args, request = self._prepare("POST", self.route, self._chat("guardrail enum probe"))
         status, headers, _, _ = self.curl_fn(args)
         allowed = self.spec_header_values("x-nr-guardrails")
         value = headers.get("x-nr-guardrails")
@@ -432,7 +457,7 @@ class ContractCurlHealthCheck:
         )
         args, request = self._prepare(
             "POST",
-            "/chat/completions",
+            self.route,
             self._chat(),
             key=INVALID_KEY,
             key_label="sk-nrouter-invalid-key-0000",
@@ -473,8 +498,7 @@ class ContractCurlHealthCheck:
                 self.check_guardrails_value_in_enum,
                 self.check_auth_reason_value_in_enum,
             ]
-        for check in checks:
-            check()
+        run_checks_with_scope_guard(self, checks)
         return self.summarize()
 
     def summarize(self) -> Dict[str, Any]:
@@ -484,6 +508,8 @@ class ContractCurlHealthCheck:
         return {
             "feature": FEATURE,
             "base_url": self.base_url,
+            "route": self.route,
+            "model": self.model,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "checks": self.results,
             "total_checks": len(self.results),
@@ -503,6 +529,7 @@ class ContractCurlHealthCheck:
             "## 📜 nRouter Pure-Curl Health Check: Wire Contract",
             "",
             f"**Status**: {badge} | **Base URL**: `{suite['base_url']}` | "
+            f"**Route**: `{suite['route']}` | **Model**: `{suite['model']}` | "
             f"**Adversarial**: {suite['adversarial_checks']}/{suite['total_checks']}",
             "",
             "| Check | Adversarial | HTTP | Result | Assertion | Detail |",
@@ -522,6 +549,7 @@ def run_self_test() -> int:
     print("Running contract_curl.py --self-test (offline mode)...")
 
     parser_contract_self_test()
+    wire_contract_self_test()
 
     spec = load_spec()
     assert spec, f"the published spec is unreadable at {SPEC_PATH}"
@@ -732,6 +760,63 @@ def run_self_test() -> int:
         "a transport failure must never be reported as NOT-CONFIGURED"
     )
 
+    # BOTH WIRES: the header contract is wire-independent, the bodies are not.
+    def messages_aware(args, timeout_s=40, stdin_data=None):
+        status, headers, body, latency = mock_curl(args, timeout_s, stdin_data)
+        if status == 200 and args[-1].endswith("/messages"):
+            body = json.dumps({"content": [{"type": "text", "text": "ok"}]})
+        return status, headers, body, latency
+
+    messages_suite = ContractCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/messages",
+        model="claude-haiku-4-5-20251001", spec=spec, curl_fn=messages_aware,
+    ).run_suite()
+    assert messages_suite["route"] == "/messages"
+    assert messages_suite["all_passed"] is True, [
+        (r["name"], r.get("detail")) for r in messages_suite["checks"] if r["result"] == FAIL
+    ]
+
+    # A route-scoped key short-circuits as NOT-CONFIGURED, not as failures...
+    def mock_route_not_allowed(args, timeout_s=40, stdin_data=None):
+        if args[-1].endswith("/openapi.json"):
+            return 200, {"content-type": "application/json"}, openapi_document, 9.0
+        return 403, {"x-nr-request-id": "r", "x-nr-auth-reason": "key_route_not_allowed"}, json.dumps(
+            {"error": {"type": "invalid_request_error", "message": "Forbidden"}}
+        ), 3.0
+
+    scoped_suite = ContractCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", spec=spec,
+        curl_fn=mock_route_not_allowed,
+    ).run_suite()
+    assert scoped_suite["failed_checks"] == 0, (
+        f"{[r['name'] for r in scoped_suite['checks'] if r['result'] == FAIL]}"
+    )
+    assert any(
+        "NROUTER_HEALTH_ROUTE" in r.get("detail", "") for r in scoped_suite["checks"]
+    ), "the scope refusal must name the override to set"
+
+    # ...but a refusal on a DIFFERENT path (the OpenAPI document) must not
+    # short-circuit the route under test: that path is not what is being tested.
+    def openapi_forbidden(args, timeout_s=40, stdin_data=None):
+        if args[-1].endswith("/openapi.json"):
+            return 403, {"x-nr-auth-reason": "key_route_not_allowed"}, "forbidden", 2.0
+        return mock_curl(args, timeout_s, stdin_data)
+
+    partial = ContractCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", spec=spec, curl_fn=openapi_forbidden
+    )
+    partial_suite = partial.run_suite()
+    assert partial_suite["total_checks"] == suite["total_checks"], (
+        "a refusal on the OpenAPI path short-circuited the whole module"
+    )
+    openapi_row = next(
+        r for r in partial_suite["checks"] if r["name"] == "openapi_lists_every_spec_header"
+    )
+    assert openapi_row["result"] == NOT_CONFIGURED, openapi_row["result"]
+    assert partial_suite["failed_checks"] == 0, (
+        f"{[r['name'] for r in partial_suite['checks'] if r['result'] == FAIL]}"
+    )
+
     assert "Wire Contract" in checker.render_markdown_summary(suite)
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] contract_curl.py self-test passed cleanly.")
@@ -744,7 +829,7 @@ def main() -> int:
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--base-url", default=os.environ.get("NROUTER_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.environ.get("NROUTER_API_KEY", ""))
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    add_wire_arguments(parser)
     parser.add_argument("--step-summary", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -757,9 +842,16 @@ def main() -> int:
         print(MISSING_KEY_MESSAGE, file=sys.stderr)
         return EXIT_UNRUNNABLE
 
-    checker = ContractCurlHealthCheck(base_url=args.base_url, api_key=api_key, model=args.model)
+    try:
+        checker = ContractCurlHealthCheck(
+            base_url=args.base_url, api_key=api_key, route=args.route, model=args.model
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_UNRUNNABLE
     print(
-        f"=== nRouter Wire Contract Curl Health Check ===\nBase URL: {args.base_url}",
+        f"=== nRouter Wire Contract Curl Health Check ===\n"
+        f"Base URL: {args.base_url} | route: {checker.route} | model: {checker.model}",
         file=sys.stderr if args.json else sys.stdout,
     )
     suite = checker.run_suite(quick=args.quick)

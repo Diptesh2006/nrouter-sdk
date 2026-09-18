@@ -51,16 +51,24 @@ from _curl_common import (  # noqa: E402
     MISSING_KEY_MESSAGE,
     NOT_CONFIGURED,
     PASS,
+    add_wire_arguments,
     assert_all,
+    build_body,
     emit_results,
     error_of,
     json_stdout_contract_self_test,
+    note_route_scope,
     parse_json,
     parser_contract_self_test,
     reported_headers,
     resolve_api_key,
+    resolve_model,
+    resolve_route,
+    run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    served_body_ok,
+    wire_contract_self_test,
 )
 
 FEATURE = "rate_limit"
@@ -119,14 +127,18 @@ class RateLimitCurlHealthCheck:
         self,
         base_url: str = DEFAULT_BASE_URL,
         api_key: Optional[str] = None,
-        model: str = DEFAULT_MODEL,
+        route: str = "",
+        model: str = "",
         burst: int = DEFAULT_BURST,
         depleted_api_key: Optional[str] = None,
         curl_fn: Callable = run_curl,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.environ.get("NROUTER_API_KEY", "")
-        self.model = model
+        self.route = resolve_route(route)
+        self.model = resolve_model(model)
+        self.scope_detail: Optional[str] = None
+        self._current_path: Optional[str] = None
         self.burst = burst
         self.depleted_api_key = depleted_api_key or os.environ.get(
             "NROUTER_DEPLETED_API_KEY", ""
@@ -151,13 +163,10 @@ class RateLimitCurlHealthCheck:
     def _prepare(
         self, key: Optional[str] = None, key_label: str = "$NROUTER_API_KEY"
     ) -> Tuple[List[str], str]:
-        path = "/chat/completions"
+        path = self.route
+        self._current_path = path
         url = f"{self.base_url}{path}"
-        payload = json.dumps({
-            "model": self.model,
-            "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 8,
-        })
+        payload = json.dumps(build_body(self.route, self.model, "ping", max_tokens=8))
         args = [
             "-H", f"Authorization: Bearer {key or self.api_key}",
             "-H", "Content-Type: application/json",
@@ -186,13 +195,22 @@ class RateLimitCurlHealthCheck:
         detail: str = "",
         not_configured: bool = False,
     ) -> Dict[str, Any]:
+        # A 403 naming key_route_not_allowed means the request never reached the
+        # behaviour under test: NOT-CONFIGURED, whatever the check wanted.
+        scope_blocked = note_route_scope(self, status, headers)
+        if scope_blocked:
+            detail = self.scope_detail or detail
         row = {
             "name": name,
             "request": request,
             "status": status,
             "headers": reported_headers(headers),
             "assertion": assertion,
-            "result": NOT_CONFIGURED if not_configured else (PASS if ok else FAIL),
+            "result": (
+                NOT_CONFIGURED
+                if (not_configured or scope_blocked)
+                else (PASS if ok else FAIL)
+            ),
             "expected_failure": expected_failure,
         }
         if detail:
@@ -282,7 +300,7 @@ class RateLimitCurlHealthCheck:
     def check_served_request_has_no_limit_source(self) -> Dict[str, Any]:
         name = "served_request_has_no_limit_source"
         assertion = (
-            "200; body.choices non-empty; x-nr-limit-source ABSENT and "
+            "200; the wire's served body carries a completion; x-nr-limit-source ABSENT and "
             "retry-after ABSENT on a served response"
         )
         args, request = self._prepare()
@@ -293,10 +311,10 @@ class RateLimitCurlHealthCheck:
                 detail="the plane was already rate limited before the baseline ran",
                 not_configured=True,
             )
-        choices = parse_json(body).get("choices")
+        body_ok, body_detail = served_body_ok(self.route, body)
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
-            (isinstance(choices, list) and len(choices) > 0, "body.choices missing or empty"),
+            (body_ok, body_detail),
             ("x-nr-limit-source" not in headers, "x-nr-limit-source present on a served response"),
             ("retry-after" not in headers, "retry-after present on a served response"),
         ])
@@ -507,8 +525,7 @@ class RateLimitCurlHealthCheck:
                 self.check_limit_source_value_in_spec,
                 self.check_depleted_budget_names_its_source,
             ]
-        for check in checks:
-            check()
+        run_checks_with_scope_guard(self, checks)
         return self.summarize()
 
     def summarize(self) -> Dict[str, Any]:
@@ -518,6 +535,8 @@ class RateLimitCurlHealthCheck:
         return {
             "feature": FEATURE,
             "base_url": self.base_url,
+            "route": self.route,
+            "model": self.model,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "checks": self.results,
             "total_checks": len(self.results),
@@ -537,6 +556,7 @@ class RateLimitCurlHealthCheck:
             "## 🚦 nRouter Pure-Curl Health Check: Rate Limits",
             "",
             f"**Status**: {badge} | **Base URL**: `{suite['base_url']}` | "
+            f"**Route**: `{suite['route']}` | **Model**: `{suite['model']}` | "
             f"**Adversarial**: {suite['adversarial_checks']}/{suite['total_checks']}",
             "",
             "| Check | Adversarial | HTTP | Result | Assertion | Detail |",
@@ -556,6 +576,7 @@ def run_self_test() -> int:
     print("Running rate_limit_curl.py --self-test (offline mode)...")
 
     parser_contract_self_test()
+    wire_contract_self_test()
 
     def auth_of(args: List[str]) -> str:
         for index, arg in enumerate(args):
@@ -594,6 +615,10 @@ def run_self_test() -> int:
                 "x-nr-request-cost": "0.000021",
                 "x-nr-cost-status": "exact",
             })
+            if args[-1].endswith("/messages"):
+                return 200, headers, json.dumps(
+                    {"content": [{"type": "text", "text": "pong"}]}
+                ), 30.0
             return 200, headers, json.dumps({"choices": [{"message": {"content": "pong"}}]}), 30.0
 
         return mock_curl
@@ -738,6 +763,33 @@ def run_self_test() -> int:
         f"a burst where nothing was served must FAIL; got {broken_row['result']}"
     )
 
+    # BOTH WIRES: the served baseline must read the Anthropic-shaped body too.
+    messages_suite = RateLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/messages",
+        model="claude-haiku-4-5-20251001", burst=12,
+        depleted_api_key="sk-nrouter-depleted", curl_fn=make_backend(),
+    ).run_suite()
+    assert messages_suite["route"] == "/messages"
+    assert messages_suite["all_passed"] is True, [
+        (r["name"], r.get("detail")) for r in messages_suite["checks"] if r["result"] == FAIL
+    ]
+
+    # A route-scoped key short-circuits as NOT-CONFIGURED, not as failures.
+    def mock_route_not_allowed(args, timeout_s=40, stdin_data=None):
+        return 403, {"x-nr-request-id": "r", "x-nr-auth-reason": "key_route_not_allowed"}, json.dumps(
+            {"error": {"type": "invalid_request_error", "message": "Forbidden"}}
+        ), 3.0
+
+    scoped_suite = RateLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", burst=4, curl_fn=mock_route_not_allowed
+    ).run_suite()
+    assert scoped_suite["failed_checks"] == 0, (
+        f"{[r['name'] for r in scoped_suite['checks'] if r['result'] == FAIL]}"
+    )
+    assert any(
+        "NROUTER_HEALTH_ROUTE" in r.get("detail", "") for r in scoped_suite["checks"]
+    ), "the scope refusal must name the override to set"
+
     assert "Rate Limits" in checker.render_markdown_summary(suite)
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] rate_limit_curl.py self-test passed cleanly.")
@@ -750,7 +802,7 @@ def main() -> int:
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--base-url", default=os.environ.get("NROUTER_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.environ.get("NROUTER_API_KEY", ""))
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    add_wire_arguments(parser)
     parser.add_argument("--burst", type=int, default=DEFAULT_BURST)
     parser.add_argument("--step-summary", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -764,12 +816,18 @@ def main() -> int:
         print(MISSING_KEY_MESSAGE, file=sys.stderr)
         return EXIT_UNRUNNABLE
 
-    checker = RateLimitCurlHealthCheck(
-        base_url=args.base_url, api_key=api_key, model=args.model, burst=args.burst
-    )
+    try:
+        checker = RateLimitCurlHealthCheck(
+            base_url=args.base_url, api_key=api_key,
+            route=args.route, model=args.model, burst=args.burst,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_UNRUNNABLE
     print(
         f"=== nRouter Rate Limit Curl Health Check ===\n"
-        f"Base URL: {args.base_url} | burst: {args.burst}",
+        f"Base URL: {args.base_url} | route: {checker.route} | "
+        f"model: {checker.model} | burst: {args.burst}",
         file=sys.stderr if args.json else sys.stdout,
     )
     suite = checker.run_suite(quick=args.quick)

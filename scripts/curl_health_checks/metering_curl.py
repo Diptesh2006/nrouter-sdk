@@ -47,18 +47,27 @@ from _curl_common import (  # noqa: E402
     MISSING_KEY_MESSAGE,
     NOT_CONFIGURED,
     PASS,
+    add_wire_arguments,
     assert_all,
+    build_body,
     emit_results,
     error_of,
     header_float,
     header_int,
     json_stdout_contract_self_test,
+    note_route_scope,
+    prompt_field,
     parse_json,
     parser_contract_self_test,
     reported_headers,
     resolve_api_key,
+    resolve_model,
+    resolve_route,
+    run_checks_with_scope_guard,
     run_curl,
     sanitize,
+    served_body_ok,
+    wire_contract_self_test,
 )
 
 FEATURE = "metering"
@@ -88,14 +97,18 @@ class MeteringCurlHealthCheck:
         self,
         base_url: str = DEFAULT_BASE_URL,
         api_key: Optional[str] = None,
-        model: str = DEFAULT_MODEL,
+        route: str = "",
+        model: str = "",
         embed_model: str = DEFAULT_EMBED_MODEL,
         unpriced_model: Optional[str] = None,
         curl_fn: Callable = run_curl,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.environ.get("NROUTER_API_KEY", "")
-        self.model = model
+        self.route = resolve_route(route)
+        self.model = resolve_model(model)
+        self.scope_detail: Optional[str] = None
+        self._current_path: Optional[str] = None
         self.embed_model = embed_model
         self.unpriced_model = unpriced_model or os.environ.get("NROUTER_UNPRICED_MODEL", "")
         self.curl_fn = curl_fn
@@ -104,6 +117,7 @@ class MeteringCurlHealthCheck:
     # ---------------------------------------------------------------- plumbing
 
     def _prepare(self, path: str, body: Any) -> Tuple[List[str], str]:
+        self._current_path = path
         url = f"{self.base_url}{path}"
         payload = json.dumps(body)
         args = [
@@ -123,6 +137,7 @@ class MeteringCurlHealthCheck:
         return args, shown
 
     def _prepare_raw(self, path: str, raw_payload: str) -> Tuple[List[str], str]:
+        self._current_path = path
         url = f"{self.base_url}{path}"
         args = [
             "-H", f"Authorization: Bearer {self.api_key}",
@@ -151,13 +166,22 @@ class MeteringCurlHealthCheck:
         detail: str = "",
         not_configured: bool = False,
     ) -> Dict[str, Any]:
+        # A 403 naming key_route_not_allowed means the request never reached the
+        # behaviour under test: NOT-CONFIGURED, whatever the check wanted.
+        scope_blocked = note_route_scope(self, status, headers)
+        if scope_blocked:
+            detail = self.scope_detail or detail
         row = {
             "name": name,
             "request": request,
             "status": status,
             "headers": reported_headers(headers),
             "assertion": assertion,
-            "result": NOT_CONFIGURED if not_configured else (PASS if ok else FAIL),
+            "result": (
+                NOT_CONFIGURED
+                if (not_configured or scope_blocked)
+                else (PASS if ok else FAIL)
+            ),
             "expected_failure": expected_failure,
         }
         if detail:
@@ -166,13 +190,7 @@ class MeteringCurlHealthCheck:
         return row
 
     def _chat(self, prompt: str, **extra: Any) -> Dict[str, Any]:
-        body: Dict[str, Any] = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 16,
-        }
-        body.update(extra)
-        return body
+        return build_body(self.route, self.model, prompt, max_tokens=16, **extra)
 
     # ------------------------------------------------------------ happy checks
 
@@ -182,7 +200,7 @@ class MeteringCurlHealthCheck:
             "200; x-nr-request-cost present and > 0; x-nr-cost-status == exact; "
             "x-nr-input-tokens > 0; x-nr-total-tokens present; body.usage present"
         )
-        args, request = self._prepare("/chat/completions", self._chat("Say hello in one word."))
+        args, request = self._prepare(self.route, self._chat("Say hello in one word."))
         status, headers, body, _ = self.curl_fn(args)
         cost = header_float(headers, "x-nr-request-cost")
         input_tokens = header_int(headers, "x-nr-input-tokens")
@@ -246,7 +264,7 @@ class MeteringCurlHealthCheck:
             "200; x-nr-total-tokens >= x-nr-input-tokens + x-nr-output-tokens "
             "(cache tokens may add to the total, never subtract)"
         )
-        args, request = self._prepare("/chat/completions", self._chat("Count to three."))
+        args, request = self._prepare(self.route, self._chat("Count to three."))
         status, headers, _, _ = self.curl_fn(args)
         input_tokens = header_int(headers, "x-nr-input-tokens")
         output_tokens = header_int(headers, "x-nr-output-tokens") or 0
@@ -278,8 +296,10 @@ class MeteringCurlHealthCheck:
             "(a request that never ran cannot have a cost)"
         )
         args, request = self._prepare_raw(
-            "/chat/completions",
-            json.dumps({"model": self.model, "messages": "not-an-array"}),
+            self.route,
+            # A malformed body for THIS wire: the prompt field is present but of
+            # the wrong type, which is a request-shape error on any of them.
+            json.dumps({"model": self.model, **{prompt_field(self.route): "not-an-array"}}),
         )
         status, headers, body, _ = self.curl_fn(args)
         leaked = [header for header in METERING_HEADERS if header in headers]
@@ -297,7 +317,7 @@ class MeteringCurlHealthCheck:
             "400; x-nr-guardrails == blocked; x-nr-request-cost ABSENT; "
             "no token headers (blocked before the reservation)"
         )
-        args, request = self._prepare("/chat/completions", self._chat(INJECTION_PROMPT))
+        args, request = self._prepare(self.route, self._chat(INJECTION_PROMPT))
         status, headers, body, _ = self.curl_fn(args)
         if status == 200:
             return self._record(
@@ -324,12 +344,8 @@ class MeteringCurlHealthCheck:
             "no upstream host or provider detail"
         )
         args, request = self._prepare(
-            "/chat/completions",
-            {
-                "model": UNKNOWN_MODEL,
-                "messages": [{"role": "user", "content": "ping"}],
-                "max_tokens": 8,
-            },
+            self.route,
+            build_body(self.route, UNKNOWN_MODEL, "ping", max_tokens=8),
         )
         status, headers, body, _ = self.curl_fn(args)
         leaked = [header for header in METERING_HEADERS if header in headers]
@@ -361,12 +377,8 @@ class MeteringCurlHealthCheck:
                 not_configured=True,
             )
         args, request = self._prepare(
-            "/chat/completions",
-            {
-                "model": self.unpriced_model,
-                "messages": [{"role": "user", "content": "ping"}],
-                "max_tokens": 8,
-            },
+            self.route,
+            build_body(self.route, self.unpriced_model, "ping", max_tokens=8),
         )
         status, headers, _, _ = self.curl_fn(args)
         ok, detail = assert_all([
@@ -408,7 +420,7 @@ class MeteringCurlHealthCheck:
             "200; x-nr-request-cost, when present, parses > 0 and is none of "
             "'0', '0.0', '0.000000'; x-nr-cost-status is in the spec enum"
         )
-        args, request = self._prepare("/chat/completions", self._chat("Reply with 'ok'."))
+        args, request = self._prepare(self.route, self._chat("Reply with 'ok'."))
         status, headers, _, _ = self.curl_fn(args)
         raw = headers.get("x-nr-request-cost")
         cost = header_float(headers, "x-nr-request-cost")
@@ -450,8 +462,7 @@ class MeteringCurlHealthCheck:
                 self.check_empty_embedding_input_has_no_cost,
                 self.check_cost_header_is_never_a_zero_string,
             ]
-        for check in checks:
-            check()
+        run_checks_with_scope_guard(self, checks)
         return self.summarize()
 
     def summarize(self) -> Dict[str, Any]:
@@ -461,6 +472,8 @@ class MeteringCurlHealthCheck:
         return {
             "feature": FEATURE,
             "base_url": self.base_url,
+            "route": self.route,
+            "model": self.model,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "checks": self.results,
             "total_checks": len(self.results),
@@ -480,6 +493,7 @@ class MeteringCurlHealthCheck:
             "## 💵 nRouter Pure-Curl Health Check: Metering",
             "",
             f"**Status**: {badge} | **Base URL**: `{suite['base_url']}` | "
+            f"**Route**: `{suite['route']}` | **Model**: `{suite['model']}` | "
             f"**Adversarial**: {suite['adversarial_checks']}/{suite['total_checks']}",
             "",
             "| Check | Adversarial | HTTP | Result | Assertion | Detail |",
@@ -630,6 +644,53 @@ def run_self_test() -> int:
     bare_row = next(r for r in bare.run_suite()["checks"] if r["name"] == "unpriced_is_never_zero")
     assert bare_row["result"] == NOT_CONFIGURED, bare_row["result"]
 
+    # BOTH WIRES: cost and token headers are wire-independent, the request body
+    # and the served body are not.
+    def messages_aware(args, timeout_s=45, stdin_data=None):
+        status, headers, body, latency = mock_curl(args, timeout_s, stdin_data)
+        if status == 200 and args[-1].endswith("/messages"):
+            # The Anthropic-shaped served body: no `choices`, and `usage` names
+            # its token fields differently — the check reads `usage` as an
+            # object, which both wires provide.
+            body = json.dumps({
+                "content": [{"type": "text", "text": "ok"}],
+                "role": "assistant",
+                "usage": {"input_tokens": 6, "output_tokens": 4},
+            })
+        return status, headers, body, latency
+
+    messages_suite = MeteringCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", route="/messages",
+        model="claude-haiku-4-5-20251001", unpriced_model="vendor/unpriced",
+        curl_fn=messages_aware,
+    ).run_suite()
+    assert messages_suite["route"] == "/messages"
+    assert messages_suite["all_passed"] is True, [
+        (r["name"], r.get("detail")) for r in messages_suite["checks"] if r["result"] == FAIL
+    ]
+    # The malformed-body probe must malform THIS wire's prompt field.
+    malformed_request = next(
+        r["request"] for r in messages_suite["checks"]
+        if r["name"] == "malformed_request_has_no_metering"
+    )
+    assert '"messages": "not-an-array"' in malformed_request, malformed_request
+
+    # A route-scoped key short-circuits as NOT-CONFIGURED, not as failures.
+    def mock_route_not_allowed(args, timeout_s=45, stdin_data=None):
+        return 403, {"x-nr-request-id": "r", "x-nr-auth-reason": "key_route_not_allowed"}, json.dumps(
+            {"error": {"type": "invalid_request_error", "message": "Forbidden"}}
+        ), 3.0
+
+    scoped_suite = MeteringCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_route_not_allowed
+    ).run_suite()
+    assert scoped_suite["failed_checks"] == 0, (
+        f"{[r['name'] for r in scoped_suite['checks'] if r['result'] == FAIL]}"
+    )
+    assert any(
+        "NROUTER_HEALTH_ROUTE" in r.get("detail", "") for r in scoped_suite["checks"]
+    ), "the scope refusal must name the override to set"
+
     assert "Metering" in checker.render_markdown_summary(suite)
     json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] metering_curl.py self-test passed cleanly.")
@@ -642,7 +703,7 @@ def main() -> int:
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--base-url", default=os.environ.get("NROUTER_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.environ.get("NROUTER_API_KEY", ""))
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    add_wire_arguments(parser)
     parser.add_argument("--embed-model", default=DEFAULT_EMBED_MODEL)
     parser.add_argument("--step-summary", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -656,14 +717,20 @@ def main() -> int:
         print(MISSING_KEY_MESSAGE, file=sys.stderr)
         return EXIT_UNRUNNABLE
 
-    checker = MeteringCurlHealthCheck(
-        base_url=args.base_url,
-        api_key=api_key,
-        model=args.model,
-        embed_model=args.embed_model,
-    )
+    try:
+        checker = MeteringCurlHealthCheck(
+            base_url=args.base_url,
+            api_key=api_key,
+            route=args.route,
+            model=args.model,
+            embed_model=args.embed_model,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_UNRUNNABLE
     print(
-        f"=== nRouter Metering Curl Health Check ===\nBase URL: {args.base_url}",
+        f"=== nRouter Metering Curl Health Check ===\n"
+        f"Base URL: {args.base_url} | route: {checker.route} | model: {checker.model}",
         file=sys.stderr if args.json else sys.stdout,
     )
     suite = checker.run_suite(quick=args.quick)

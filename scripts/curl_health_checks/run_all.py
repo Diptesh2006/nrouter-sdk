@@ -44,6 +44,7 @@ CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
+import _curl_common
 import model_curl
 import guardrail_curl
 import feature_curl
@@ -83,7 +84,13 @@ FEATURE_MODULES = [
 def run_all_self_tests() -> int:
     """Run offline self-tests for all consolidated check modules."""
     print("=== Running Consolidated Offline Self-Tests ===")
-    print("1. Testing model_curl module...")
+    print("0. Testing _curl_common (shared transport, parser and credential rule)...")
+    common_code = _curl_common.run_self_test()
+    if common_code != 0:
+        print("[FAIL] _curl_common self-test failed", file=sys.stderr)
+        return common_code
+
+    print("\n1. Testing model_curl module...")
     model_code = model_curl.run_self_test()
     if model_code != 0:
         print("[FAIL] model_curl self-test failed", file=sys.stderr)
@@ -227,23 +234,21 @@ def main() -> int:
     if args.self_test:
         return run_all_self_tests()
 
-    api_key = args.api_key
+    # The key comes from --api-key or NROUTER_API_KEY, and nowhere else. There
+    # is deliberately no credentials-file fallback: this repository is public, a
+    # hardcoded path leaks an internal convention, and a fallback would send
+    # whatever key it found to whatever --base-url the caller passed.
+    api_key = _curl_common.resolve_api_key(args.api_key)
     if not api_key:
-        test_creds = Path.home() / ".nrouter_admin_keys/nrouter-test/prod/credentials.env"
-        if test_creds.is_file():
-            try:
-                import re
-                content = test_creds.read_text()
-                match = re.search(r'NROUTER_TEST_API_KEY=["\']?([^"\'\n]+)["\']?', content)
-                if match:
-                    api_key = match.group(1)
-            except Exception:
-                pass
+        print(_curl_common.MISSING_KEY_MESSAGE, file=sys.stderr)
+        return _curl_common.EXIT_UNRUNNABLE
 
-    if not api_key:
-        print("ERROR: NROUTER_API_KEY is required to run live health checks.", file=sys.stderr)
-        print("Set NROUTER_API_KEY or use --self-test for offline validation.", file=sys.stderr)
-        return 1
+    # THE --json CONTRACT: stdout carries EXACTLY one JSON document, so every
+    # human line in this run is routed to stderr. stdout is restored just before
+    # the document is written, below.
+    machine_stdout = sys.stdout
+    if args.json:
+        sys.stdout = sys.stderr
 
     print("============================================================")
     print("      nRouter Consolidated Pure-Curl Health Checks          ")
@@ -346,9 +351,10 @@ def main() -> int:
                 for suite in feature_suites
             ],
         }
+        sys.stdout = machine_stdout
         print(json.dumps(combined, indent=2))
 
-    return 0 if overall_passed else 1
+    return _curl_common.EXIT_OK if overall_passed else _curl_common.EXIT_FAILED
 
 
 if __name__ == "__main__":

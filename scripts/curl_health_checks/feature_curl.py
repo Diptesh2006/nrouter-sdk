@@ -192,19 +192,12 @@ class FeatureCurlHealthCheck:
         curl_fn: Callable = run_curl,
     ):
         self.base_url = base_url.rstrip("/")
-        if not api_key:
-            api_key = os.environ.get("NROUTER_API_KEY", "")
-            if not api_key:
-                test_creds = Path.home() / ".nrouter_admin_keys/nrouter-test/prod/credentials.env"
-                if test_creds.is_file():
-                    try:
-                        content = test_creds.read_text()
-                        match = re.search(r'NROUTER_TEST_API_KEY=["\']?([^"\'\n]+)["\']?', content)
-                        if match:
-                            api_key = match.group(1)
-                    except Exception:
-                        pass
-        self.api_key = api_key
+        # The key comes from the caller or NROUTER_API_KEY, and nowhere else.
+        # There is deliberately no credentials-file fallback: this repository is
+        # public, a hardcoded path leaks an internal convention, and a silent
+        # fallback here would send whatever key it found to whatever base_url
+        # this object was constructed with.
+        self.api_key = api_key or os.environ.get("NROUTER_API_KEY", "")
         self.chat_model = chat_model
         self.messages_model = messages_model
         self.embed_model = embed_model
@@ -1347,18 +1340,9 @@ def main() -> int:
     if args.self_test:
         return run_self_test()
 
+    # The key comes from --api-key or NROUTER_API_KEY, and nowhere else (see the
+    # constructor above for why there is no credentials-file fallback).
     api_key = args.api_key
-    if not api_key:
-        test_creds = Path.home() / ".nrouter_admin_keys/nrouter-test/prod/credentials.env"
-        if test_creds.is_file():
-            try:
-                content = test_creds.read_text()
-                match = re.search(r'NROUTER_TEST_API_KEY=["\']?([^"\'\n]+)["\']?', content)
-                if match:
-                    api_key = match.group(1)
-            except Exception:
-                pass
-
     if not api_key:
         print("ERROR: NROUTER_API_KEY is required to run live feature health checks.", file=sys.stderr)
         print("Set NROUTER_API_KEY or use --self-test for offline validation.", file=sys.stderr)

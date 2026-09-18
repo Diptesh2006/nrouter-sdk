@@ -571,18 +571,11 @@ def main() -> int:
     if args.self_test:
         return run_self_test()
 
+    # The key comes from --api-key or NROUTER_API_KEY, and nowhere else. There
+    # is deliberately no credentials-file fallback: this repository is public, a
+    # hardcoded path leaks an internal convention, and a fallback would send
+    # whatever key it found to whatever --base-url the caller passed.
     api_key = args.api_key
-    if not api_key:
-        test_creds = Path.home() / ".nrouter_admin_keys/nrouter-test/prod/credentials.env"
-        if test_creds.is_file():
-            try:
-                content = test_creds.read_text()
-                match = re.search(r'NROUTER_TEST_API_KEY=["\']?([^"\'\n]+)["\']?', content)
-                if match:
-                    api_key = match.group(1)
-            except Exception:
-                pass
-
     if not api_key:
         print("ERROR: NROUTER_API_KEY is required to run live guardrail health check.", file=sys.stderr)
         print("Set NROUTER_API_KEY or use --self-test for offline validation.", file=sys.stderr)

@@ -34,22 +34,39 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# Shared plumbing: ONE curl invocation, ONE response parser, ONE credential rule.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _curl_common import (  # noqa: E402
+    DEFAULT_BASE_URL,
+    EXIT_FAILED,
+    EXIT_OK,
+    EXIT_UNRUNNABLE,
+    FAIL,
+    MISSING_KEY_MESSAGE,
+    NOT_CONFIGURED,
+    PASS,
+    assert_all,
+    emit_results,
+    error_of,
+    json_stdout_contract_self_test,
+    parse_json,
+    parser_contract_self_test,
+    reported_headers,
+    resolve_api_key,
+    run_curl,
+    sanitize,
+)
+
 FEATURE = "rate_limit"
-DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 DEFAULT_MODEL = "openai/gpt-4o-mini"
 DEFAULT_BURST = 24
 DEFAULT_BURST_CONCURRENCY = 8
-
-PASS = "PASS"
-FAIL = "FAIL"
-NOT_CONFIGURED = "NOT-CONFIGURED"
 
 LIMIT_SOURCE_VALUES = {
     "key",
@@ -84,88 +101,6 @@ INTERNAL_LEAK_MARKERS = (
 )
 INVALID_KEY = "sk-nrouter-invalid-key-0000"
 
-SECRET_PATTERNS = [
-    re.compile(r"sk-nrouter-[A-Za-z0-9_-]+"),
-    re.compile(r"Bearer\s+[A-Za-z0-9._-]+", re.IGNORECASE),
-]
-REPORTED_HEADERS = ("content-type", "cache-control", "retry-after", "x-content-type-options")
-
-
-def sanitize(text: str) -> str:
-    for pattern in SECRET_PATTERNS:
-        text = pattern.sub("[REDACTED]", text)
-    return text
-
-
-def run_curl(
-    args: List[str],
-    timeout_s: int = 40,
-    stdin_data: Optional[str] = None,
-) -> Tuple[int, Dict[str, str], str, float]:
-    """Execute raw curl and parse status, headers, body and latency."""
-    cmd = ["curl", "-sS", "-D", "-"] + args
-    start = time.monotonic()
-    try:
-        proc = subprocess.run(
-            cmd,
-            input=stdin_data,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout_s,
-        )
-        latency = round((time.monotonic() - start) * 1000.0, 1)
-        raw = proc.stdout
-    except subprocess.TimeoutExpired:
-        return 0, {}, "Request timed out", round((time.monotonic() - start) * 1000.0, 1)
-    except Exception as exc:  # pragma: no cover - defensive
-        return 0, {}, f"Subprocess error: {exc}", 0.0
-
-    if proc.returncode != 0 and not raw:
-        return 0, {}, f"curl exit code {proc.returncode}: {proc.stderr.strip()}", latency
-
-    parts = raw.split("\r\n\r\n")
-    if len(parts) == 1:
-        parts = raw.split("\n\n")
-    header_block = ""
-    for part in parts[:-1]:
-        if part.startswith("HTTP/") or "\nHTTP/" in part or "\r\nHTTP/" in part:
-            header_block = part
-    body = parts[-1] if parts else ""
-
-    headers: Dict[str, str] = {}
-    status = 0
-    for line in header_block.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("HTTP/"):
-            match = re.match(r"^HTTP/[0-9.]+\s+(\d+)", line)
-            if match:
-                status = int(match.group(1))
-        elif ":" in line:
-            key, value = line.split(":", 1)
-            headers[key.strip().lower()] = value.strip()
-    return status, headers, body, latency
-
-
-def assert_all(conditions: List[Tuple[bool, str]]) -> Tuple[bool, str]:
-    failed = [message for ok, message in conditions if not ok]
-    return (not failed, "; ".join(failed))
-
-
-def parse_json(body: str) -> Dict[str, Any]:
-    try:
-        parsed = json.loads(body)
-        return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        return {}
-
-
-def error_of(body: str) -> Dict[str, Any]:
-    err = parse_json(body).get("error")
-    return err if isinstance(err, dict) else {}
-
 
 def retry_after_seconds(headers: Dict[str, str]) -> Optional[int]:
     raw = headers.get("retry-after")
@@ -175,14 +110,6 @@ def retry_after_seconds(headers: Dict[str, str]) -> Optional[int]:
         return int(float(raw.strip()))
     except ValueError:
         return None
-
-
-def reported_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    return {
-        key: value
-        for key, value in sorted(headers.items())
-        if key.startswith("x-nr-") or key in REPORTED_HEADERS
-    }
 
 
 class RateLimitCurlHealthCheck:
@@ -208,6 +135,16 @@ class RateLimitCurlHealthCheck:
         self.results: List[Dict[str, Any]] = []
         self._refusal: Optional[Tuple[int, Dict[str, str], str]] = None
         self._burst_ran = False
+        # The burst is itself a setup step, so it reports its own outcome. A
+        # burst where nothing came back does NOT mean "the ceiling is generous";
+        # it means the probe never ran, and the checks that read it must FAIL.
+        self._burst_stats: Dict[str, int] = {
+            "sent": 0,
+            "served": 0,
+            "refused_429": 0,
+            "other_status": 0,
+            "transport_failures": 0,
+        }
 
     # ---------------------------------------------------------------- plumbing
 
@@ -263,6 +200,24 @@ class RateLimitCurlHealthCheck:
         self.results.append(row)
         return row
 
+    def _no_refusal_row(
+        self, name: str, request: str, assertion: str, absent_detail: str
+    ) -> Dict[str, Any]:
+        """Record the "no 429 was observed" outcome, honestly.
+
+        A burst that could not run is a FAIL. Only a burst that ran cleanly and
+        was never refused is an absent precondition.
+        """
+        broken = self._burst_precondition()
+        if broken:
+            return self._record(
+                name, request, 0, {}, assertion, False, True, detail=broken
+            )
+        return self._record(
+            name, request, 0, {}, assertion, False, True,
+            detail=absent_detail, not_configured=True,
+        )
+
     def _burst_request_string(self) -> str:
         _, single = self._prepare()
         return (
@@ -279,19 +234,48 @@ class RateLimitCurlHealthCheck:
         self._burst_ran = True
         args, _ = self._prepare()
         responses: List[Tuple[int, Dict[str, str], str]] = []
+        self._burst_stats["sent"] = self.burst
         with ThreadPoolExecutor(max_workers=DEFAULT_BURST_CONCURRENCY) as pool:
             futures = [pool.submit(self.curl_fn, args) for _ in range(self.burst)]
             for future in futures:
                 try:
                     status, headers, body, _ = future.result()
                 except Exception:  # pragma: no cover - defensive
+                    self._burst_stats["transport_failures"] += 1
                     continue
+                if status == 0:
+                    self._burst_stats["transport_failures"] += 1
+                elif status == 429:
+                    self._burst_stats["refused_429"] += 1
+                elif 200 <= status < 300:
+                    self._burst_stats["served"] += 1
+                else:
+                    self._burst_stats["other_status"] += 1
                 responses.append((status, headers, body))
         for status, headers, body in responses:
             if status == 429:
                 self._refusal = (status, headers, body)
                 break
         return self._refusal
+
+    def _burst_precondition(self) -> Optional[str]:
+        """Why a missing 429 is NOT a provably absent precondition, if it isn't.
+
+        Returns a failure reason when the burst itself did not run properly, and
+        None when "no 429" genuinely means the ceiling is above the burst size.
+        """
+        stats = self._burst_stats
+        if stats["transport_failures"]:
+            return (
+                f"{stats['transport_failures']} of {stats['sent']} burst requests failed "
+                "in transport, so the ceiling was never actually exercised"
+            )
+        if stats["served"] == 0:
+            return (
+                f"none of the {stats['sent']} burst requests was served "
+                f"(other statuses: {stats['other_status']}), so nothing consumed the ceiling"
+            )
+        return None
 
     # ------------------------------------------------------------ happy checks
 
@@ -327,13 +311,11 @@ class RateLimitCurlHealthCheck:
         refusal = self._observe_refusal()
         request = self._burst_request_string()
         if refusal is None:
-            return self._record(
-                name, request, 0, {}, assertion, False, True,
-                detail=(
-                    f"a {self.burst}-request burst produced no 429; this key's RPM "
-                    "ceiling is above the burst size, so the refusal path was never exercised"
-                ),
-                not_configured=True,
+            return self._no_refusal_row(
+                name, request, assertion,
+                f"a {self.burst}-request burst ran cleanly and produced no 429; this "
+                "key's RPM ceiling is above the burst size, so the refusal path was "
+                "never exercised",
             )
         status, headers, body = refusal
         retry = retry_after_seconds(headers)
@@ -361,10 +343,9 @@ class RateLimitCurlHealthCheck:
         refusal = self._observe_refusal()
         request = self._burst_request_string()
         if refusal is None:
-            return self._record(
-                name, request, 0, {}, assertion, False, True,
-                detail="no 429 was observed, so its cost headers could not be inspected",
-                not_configured=True,
+            return self._no_refusal_row(
+                name, request, assertion,
+                "the burst ran cleanly and was never refused, so no 429 cost headers exist to inspect",
             )
         status, headers, _ = refusal
         leaked = [
@@ -413,10 +394,9 @@ class RateLimitCurlHealthCheck:
         refusal = self._observe_refusal()
         request = self._burst_request_string()
         if refusal is None:
-            return self._record(
-                name, request, 0, {}, assertion, False, True,
-                detail="no 429 was observed, so its body could not be inspected",
-                not_configured=True,
+            return self._no_refusal_row(
+                name, request, assertion,
+                "the burst ran cleanly and was never refused, so no 429 body exists to inspect",
             )
         status, headers, body = refusal
         err = error_of(body)
@@ -442,10 +422,9 @@ class RateLimitCurlHealthCheck:
         refusal = self._observe_refusal()
         request = self._burst_request_string()
         if refusal is None:
-            return self._record(
-                name, request, 0, {}, assertion, False, True,
-                detail="no 429 was observed, so Retry-After could not be parsed",
-                not_configured=True,
+            return self._no_refusal_row(
+                name, request, assertion,
+                "the burst ran cleanly and was never refused, so there was no Retry-After to parse",
             )
         status, headers, _ = refusal
         raw = headers.get("retry-after")
@@ -464,10 +443,9 @@ class RateLimitCurlHealthCheck:
         refusal = self._observe_refusal()
         request = self._burst_request_string()
         if refusal is None:
-            return self._record(
-                name, request, 0, {}, assertion, False, True,
-                detail="no 429 was observed, so x-nr-limit-source could not be read",
-                not_configured=True,
+            return self._no_refusal_row(
+                name, request, assertion,
+                "the burst ran cleanly and was never refused, so there was no x-nr-limit-source to read",
             )
         status, headers, _ = refusal
         source = headers.get("x-nr-limit-source")
@@ -576,6 +554,8 @@ class RateLimitCurlHealthCheck:
 
 def run_self_test() -> int:
     print("Running rate_limit_curl.py --self-test (offline mode)...")
+
+    parser_contract_self_test()
 
     def auth_of(args: List[str]) -> str:
         for index, arg in enumerate(args):
@@ -709,23 +689,59 @@ def run_self_test() -> int:
     assert burst_row["result"] == NOT_CONFIGURED, burst_row["result"]
     assert generous_suite["all_passed"] is True, "an unobserved ceiling is PARTIAL, not a failure"
 
+    # ...but a burst that could not RUN is a FAIL, not an absent precondition.
+    # Without this, a gateway that refuses the probe in transport looks exactly
+    # like a gateway with a generous ceiling.
+    def burst_never_lands(args, timeout_s=40, stdin_data=None):
+        if auth_of(args) == INVALID_KEY:
+            return 401, {"x-nr-request-id": "a", "x-nr-auth-reason": "unauthorized"}, json.dumps(
+                {"error": {"type": "invalid_request_error", "message": "Unauthorized"}}
+            ), 2.0
+        return 0, {}, "curl exit code 56: Recv failure", 10.0
+
+    unlanded = RateLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", burst=6, curl_fn=burst_never_lands
+    )
+    unlanded_suite = unlanded.run_suite()
+    for check_name in (
+        "burst_returns_429_with_retry_after",
+        "refusal_carries_no_cost",
+        "refusal_body_leaks_nothing_internal",
+        "retry_after_is_positive_integer",
+        "limit_source_value_in_spec",
+    ):
+        row = next(r for r in unlanded_suite["checks"] if r["name"] == check_name)
+        assert row["result"] == FAIL, (
+            f"{check_name}: a burst that failed in transport must FAIL, not report "
+            f"NOT-CONFIGURED; got {row['result']}"
+        )
+        assert "transport" in row.get("detail", ""), row.get("detail")
+
+    # A burst where every request is refused with a non-429 status also never
+    # exercised the ceiling, and must not be excused as "generous".
+    def burst_always_500(args, timeout_s=40, stdin_data=None):
+        if auth_of(args) == INVALID_KEY:
+            return 401, {"x-nr-request-id": "a", "x-nr-auth-reason": "unauthorized"}, json.dumps(
+                {"error": {"type": "invalid_request_error", "message": "Unauthorized"}}
+            ), 2.0
+        return 500, {"x-nr-request-id": "b"}, json.dumps(
+            {"error": {"type": "gateway_error", "message": "upstream unavailable"}}
+        ), 10.0
+
+    broken = RateLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", burst=6, curl_fn=burst_always_500
+    )
+    broken_row = next(
+        r for r in broken.run_suite()["checks"] if r["name"] == "burst_returns_429_with_retry_after"
+    )
+    assert broken_row["result"] == FAIL, (
+        f"a burst where nothing was served must FAIL; got {broken_row['result']}"
+    )
+
     assert "Rate Limits" in checker.render_markdown_summary(suite)
+    json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] rate_limit_curl.py self-test passed cleanly.")
     return 0
-
-
-def resolve_api_key(explicit: str) -> str:
-    if explicit:
-        return explicit
-    creds = Path.home() / ".nrouter_admin_keys/nrouter-test/prod/credentials.env"
-    if creds.is_file():
-        try:
-            match = re.search(r'NROUTER_TEST_API_KEY=["\']?([^"\'\n]+)["\']?', creds.read_text())
-            if match:
-                return match.group(1)
-        except Exception:
-            return ""
-    return ""
 
 
 def main() -> int:
@@ -745,37 +761,24 @@ def main() -> int:
 
     api_key = resolve_api_key(args.api_key)
     if not api_key:
-        print("ERROR: NROUTER_API_KEY is required to run live health checks.", file=sys.stderr)
-        return 1
+        print(MISSING_KEY_MESSAGE, file=sys.stderr)
+        return EXIT_UNRUNNABLE
 
     checker = RateLimitCurlHealthCheck(
         base_url=args.base_url, api_key=api_key, model=args.model, burst=args.burst
     )
-    print("=== nRouter Rate Limit Curl Health Check ===")
-    print(f"Base URL: {args.base_url} | burst: {args.burst}")
-    suite = checker.run_suite(quick=args.quick)
-    for row in suite["checks"]:
-        print(f"[{row['result']}] {row['name']} - HTTP {row['status']}")
-        if row.get("detail"):
-            print(f"        {row['detail']}")
     print(
-        f"Checks: {suite['total_checks']} | passed {suite['passed_checks']} | "
-        f"failed {suite['failed_checks']} | not-configured {suite['not_configured_checks']}"
+        f"=== nRouter Rate Limit Curl Health Check ===\n"
+        f"Base URL: {args.base_url} | burst: {args.burst}",
+        file=sys.stderr if args.json else sys.stdout,
     )
-
-    if args.step_summary:
-        target = os.environ.get("GITHUB_STEP_SUMMARY")
-        if target:
-            try:
-                with open(target, "a") as handle:
-                    handle.write("\n" + checker.render_markdown_summary(suite) + "\n")
-            except Exception as exc:
-                print(f"Warning: could not write step summary: {exc}", file=sys.stderr)
-
-    if args.json:
-        print(json.dumps(suite, indent=2))
-
-    return 0 if suite["all_passed"] else 1
+    suite = checker.run_suite(quick=args.quick)
+    return emit_results(
+        suite,
+        checker.render_markdown_summary(suite),
+        as_json=args.json,
+        step_summary=args.step_summary,
+    )
 
 
 if __name__ == "__main__":

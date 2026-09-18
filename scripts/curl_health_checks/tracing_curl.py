@@ -33,21 +33,38 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# Shared plumbing: ONE curl invocation, ONE response parser, ONE credential rule.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _curl_common import (  # noqa: E402
+    DEFAULT_BASE_URL,
+    EXIT_FAILED,
+    EXIT_OK,
+    EXIT_UNRUNNABLE,
+    FAIL,
+    MISSING_KEY_MESSAGE,
+    NOT_CONFIGURED,
+    PASS,
+    assert_all,
+    emit_results,
+    error_of,
+    json_stdout_contract_self_test,
+    parse_json,
+    parser_contract_self_test,
+    reported_headers,
+    resolve_api_key,
+    run_curl,
+    sanitize,
+)
+
 FEATURE = "tracing"
-DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 DEFAULT_MODEL = "openai/gpt-4o-mini"
 INVALID_KEY = "sk-nrouter-invalid-key-0000"
 FORGED_REQUEST_ID = "deadbeef-dead-beef-dead-beefdeadbeef"
-
-PASS = "PASS"
-FAIL = "FAIL"
-NOT_CONFIGURED = "NOT-CONFIGURED"
 
 UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
@@ -63,96 +80,6 @@ INTERNAL_LEAK_MARKERS = (
     "/src/",
     ".rs:",
 )
-
-SECRET_PATTERNS = [
-    re.compile(r"sk-nrouter-[A-Za-z0-9_-]+"),
-    re.compile(r"Bearer\s+[A-Za-z0-9._-]+", re.IGNORECASE),
-]
-REPORTED_HEADERS = ("content-type", "cache-control", "retry-after", "x-content-type-options")
-
-
-def sanitize(text: str) -> str:
-    for pattern in SECRET_PATTERNS:
-        text = pattern.sub("[REDACTED]", text)
-    return text
-
-
-def run_curl(
-    args: List[str],
-    timeout_s: int = 40,
-    stdin_data: Optional[str] = None,
-) -> Tuple[int, Dict[str, str], str, float]:
-    """Execute raw curl and parse status, headers, body and latency."""
-    cmd = ["curl", "-sS", "-D", "-"] + args
-    start = time.monotonic()
-    try:
-        proc = subprocess.run(
-            cmd,
-            input=stdin_data,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout_s,
-        )
-        latency = round((time.monotonic() - start) * 1000.0, 1)
-        raw = proc.stdout
-    except subprocess.TimeoutExpired:
-        return 0, {}, "Request timed out", round((time.monotonic() - start) * 1000.0, 1)
-    except Exception as exc:  # pragma: no cover - defensive
-        return 0, {}, f"Subprocess error: {exc}", 0.0
-
-    if proc.returncode != 0 and not raw:
-        return 0, {}, f"curl exit code {proc.returncode}: {proc.stderr.strip()}", latency
-
-    parts = raw.split("\r\n\r\n")
-    if len(parts) == 1:
-        parts = raw.split("\n\n")
-    header_block = ""
-    for part in parts[:-1]:
-        if part.startswith("HTTP/") or "\nHTTP/" in part or "\r\nHTTP/" in part:
-            header_block = part
-    body = parts[-1] if parts else ""
-
-    headers: Dict[str, str] = {}
-    status = 0
-    for line in header_block.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("HTTP/"):
-            match = re.match(r"^HTTP/[0-9.]+\s+(\d+)", line)
-            if match:
-                status = int(match.group(1))
-        elif ":" in line:
-            key, value = line.split(":", 1)
-            headers[key.strip().lower()] = value.strip()
-    return status, headers, body, latency
-
-
-def assert_all(conditions: List[Tuple[bool, str]]) -> Tuple[bool, str]:
-    failed = [message for ok, message in conditions if not ok]
-    return (not failed, "; ".join(failed))
-
-
-def parse_json(body: str) -> Dict[str, Any]:
-    try:
-        parsed = json.loads(body)
-        return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        return {}
-
-
-def error_of(body: str) -> Dict[str, Any]:
-    err = parse_json(body).get("error")
-    return err if isinstance(err, dict) else {}
-
-
-def reported_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    return {
-        key: value
-        for key, value in sorted(headers.items())
-        if key.startswith("x-nr-") or key in REPORTED_HEADERS
-    }
 
 
 class TracingCurlHealthCheck:
@@ -278,20 +205,22 @@ class TracingCurlHealthCheck:
 
     def check_latency_header_is_integer(self) -> Dict[str, Any]:
         name = "latency_header_is_integer"
-        assertion = "200; x-nr-latency-ms present and a non-negative integer"
+        assertion = (
+            "200; x-nr-latency-ms present (the spec marks it ALWAYS emitted, so its "
+            "absence is a contract break, not a missing fixture) and a non-negative "
+            "integer under an hour"
+        )
         args, request = self._prepare(self._chat())
         status, headers, _, _ = self.curl_fn(args)
         raw = headers.get("x-nr-latency-ms")
-        if raw is None:
-            return self._record(
-                name, request, status, headers, assertion, False, False,
-                detail="x-nr-latency-ms is not emitted on this plane",
-                not_configured=True,
-            )
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
-            (raw.isdigit(), f"x-nr-latency-ms {raw!r} is not an integer"),
-            (raw.isdigit() and int(raw) >= 0, f"x-nr-latency-ms {raw!r} is negative"),
+            (raw is not None, "x-nr-latency-ms absent, but the spec marks it always emitted"),
+            (raw is not None and raw.isdigit(), f"x-nr-latency-ms {raw!r} is not an integer"),
+            (
+                raw is not None and raw.isdigit() and 0 <= int(raw) <= 3_600_000,
+                f"x-nr-latency-ms {raw!r} outside 0..3600000 ms",
+            ),
         ])
         return self._record(name, request, status, headers, assertion, ok, False, detail)
 
@@ -525,6 +454,8 @@ class TracingCurlHealthCheck:
 def run_self_test() -> int:
     print("Running tracing_curl.py --self-test (offline mode)...")
 
+    parser_contract_self_test()
+
     def auth_of(args: List[str]) -> str:
         for index, arg in enumerate(args):
             if arg == "-H" and args[index + 1].lower().startswith("authorization:"):
@@ -684,23 +615,46 @@ def run_self_test() -> int:
     trace_row = next(r for r in untraced.run_suite()["checks"] if r["name"] == "trace_id_shape")
     assert trace_row["result"] == NOT_CONFIGURED, trace_row["result"]
 
+    # BITE 5: x-nr-latency-ms is ALWAYS emitted per the spec, so its absence is a
+    # contract break and must FAIL — never be excused as an unconfigured plane.
+    def drops_latency() -> Callable:
+        inner = make_backend()
+
+        def mock(args, timeout_s=40, stdin_data=None):
+            status, headers, body, latency = inner(args, timeout_s, stdin_data)
+            headers = {k: v for k, v in headers.items() if k != "x-nr-latency-ms"}
+            return status, headers, body, latency
+
+        return mock
+
+    latency_less = TracingCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=drops_latency()
+    )
+    latency_row = next(
+        r for r in latency_less.run_suite()["checks"] if r["name"] == "latency_header_is_integer"
+    )
+    assert latency_row["result"] == FAIL, (
+        "a missing x-nr-latency-ms must FAIL (the spec marks it always emitted), got "
+        f"{latency_row['result']}"
+    )
+
+    # A transport failure can only FAIL; it is never an absent precondition.
+    def transport_failure(args, timeout_s=40, stdin_data=None):
+        return 0, {}, "curl exit code 56: Recv failure", 8.0
+
+    broken = TracingCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=transport_failure
+    )
+    broken_suite = broken.run_suite(quick=True)
+    assert broken_suite["all_passed"] is False, "a transport failure must fail the suite"
+    assert broken_suite["not_configured_checks"] == 0, (
+        "a transport failure must never be reported as NOT-CONFIGURED"
+    )
+
     assert "Request Identity" in checker.render_markdown_summary(suite)
+    json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] tracing_curl.py self-test passed cleanly.")
     return 0
-
-
-def resolve_api_key(explicit: str) -> str:
-    if explicit:
-        return explicit
-    creds = Path.home() / ".nrouter_admin_keys/nrouter-test/prod/credentials.env"
-    if creds.is_file():
-        try:
-            match = re.search(r'NROUTER_TEST_API_KEY=["\']?([^"\'\n]+)["\']?', creds.read_text())
-            if match:
-                return match.group(1)
-        except Exception:
-            return ""
-    return ""
 
 
 def main() -> int:
@@ -719,35 +673,21 @@ def main() -> int:
 
     api_key = resolve_api_key(args.api_key)
     if not api_key:
-        print("ERROR: NROUTER_API_KEY is required to run live health checks.", file=sys.stderr)
-        return 1
+        print(MISSING_KEY_MESSAGE, file=sys.stderr)
+        return EXIT_UNRUNNABLE
 
     checker = TracingCurlHealthCheck(base_url=args.base_url, api_key=api_key, model=args.model)
-    print("=== nRouter Request Identity Curl Health Check ===")
-    print(f"Base URL: {args.base_url}")
-    suite = checker.run_suite(quick=args.quick)
-    for row in suite["checks"]:
-        print(f"[{row['result']}] {row['name']} - HTTP {row['status']}")
-        if row.get("detail"):
-            print(f"        {row['detail']}")
     print(
-        f"Checks: {suite['total_checks']} | passed {suite['passed_checks']} | "
-        f"failed {suite['failed_checks']} | not-configured {suite['not_configured_checks']}"
+        f"=== nRouter Request Identity Curl Health Check ===\nBase URL: {args.base_url}",
+        file=sys.stderr if args.json else sys.stdout,
     )
-
-    if args.step_summary:
-        target = os.environ.get("GITHUB_STEP_SUMMARY")
-        if target:
-            try:
-                with open(target, "a") as handle:
-                    handle.write("\n" + checker.render_markdown_summary(suite) + "\n")
-            except Exception as exc:
-                print(f"Warning: could not write step summary: {exc}", file=sys.stderr)
-
-    if args.json:
-        print(json.dumps(suite, indent=2))
-
-    return 0 if suite["all_passed"] else 1
+    suite = checker.run_suite(quick=args.quick)
+    return emit_results(
+        suite,
+        checker.render_markdown_summary(suite),
+        as_json=args.json,
+        step_summary=args.step_summary,
+    )
 
 
 if __name__ == "__main__":

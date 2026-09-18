@@ -36,14 +36,39 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# The shared plumbing sits beside this file: ONE curl invocation, ONE response
+# parser, ONE credential rule (`NROUTER_API_KEY` only — `_curl_common` explains
+# why a public repository must not carry a credentials-file fallback).
+# `run_curl` and `sanitize` are re-exported so this module keeps the shape every
+# check module has.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _curl_common import (  # noqa: E402
+    DEFAULT_BASE_URL,
+    EXIT_FAILED,
+    EXIT_OK,
+    EXIT_UNRUNNABLE,
+    FAIL,
+    MISSING_KEY_MESSAGE,
+    NOT_CONFIGURED,
+    PASS,
+    assert_all,
+    emit_results,
+    error_of,
+    json_stdout_contract_self_test,
+    parse_json,
+    parser_contract_self_test,
+    reported_headers,
+    resolve_api_key,
+    run_curl,
+    sanitize,
+)
+
 FEATURE = "fallbacks"
-DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 DEFAULT_PRIMARY_MODEL = "openai/gpt-4o-mini"
 DEFAULT_FALLBACK_MODEL = "anthropic/claude-3-5-haiku"
 DEFAULT_SECOND_FALLBACK_MODEL = "google/gemini-2.5-flash"
@@ -51,110 +76,7 @@ UNPERMITTED_TARGET = "private/unauthorized-enterprise-model"
 AUTO_MODEL = "nrouter/auto"
 MAX_FALLBACK_TARGETS = 4
 
-PASS = "PASS"
-FAIL = "FAIL"
-NOT_CONFIGURED = "NOT-CONFIGURED"
-
-SECRET_PATTERNS = [
-    re.compile(r"sk-nrouter-[A-Za-z0-9_-]+"),
-    re.compile(r"Bearer\s+[A-Za-z0-9._-]+", re.IGNORECASE),
-]
-
 ROUTING_RE = re.compile(r"^(direct|fallback:[0-9]+)$")
-REPORTED_HEADERS = (
-    "content-type",
-    "cache-control",
-    "retry-after",
-    "x-content-type-options",
-)
-
-
-def sanitize(text: str) -> str:
-    """Redact credentials from anything this module prints or returns."""
-    for pattern in SECRET_PATTERNS:
-        text = pattern.sub("[REDACTED]", text)
-    return text
-
-
-def run_curl(
-    args: List[str],
-    timeout_s: int = 40,
-    stdin_data: Optional[str] = None,
-) -> Tuple[int, Dict[str, str], str, float]:
-    """Execute raw curl and parse status, headers, body and latency."""
-    cmd = ["curl", "-sS", "-D", "-"] + args
-    start = time.monotonic()
-    try:
-        proc = subprocess.run(
-            cmd,
-            input=stdin_data,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout_s,
-        )
-        latency = round((time.monotonic() - start) * 1000.0, 1)
-        raw = proc.stdout
-    except subprocess.TimeoutExpired:
-        return 0, {}, "Request timed out", round((time.monotonic() - start) * 1000.0, 1)
-    except Exception as exc:  # pragma: no cover - defensive
-        return 0, {}, f"Subprocess error: {exc}", 0.0
-
-    if proc.returncode != 0 and not raw:
-        return 0, {}, f"curl exit code {proc.returncode}: {proc.stderr.strip()}", latency
-
-    parts = raw.split("\r\n\r\n")
-    if len(parts) == 1:
-        parts = raw.split("\n\n")
-
-    header_block = ""
-    for part in parts[:-1]:
-        if part.startswith("HTTP/") or "\nHTTP/" in part or "\r\nHTTP/" in part:
-            header_block = part
-    body = parts[-1] if parts else ""
-
-    headers: Dict[str, str] = {}
-    status = 0
-    for line in header_block.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("HTTP/"):
-            match = re.match(r"^HTTP/[0-9.]+\s+(\d+)", line)
-            if match:
-                status = int(match.group(1))
-        elif ":" in line:
-            key, value = line.split(":", 1)
-            headers[key.strip().lower()] = value.strip()
-    return status, headers, body, latency
-
-
-def assert_all(conditions: List[Tuple[bool, str]]) -> Tuple[bool, str]:
-    """Collect every failed assertion so one check reports all its reasons."""
-    failed = [message for ok, message in conditions if not ok]
-    return (not failed, "; ".join(failed))
-
-
-def parse_json(body: str) -> Dict[str, Any]:
-    try:
-        parsed = json.loads(body)
-        return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        return {}
-
-
-def error_of(body: str) -> Dict[str, Any]:
-    err = parse_json(body).get("error")
-    return err if isinstance(err, dict) else {}
-
-
-def reported_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    """Only the contract-relevant headers reach the JSON report."""
-    return {
-        key: value
-        for key, value in sorted(headers.items())
-        if key.startswith("x-nr-") or key in REPORTED_HEADERS
-    }
 
 
 class FallbacksCurlHealthCheck:
@@ -274,16 +196,27 @@ class FallbacksCurlHealthCheck:
         status, headers, body, _ = self.curl_fn(args)
         routing = headers.get("x-nr-routing")
         attempts = headers.get("x-nr-attempts")
-        if status == 200 and routing is None and attempts is None:
+        choices = parse_json(body).get("choices")
+        # NOT-CONFIGURED only when the PRECONDITION is provably absent: the
+        # request was served correctly and the plane emits NEITHER routing
+        # header (they are planned, not released). A served response that is
+        # itself broken, or one that emits one header and not the other, is a
+        # FAIL and falls through to the assertions below.
+        if (
+            status == 200
+            and isinstance(choices, list)
+            and choices
+            and routing is None
+            and attempts is None
+        ):
             return self._record(
                 name, request, status, headers, assertion, False, False,
                 detail=(
-                    "served, but neither x-nr-routing nor x-nr-attempts was emitted; "
-                    "the rank that answered is unprovable on this plane"
+                    "served correctly, but this plane emits neither x-nr-routing nor "
+                    "x-nr-attempts, so the rank that answered is unprovable here"
                 ),
                 not_configured=True,
             )
-        choices = parse_json(body).get("choices")
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
             (isinstance(choices, list) and len(choices) > 0, "body.choices missing or empty"),
@@ -325,13 +258,22 @@ class FallbacksCurlHealthCheck:
         status, headers, body, _ = self.curl_fn(args)
         routing = headers.get("x-nr-routing")
         attempts = headers.get("x-nr-attempts")
-        if status == 200 and routing is None and attempts is None:
+        choices = parse_json(body).get("choices")
+        if (
+            status == 200
+            and isinstance(choices, list)
+            and choices
+            and routing is None
+            and attempts is None
+        ):
             return self._record(
                 name, request, status, headers, assertion, False, False,
-                detail="served without routing headers; the answering rank is unprovable",
+                detail=(
+                    "the failover was served correctly, but this plane emits no routing "
+                    "headers, so the answering rank is unprovable here"
+                ),
                 not_configured=True,
             )
-        choices = parse_json(body).get("choices")
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
             (isinstance(choices, list) and len(choices) > 0, "body.choices missing or empty"),
@@ -583,6 +525,10 @@ def run_self_test() -> int:
     """Offline validation of every parser and assertion in this module."""
     print("Running fallbacks_curl.py --self-test (offline mode)...")
 
+    # The shared transport contract: an SSE body survives intact, and a curl
+    # rc 56 with a partial body on stdout is a transport failure, not a 200.
+    parser_contract_self_test()
+
     def payload_of(args: List[str]) -> Dict[str, Any]:
         for index, arg in enumerate(args):
             if arg == "-d":
@@ -709,28 +655,48 @@ def run_self_test() -> int:
         f"missing routing headers must report NOT-CONFIGURED, got {first['result']}"
     )
 
+    # ...but NOT-CONFIGURED must not become a hiding place. A response that is
+    # served WITHOUT routing headers AND without a usable body is a FAIL: the
+    # precondition claim ("this plane does not emit them") is only honest when
+    # the request itself was answered correctly.
+    def mock_no_routing_and_empty_body(args, timeout_s=40, stdin_data=None):
+        status, headers, body, latency = mock_no_routing_headers(args, timeout_s, stdin_data)
+        if status == 200:
+            body = json.dumps({"choices": []})
+        return status, headers, body, latency
+
+    masked = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_no_routing_and_empty_body
+    )
+    masked_row = masked.run_suite(quick=True)["checks"][0]
+    assert masked_row["result"] == FAIL, (
+        "an empty completion must FAIL even when the routing headers are absent; "
+        f"got {masked_row['result']}"
+    )
+
+    # A transport failure (status 0) can only ever FAIL a check, never pass one
+    # and never be mistaken for an absent precondition.
+    def mock_transport_failure(args, timeout_s=40, stdin_data=None):
+        return 0, {}, "curl exit code 56: Recv failure", 12.0
+
+    broken = FallbacksCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=mock_transport_failure
+    )
+    broken_suite = broken.run_suite(quick=True)
+    assert broken_suite["all_passed"] is False, "a transport failure must fail the suite"
+    assert broken_suite["not_configured_checks"] == 0, (
+        "a transport failure must never be reported as NOT-CONFIGURED"
+    )
+
     markdown = checker.render_markdown_summary(suite)
     assert "Request Fallbacks" in markdown, "markdown summary lost its title"
+
+    # --json must leave EXACTLY one JSON document on stdout.
+    json_stdout_contract_self_test(suite, markdown)
     os.environ.pop("NROUTER_FAILING_PRIMARY_MODEL", None)
     os.environ.pop("NROUTER_FAILING_FALLBACK_MODEL", None)
     print("[PASS] fallbacks_curl.py self-test passed cleanly.")
     return 0
-
-
-def resolve_api_key(explicit: str) -> str:
-    if explicit:
-        return explicit
-    creds = Path.home() / ".nrouter_admin_keys/nrouter-test/prod/credentials.env"
-    if creds.is_file():
-        try:
-            match = re.search(
-                r'NROUTER_TEST_API_KEY=["\']?([^"\'\n]+)["\']?', creds.read_text()
-            )
-            if match:
-                return match.group(1)
-        except Exception:
-            return ""
-    return ""
 
 
 def main() -> int:
@@ -750,8 +716,8 @@ def main() -> int:
 
     api_key = resolve_api_key(args.api_key)
     if not api_key:
-        print("ERROR: NROUTER_API_KEY is required to run live health checks.", file=sys.stderr)
-        return 1
+        print(MISSING_KEY_MESSAGE, file=sys.stderr)
+        return EXIT_UNRUNNABLE
 
     checker = FallbacksCurlHealthCheck(
         base_url=args.base_url,
@@ -759,31 +725,18 @@ def main() -> int:
         primary_model=args.primary_model,
         fallback_model=args.fallback_model,
     )
-    print("=== nRouter Request Fallbacks Curl Health Check ===")
-    print(f"Base URL: {args.base_url}")
-    suite = checker.run_suite(quick=args.quick)
-    for row in suite["checks"]:
-        print(f"[{row['result']}] {row['name']} - HTTP {row['status']}")
-        if row.get("detail"):
-            print(f"        {row['detail']}")
+    # With --json this banner goes to stderr, so stdout carries only the report.
     print(
-        f"Checks: {suite['total_checks']} | passed {suite['passed_checks']} | "
-        f"failed {suite['failed_checks']} | not-configured {suite['not_configured_checks']}"
+        f"=== nRouter Request Fallbacks Curl Health Check ===\nBase URL: {args.base_url}",
+        file=sys.stderr if args.json else sys.stdout,
     )
-
-    if args.step_summary:
-        target = os.environ.get("GITHUB_STEP_SUMMARY")
-        if target:
-            try:
-                with open(target, "a") as handle:
-                    handle.write("\n" + checker.render_markdown_summary(suite) + "\n")
-            except Exception as exc:
-                print(f"Warning: could not write step summary: {exc}", file=sys.stderr)
-
-    if args.json:
-        print(json.dumps(suite, indent=2))
-
-    return 0 if suite["all_passed"] else 1
+    suite = checker.run_suite(quick=args.quick)
+    return emit_results(
+        suite,
+        checker.render_markdown_summary(suite),
+        as_json=args.json,
+        step_summary=args.step_summary,
+    )
 
 
 if __name__ == "__main__":

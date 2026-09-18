@@ -9,6 +9,7 @@ By testing using raw `curl` requests rather than language-specific SDKs, these h
 | Check Group | Script | Focus / Description |
 |---|---|---|
 | **Consolidated Suite** | [`run_all.sh`](run_all.sh) / [`run_all.py`](run_all.py) | Executes all health check groups sequentially, aggregates results, and generates a unified status report. |
+| **Shared plumbing** | [`_curl_common.py`](_curl_common.py) | Not a check group — the ONE curl invocation, response parser and credential rule every module imports. Carries its own `--self-test`. |
 | **Models & Providers** | [`model_curl.sh`](model_curl.sh) / [`model_curl.py`](model_curl.py) | Verifies `GET /v1/models` catalog, provider discovery & distribution, and live provider chat completion inference. |
 | **Guardrails** | [`guardrail_curl.sh`](guardrail_curl.sh) / [`guardrail_curl.py`](guardrail_curl.py) | Verifies platform moderation floor, PII redaction, prompt injection & secret leakage detection, evasion resistance, and wire contract assertions. |
 | **Request Fallbacks** | [`fallbacks_curl.sh`](fallbacks_curl.sh) / [`fallbacks_curl.py`](fallbacks_curl.py) | Per-request fallback chains: the answering rank is named in the routing headers, and an unpermitted target, a self-reference, an over-long list, a non-array value, an unknown `nrouter_*` key and an auto-router chain are each refused with a code and no cost. |
@@ -130,4 +131,31 @@ artifact rather than scrollback:
 The `request` field is a curl command you can paste into a terminal. The key is
 always rendered as `$NROUTER_API_KEY` and the host as `$NROUTER_BASE_URL`, so a
 report can be attached to an issue without redacting it first.
+
+**With `--json`, stdout carries exactly one JSON document and nothing else.**
+The human report still exists — it goes to stderr — so both of these work:
+
+```bash
+python3 scripts/curl_health_checks/cache_curl.py --json > report.json   # parseable
+python3 scripts/curl_health_checks/cache_curl.py --json                 # both, on screen
+```
+
+## Credentials
+
+The key is read from `NROUTER_API_KEY` (or `--api-key`) and **nowhere else**.
+These scripts will not search your disk for a credential: this repository is
+public, so a hardcoded path would publish an internal convention, and a fallback
+would send whatever key it found to whatever `NROUTER_BASE_URL` you had set —
+including someone else's host. A missing key is a clear usage error.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | every check passed (possibly PARTIAL — check `not_configured_checks`) |
+| `1` | at least one check FAILED |
+| `2` | the module could not run at all, e.g. `NROUTER_API_KEY` is unset |
+
+`2` is deliberately distinct from `1`: a pipeline can tell "the gateway is
+broken" from "you did not give me a key".
 

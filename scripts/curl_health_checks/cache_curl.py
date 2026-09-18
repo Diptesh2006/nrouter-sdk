@@ -31,121 +31,46 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# Shared plumbing: ONE curl invocation, ONE response parser, ONE credential rule.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _curl_common import (  # noqa: E402
+    DEFAULT_BASE_URL,
+    EXIT_FAILED,
+    EXIT_OK,
+    EXIT_UNRUNNABLE,
+    FAIL,
+    MISSING_KEY_MESSAGE,
+    NOT_CONFIGURED,
+    PASS,
+    assert_all,
+    emit_results,
+    error_of,
+    header_float,
+    json_stdout_contract_self_test,
+    parse_json,
+    parser_contract_self_test,
+    reported_headers,
+    resolve_api_key,
+    run_curl,
+    sanitize,
+)
+
 FEATURE = "cache"
-DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 DEFAULT_MODEL = "openai/gpt-4o-mini"
 CACHE_VALUES = {"hit", "miss", "bypass"}
 
-PASS = "PASS"
-FAIL = "FAIL"
-NOT_CONFIGURED = "NOT-CONFIGURED"
-
-SECRET_PATTERNS = [
-    re.compile(r"sk-nrouter-[A-Za-z0-9_-]+"),
-    re.compile(r"Bearer\s+[A-Za-z0-9._-]+", re.IGNORECASE),
-]
-REPORTED_HEADERS = ("content-type", "cache-control", "retry-after", "x-content-type-options")
-
-
-def sanitize(text: str) -> str:
-    for pattern in SECRET_PATTERNS:
-        text = pattern.sub("[REDACTED]", text)
-    return text
-
-
-def run_curl(
-    args: List[str],
-    timeout_s: int = 45,
-    stdin_data: Optional[str] = None,
-) -> Tuple[int, Dict[str, str], str, float]:
-    """Execute raw curl and parse status, headers, body and latency."""
-    cmd = ["curl", "-sS", "-D", "-"] + args
-    start = time.monotonic()
-    try:
-        proc = subprocess.run(
-            cmd,
-            input=stdin_data,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout_s,
-        )
-        latency = round((time.monotonic() - start) * 1000.0, 1)
-        raw = proc.stdout
-    except subprocess.TimeoutExpired:
-        return 0, {}, "Request timed out", round((time.monotonic() - start) * 1000.0, 1)
-    except Exception as exc:  # pragma: no cover - defensive
-        return 0, {}, f"Subprocess error: {exc}", 0.0
-
-    if proc.returncode != 0 and not raw:
-        return 0, {}, f"curl exit code {proc.returncode}: {proc.stderr.strip()}", latency
-
-    parts = raw.split("\r\n\r\n")
-    if len(parts) == 1:
-        parts = raw.split("\n\n")
-    header_block = ""
-    for part in parts[:-1]:
-        if part.startswith("HTTP/") or "\nHTTP/" in part or "\r\nHTTP/" in part:
-            header_block = part
-    body = parts[-1] if parts else ""
-
-    headers: Dict[str, str] = {}
-    status = 0
-    for line in header_block.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("HTTP/"):
-            match = re.match(r"^HTTP/[0-9.]+\s+(\d+)", line)
-            if match:
-                status = int(match.group(1))
-        elif ":" in line:
-            key, value = line.split(":", 1)
-            headers[key.strip().lower()] = value.strip()
-    return status, headers, body, latency
-
-
-def assert_all(conditions: List[Tuple[bool, str]]) -> Tuple[bool, str]:
-    failed = [message for ok, message in conditions if not ok]
-    return (not failed, "; ".join(failed))
-
-
-def parse_json(body: str) -> Dict[str, Any]:
-    try:
-        parsed = json.loads(body)
-        return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        return {}
-
-
-def error_of(body: str) -> Dict[str, Any]:
-    err = parse_json(body).get("error")
-    return err if isinstance(err, dict) else {}
-
-
-def header_float(headers: Dict[str, str], name: str) -> Optional[float]:
-    raw = headers.get(name)
-    if raw is None:
-        return None
-    try:
-        return float(raw)
-    except ValueError:
-        return None
-
-
-def reported_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    return {
-        key: value
-        for key, value in sorted(headers.items())
-        if key.startswith("x-nr-") or key in REPORTED_HEADERS
-    }
+# Outcomes of a priming call. A prime is a real request whose result the check
+# that follows DEPENDS on, so it is asserted like any other: if the seed never
+# landed, the check that reads it back proves nothing and must not pass.
+PRIME_OK = "ok"
+PRIME_ABSENT = "absent"  # the precondition is provably missing (caching is off)
+PRIME_FAILED = "failed"  # the prime itself went wrong -> the check FAILS
 
 
 class CacheCurlHealthCheck:
@@ -230,6 +155,53 @@ class CacheCurlHealthCheck:
         body.update(extra)
         return body
 
+    def _prime(
+        self,
+        suffix: str,
+        expect_cache: Optional[str] = None,
+        key: Optional[str] = None,
+    ) -> Tuple[str, str]:
+        """Run a setup call and ASSERT it did what the check depends on.
+
+        Returns (outcome, detail). A discarded priming call is how a check
+        "passes" without ever having been set up: the seed 500s, the replay
+        misses, and the miss is then read as "no cache on this plane". So every
+        prime states its own verdict:
+
+          PRIME_OK      the seed landed, with the cache state the check needs
+          PRIME_ABSENT  caching is provably off here (bypass, or no header) ->
+                        the caller reports NOT-CONFIGURED
+          PRIME_FAILED  the seed itself went wrong -> the caller reports FAIL
+        """
+        args, _ = self._prepare(self._payload(suffix), key=key)
+        status, headers, body, _ = self.curl_fn(args)
+        state = headers.get("x-nr-response-cache")
+
+        if status != 200:
+            return PRIME_FAILED, f"priming call returned HTTP {status}, not 200"
+        if not parse_json(body).get("choices"):
+            return PRIME_FAILED, "priming call returned no completion to cache"
+        if state is None:
+            return PRIME_ABSENT, "this plane emits no x-nr-response-cache header"
+        if state == "bypass" and expect_cache != "bypass":
+            return PRIME_ABSENT, (
+                "the priming call reported x-nr-response-cache: bypass, so caching is "
+                "switched off for this organization and there is nothing to read back"
+            )
+        if expect_cache is not None and state != expect_cache:
+            return PRIME_FAILED, (
+                f"priming call reported x-nr-response-cache {state!r}, expected "
+                f"{expect_cache!r}"
+            )
+        return PRIME_OK, ""
+
+    def _prime_seed_and_replay(self, suffix: str) -> Tuple[str, str]:
+        """Prime an entry (miss) and confirm it reads back (hit)."""
+        outcome, detail = self._prime(suffix, expect_cache="miss")
+        if outcome != PRIME_OK:
+            return outcome, detail
+        return self._prime(suffix, expect_cache="hit")
+
     # ------------------------------------------------------------ happy checks
 
     def check_miss_then_hit(self) -> Dict[str, Any]:
@@ -240,14 +212,39 @@ class CacheCurlHealthCheck:
             "both bodies carry choices; hit carries x-nr-response-cache-age when emitted"
         )
         first_args, _ = self._prepare(self._payload())
-        first_status, first_headers, _, _ = self.curl_fn(first_args)
+        first_status, first_headers, first_body, _ = self.curl_fn(first_args)
         second_args, request = self._prepare(self._payload())
         status, headers, body, _ = self.curl_fn(second_args)
 
-        if "x-nr-response-cache" not in first_headers and "x-nr-response-cache" not in headers:
+        # NOT-CONFIGURED only when the capability is PROVABLY absent: both calls
+        # were served correctly and neither carried the header at all. A call
+        # that failed, or a body with no completion, is a FAIL below.
+        both_served = (
+            first_status == 200
+            and status == 200
+            and parse_json(first_body).get("choices")
+            and parse_json(body).get("choices")
+        )
+        if (
+            both_served
+            and "x-nr-response-cache" not in first_headers
+            and "x-nr-response-cache" not in headers
+        ):
             return self._record(
                 name, request, status, headers, assertion, False, False,
-                detail="x-nr-response-cache is not emitted on this plane; cache state is unprovable",
+                detail=(
+                    "both calls were served correctly but neither carried "
+                    "x-nr-response-cache, so cache state is unobservable on this plane"
+                ),
+                not_configured=True,
+            )
+        if both_served and first_headers.get("x-nr-response-cache") == "bypass":
+            return self._record(
+                name, request, status, headers, assertion, False, False,
+                detail=(
+                    "the first call reported bypass: caching is switched off for this "
+                    "organization, so there is no miss-then-hit to observe"
+                ),
                 not_configured=True,
             )
         age = headers.get("x-nr-response-cache-age")
@@ -278,21 +275,37 @@ class CacheCurlHealthCheck:
             "200; x-nr-response-cache == hit; x-nr-request-cost present and "
             "strictly > 0; x-nr-cost-status == exact"
         )
-        self.curl_fn(self._prepare(self._payload("-billing"))[0])
+        outcome, why = self._prime("-billing", expect_cache="miss")
+        if outcome == PRIME_ABSENT:
+            return self._record(
+                name, "(not executed)", 0, {}, assertion, False, False,
+                detail=why, not_configured=True,
+            )
+        if outcome == PRIME_FAILED:
+            return self._record(
+                name, "(prime failed)", 0, {}, assertion, False, False,
+                detail=f"the entry was never seeded, so hit billing could not be read: {why}",
+            )
         args, request = self._prepare(self._payload("-billing"))
         status, headers, _, _ = self.curl_fn(args)
-        if headers.get("x-nr-response-cache") != "hit":
+        state = headers.get("x-nr-response-cache")
+        # A seeded entry that replays as `miss` is a REAL failure — the cache
+        # did not retain what it just stored. Only `bypass` (the organization
+        # opted out between the two calls) is an absent precondition.
+        if state == "bypass":
             return self._record(
                 name, request, status, headers, assertion, False, False,
-                detail=(
-                    f"the replay reported {headers.get('x-nr-response-cache')!r}, not a hit, "
-                    "so hit billing was never exercised"
-                ),
+                detail="the replay reported bypass: caching is off for this organization",
                 not_configured=True,
             )
         cost = header_float(headers, "x-nr-request-cost")
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
+            (
+                state == "hit",
+                f"the replay of a freshly seeded entry reported {state!r}, not hit — "
+                "the cache did not retain what it had just stored",
+            ),
             ("x-nr-request-cost" in headers, "x-nr-request-cost absent on a cache hit"),
             (cost is not None and cost > 0.0, f"cache hit billed {headers.get('x-nr-request-cost')!r} (must be > 0)"),
             (
@@ -328,7 +341,19 @@ class CacheCurlHealthCheck:
             "200; x-nr-response-cache == bypass; x-nr-response-cache-age ABSENT; "
             "body carries choices"
         )
-        self.curl_fn(self._prepare(self._payload("-bypass"))[0])
+        # Seed the entry first, so `bypass` on the next call is demonstrably the
+        # opt-out taking effect and not simply a cold cache.
+        outcome, why = self._prime("-bypass", expect_cache="miss")
+        if outcome == PRIME_ABSENT:
+            return self._record(
+                name, "(not executed)", 0, {}, assertion, False, True,
+                detail=why, not_configured=True,
+            )
+        if outcome == PRIME_FAILED:
+            return self._record(
+                name, "(prime failed)", 0, {}, assertion, False, True,
+                detail=f"the entry was never seeded, so bypass proves nothing: {why}",
+            )
         args, request = self._prepare(self._payload("-bypass", nrouter_cache=False))
         status, headers, body, _ = self.curl_fn(args)
         choices = parse_json(body).get("choices")
@@ -379,8 +404,23 @@ class CacheCurlHealthCheck:
                 detail="NROUTER_API_KEY_B unset: no second tenant to prove isolation against",
                 not_configured=True,
             )
-        self.curl_fn(self._prepare(self._payload("-tenant"))[0])
-        self.curl_fn(self._prepare(self._payload("-tenant"))[0])
+        # The isolation claim is only meaningful once tenant A's entry PROVABLY
+        # exists: seed it, then prove it reads back as a hit for A, and only
+        # then ask B for the same body.
+        outcome, why = self._prime_seed_and_replay("-tenant")
+        if outcome == PRIME_ABSENT:
+            return self._record(
+                name, "(not executed)", 0, {}, assertion, False, True,
+                detail=why, not_configured=True,
+            )
+        if outcome == PRIME_FAILED:
+            return self._record(
+                name, "(prime failed)", 0, {}, assertion, False, True,
+                detail=(
+                    "tenant A's entry was never established, so a miss for tenant B "
+                    f"would prove nothing about isolation: {why}"
+                ),
+            )
         args, request = self._prepare(
             self._payload("-tenant"), key=self.second_api_key, key_label="$NROUTER_API_KEY_B"
         )
@@ -400,8 +440,20 @@ class CacheCurlHealthCheck:
             "200; changing temperature on an otherwise identical body yields "
             "x-nr-response-cache == miss (the key covers the whole body)"
         )
-        self.curl_fn(self._prepare(self._payload("-sampling"))[0])
-        self.curl_fn(self._prepare(self._payload("-sampling"))[0])
+        outcome, why = self._prime_seed_and_replay("-sampling")
+        if outcome == PRIME_ABSENT:
+            return self._record(
+                name, "(not executed)", 0, {}, assertion, False, True,
+                detail=why, not_configured=True,
+            )
+        if outcome == PRIME_FAILED:
+            return self._record(
+                name, "(prime failed)", 0, {}, assertion, False, True,
+                detail=(
+                    "the baseline entry was never established, so a miss on the altered "
+                    f"body would prove nothing: {why}"
+                ),
+            )
         args, request = self._prepare(self._payload("-sampling", temperature=0.8))
         status, headers, _, _ = self.curl_fn(args)
         state = headers.get("x-nr-response-cache")
@@ -441,8 +493,20 @@ class CacheCurlHealthCheck:
                 detail="NROUTER_GUARDRAIL_ID unset: no addition available to alter the fingerprint",
                 not_configured=True,
             )
-        self.curl_fn(self._prepare(self._payload("-fingerprint"))[0])
-        self.curl_fn(self._prepare(self._payload("-fingerprint"))[0])
+        outcome, why = self._prime_seed_and_replay("-fingerprint")
+        if outcome == PRIME_ABSENT:
+            return self._record(
+                name, "(not executed)", 0, {}, assertion, False, True,
+                detail=why, not_configured=True,
+            )
+        if outcome == PRIME_FAILED:
+            return self._record(
+                name, "(prime failed)", 0, {}, assertion, False, True,
+                detail=(
+                    "the entry admitted under the weaker chain was never established, "
+                    f"so a miss with the addition would prove nothing: {why}"
+                ),
+            )
         args, request = self._prepare(
             self._payload("-fingerprint", nrouter_guardrails=[self.guardrail_id])
         )
@@ -461,17 +525,32 @@ class CacheCurlHealthCheck:
             "200; on x-nr-response-cache == hit neither x-nr-routing nor "
             "x-nr-attempts is present (nothing was routed)"
         )
-        self.curl_fn(self._prepare(self._payload("-routing"))[0])
+        outcome, why = self._prime("-routing", expect_cache="miss")
+        if outcome == PRIME_ABSENT:
+            return self._record(
+                name, "(not executed)", 0, {}, assertion, False, True,
+                detail=why, not_configured=True,
+            )
+        if outcome == PRIME_FAILED:
+            return self._record(
+                name, "(prime failed)", 0, {}, assertion, False, True,
+                detail=f"the entry was never seeded, so no hit could be inspected: {why}",
+            )
         args, request = self._prepare(self._payload("-routing"))
         status, headers, _, _ = self.curl_fn(args)
-        if headers.get("x-nr-response-cache") != "hit":
+        state = headers.get("x-nr-response-cache")
+        if state == "bypass":
             return self._record(
                 name, request, status, headers, assertion, False, True,
-                detail=f"the replay reported {headers.get('x-nr-response-cache')!r}, not a hit",
+                detail="the replay reported bypass: caching is off for this organization",
                 not_configured=True,
             )
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
+            (
+                state == "hit",
+                f"the replay of a freshly seeded entry reported {state!r}, not hit",
+            ),
             ("x-nr-routing" not in headers, "x-nr-routing present on a cache hit"),
             ("x-nr-attempts" not in headers, "x-nr-attempts present on a cache hit"),
             (bool(headers.get("x-nr-guardrails")), "a served hit carries no x-nr-guardrails token"),
@@ -548,6 +627,8 @@ class CacheCurlHealthCheck:
 
 def run_self_test() -> int:
     print("Running cache_curl.py --self-test (offline mode)...")
+
+    parser_contract_self_test()
 
     def payload_of(args: List[str]) -> Dict[str, Any]:
         for index, arg in enumerate(args):
@@ -706,23 +787,110 @@ def run_self_test() -> int:
     silent_row = silent.run_suite(quick=True)["checks"][0]
     assert silent_row["result"] == NOT_CONFIGURED, silent_row["result"]
 
+    # BITE 3 — A MASKED MISS. A seeded entry that replays as `miss` is the cache
+    # failing to retain what it stored. It must FAIL, never be excused as
+    # "this plane is not configured for caching".
+    def never_retains(args, timeout_s=45, stdin_data=None):
+        base = {
+            "x-nr-request-id": "dddddddd-0000-1111-2222-333333333333",
+            "x-nr-guardrails": "pass",
+            "x-nr-response-cache": "miss",
+            "x-nr-request-cost": "0.000030",
+            "x-nr-cost-status": "exact",
+        }
+        return 200, base, json.dumps({"choices": [{"message": {"content": "x"}}]}), 40.0
+
+    forgetful = CacheCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=never_retains
+    )
+    forgetful_suite = forgetful.run_suite()
+    billing_miss = next(
+        r for r in forgetful_suite["checks"] if r["name"] == "hit_is_billed_never_zero"
+    )
+    assert billing_miss["result"] == FAIL, (
+        "a seeded entry replaying as `miss` must FAIL, not report NOT-CONFIGURED; "
+        f"got {billing_miss['result']}"
+    )
+    routing_miss = next(
+        r for r in forgetful_suite["checks"] if r["name"] == "hit_carries_no_routing_headers"
+    )
+    assert routing_miss["result"] == FAIL, (
+        f"a permanent miss must FAIL the hit-header check; got {routing_miss['result']}"
+    )
+    # ...while a genuine opt-out (bypass everywhere) IS an absent precondition.
+    def always_bypass(args, timeout_s=45, stdin_data=None):
+        base = {
+            "x-nr-request-id": "eeeeeeee-0000-1111-2222-333333333333",
+            "x-nr-guardrails": "pass",
+            "x-nr-response-cache": "bypass",
+            "x-nr-request-cost": "0.000030",
+            "x-nr-cost-status": "exact",
+        }
+        return 200, base, json.dumps({"choices": [{"message": {"content": "x"}}]}), 40.0
+
+    opted_out = CacheCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=always_bypass
+    )
+    opted_row = next(
+        r for r in opted_out.run_suite()["checks"] if r["name"] == "hit_is_billed_never_zero"
+    )
+    assert opted_row["result"] == NOT_CONFIGURED, (
+        f"an organization that opted out of caching IS an absent precondition; got {opted_row['result']}"
+    )
+
+    # BITE 4 — A DISCARDED PRIME. When the seeding call fails, every check that
+    # reads it back must FAIL rather than quietly pass on the replay's shape.
+    def prime_fails(args, timeout_s=45, stdin_data=None):
+        body = payload_of(args)
+        content = body.get("messages", [{}])[0].get("content", "")
+        if content.endswith(("-billing", "-tenant", "-routing", "-sampling", "-fingerprint", "-bypass")):
+            return 500, {"x-nr-request-id": "ffffffff-0000-1111-2222-333333333333"}, json.dumps(
+                {"error": {"type": "gateway_error", "message": "upstream unavailable"}}
+            ), 15.0
+        return make_backend()(args, timeout_s, stdin_data)
+
+    unprimed = CacheCurlHealthCheck(
+        base_url="https://mock.invalid/v1",
+        api_key="k",
+        second_api_key="key-b",
+        guardrail_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        curl_fn=prime_fails,
+    )
+    unprimed_suite = unprimed.run_suite()
+    for check_name in (
+        "hit_is_billed_never_zero",
+        "second_key_misses",
+        "altered_sampling_param_misses",
+        "guardrail_addition_misses",
+        "hit_carries_no_routing_headers",
+        "cache_false_bypasses",
+    ):
+        row = next(r for r in unprimed_suite["checks"] if r["name"] == check_name)
+        assert row["result"] == FAIL, (
+            f"{check_name} depends on a priming call that returned 500; it must FAIL, "
+            f"got {row['result']}"
+        )
+        assert "never seeded" in row.get("detail", "") or "prove nothing" in row.get("detail", ""), (
+            f"{check_name} does not say its prime failed: {row.get('detail')!r}"
+        )
+
+    # A transport failure can only FAIL; it is never an absent precondition.
+    def transport_failure(args, timeout_s=45, stdin_data=None):
+        return 0, {}, "curl exit code 56: Recv failure", 11.0
+
+    broken = CacheCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=transport_failure
+    )
+    broken_suite = broken.run_suite(quick=True)
+    assert broken_suite["all_passed"] is False, "a transport failure must fail the suite"
+    assert broken_suite["not_configured_checks"] == 0, (
+        "a transport failure must never be reported as NOT-CONFIGURED"
+    )
+
     assert "Response Cache" in checker.render_markdown_summary(suite)
+    json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] cache_curl.py self-test passed cleanly.")
     return 0
-
-
-def resolve_api_key(explicit: str) -> str:
-    if explicit:
-        return explicit
-    creds = Path.home() / ".nrouter_admin_keys/nrouter-test/prod/credentials.env"
-    if creds.is_file():
-        try:
-            match = re.search(r'NROUTER_TEST_API_KEY=["\']?([^"\'\n]+)["\']?', creds.read_text())
-            if match:
-                return match.group(1)
-        except Exception:
-            return ""
-    return ""
 
 
 def main() -> int:
@@ -741,35 +909,21 @@ def main() -> int:
 
     api_key = resolve_api_key(args.api_key)
     if not api_key:
-        print("ERROR: NROUTER_API_KEY is required to run live health checks.", file=sys.stderr)
-        return 1
+        print(MISSING_KEY_MESSAGE, file=sys.stderr)
+        return EXIT_UNRUNNABLE
 
     checker = CacheCurlHealthCheck(base_url=args.base_url, api_key=api_key, model=args.model)
-    print("=== nRouter Response Cache Curl Health Check ===")
-    print(f"Base URL: {args.base_url}")
-    suite = checker.run_suite(quick=args.quick)
-    for row in suite["checks"]:
-        print(f"[{row['result']}] {row['name']} - HTTP {row['status']}")
-        if row.get("detail"):
-            print(f"        {row['detail']}")
     print(
-        f"Checks: {suite['total_checks']} | passed {suite['passed_checks']} | "
-        f"failed {suite['failed_checks']} | not-configured {suite['not_configured_checks']}"
+        f"=== nRouter Response Cache Curl Health Check ===\nBase URL: {args.base_url}",
+        file=sys.stderr if args.json else sys.stdout,
     )
-
-    if args.step_summary:
-        target = os.environ.get("GITHUB_STEP_SUMMARY")
-        if target:
-            try:
-                with open(target, "a") as handle:
-                    handle.write("\n" + checker.render_markdown_summary(suite) + "\n")
-            except Exception as exc:
-                print(f"Warning: could not write step summary: {exc}", file=sys.stderr)
-
-    if args.json:
-        print(json.dumps(suite, indent=2))
-
-    return 0 if suite["all_passed"] else 1
+    suite = checker.run_suite(quick=args.quick)
+    return emit_results(
+        suite,
+        checker.render_markdown_summary(suite),
+        as_json=args.json,
+        step_summary=args.step_summary,
+    )
 
 
 if __name__ == "__main__":

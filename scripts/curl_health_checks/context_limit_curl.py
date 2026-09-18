@@ -33,24 +33,42 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# Shared plumbing: ONE curl invocation, ONE response parser, ONE credential rule.
+# `run_curl` here also carries the stdin lane (`-d @-`) this module depends on.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _curl_common import (  # noqa: E402
+    DEFAULT_BASE_URL,
+    EXIT_FAILED,
+    EXIT_OK,
+    EXIT_UNRUNNABLE,
+    FAIL,
+    MISSING_KEY_MESSAGE,
+    NOT_CONFIGURED,
+    PASS,
+    assert_all,
+    emit_results,
+    error_of,
+    json_stdout_contract_self_test,
+    parse_json,
+    parser_contract_self_test,
+    reported_headers,
+    resolve_api_key,
+    run_curl,
+    sanitize,
+)
+
 FEATURE = "context_limit"
-DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 DEFAULT_MODEL = "openai/gpt-4o-mini"
 DEFAULT_ANTHROPIC_MODEL = "anthropic/claude-3-5-haiku"
 # ~1.4M characters is far past every context window the catalogue serves,
 # while staying cheap to build and to send.
 OVERSIZE_WORD_COUNT = 280_000
 OVER_CEILING_MAX_TOKENS = 9_999_999
-
-PASS = "PASS"
-FAIL = "FAIL"
-NOT_CONFIGURED = "NOT-CONFIGURED"
 
 METERING_HEADERS = (
     "x-nr-request-cost",
@@ -59,100 +77,6 @@ METERING_HEADERS = (
     "x-nr-output-tokens",
     "x-nr-total-tokens",
 )
-
-SECRET_PATTERNS = [
-    re.compile(r"sk-nrouter-[A-Za-z0-9_-]+"),
-    re.compile(r"Bearer\s+[A-Za-z0-9._-]+", re.IGNORECASE),
-]
-REPORTED_HEADERS = ("content-type", "cache-control", "retry-after", "x-content-type-options")
-
-
-def sanitize(text: str) -> str:
-    for pattern in SECRET_PATTERNS:
-        text = pattern.sub("[REDACTED]", text)
-    return text
-
-
-def run_curl(
-    args: List[str],
-    timeout_s: int = 60,
-    stdin_data: Optional[str] = None,
-) -> Tuple[int, Dict[str, str], str, float]:
-    """Execute raw curl and parse status, headers, body and latency.
-
-    `stdin_data` feeds `-d @-`, which is how the oversize probe sends a body
-    larger than the shell will accept as an argument.
-    """
-    cmd = ["curl", "-sS", "-D", "-"] + args
-    start = time.monotonic()
-    try:
-        proc = subprocess.run(
-            cmd,
-            input=stdin_data,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout_s,
-        )
-        latency = round((time.monotonic() - start) * 1000.0, 1)
-        raw = proc.stdout
-    except subprocess.TimeoutExpired:
-        return 0, {}, "Request timed out", round((time.monotonic() - start) * 1000.0, 1)
-    except Exception as exc:  # pragma: no cover - defensive
-        return 0, {}, f"Subprocess error: {exc}", 0.0
-
-    if proc.returncode != 0 and not raw:
-        return 0, {}, f"curl exit code {proc.returncode}: {proc.stderr.strip()}", latency
-
-    parts = raw.split("\r\n\r\n")
-    if len(parts) == 1:
-        parts = raw.split("\n\n")
-    header_block = ""
-    for part in parts[:-1]:
-        if part.startswith("HTTP/") or "\nHTTP/" in part or "\r\nHTTP/" in part:
-            header_block = part
-    body = parts[-1] if parts else ""
-
-    headers: Dict[str, str] = {}
-    status = 0
-    for line in header_block.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("HTTP/"):
-            match = re.match(r"^HTTP/[0-9.]+\s+(\d+)", line)
-            if match:
-                status = int(match.group(1))
-        elif ":" in line:
-            key, value = line.split(":", 1)
-            headers[key.strip().lower()] = value.strip()
-    return status, headers, body, latency
-
-
-def assert_all(conditions: List[Tuple[bool, str]]) -> Tuple[bool, str]:
-    failed = [message for ok, message in conditions if not ok]
-    return (not failed, "; ".join(failed))
-
-
-def parse_json(body: str) -> Dict[str, Any]:
-    try:
-        parsed = json.loads(body)
-        return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        return {}
-
-
-def error_of(body: str) -> Dict[str, Any]:
-    err = parse_json(body).get("error")
-    return err if isinstance(err, dict) else {}
-
-
-def reported_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    return {
-        key: value
-        for key, value in sorted(headers.items())
-        if key.startswith("x-nr-") or key in REPORTED_HEADERS
-    }
 
 
 class ContextLimitCurlHealthCheck:
@@ -409,7 +333,9 @@ class ContextLimitCurlHealthCheck:
         )
         status, headers, body, _ = self.curl_fn(args, stdin_data=stdin_data)
         err = error_of(body)
-        if status == 404:
+        # A 404 from the route itself is a provably absent precondition. Any
+        # other unexpected status is a FAIL below, never an excuse.
+        if status == 404 and err.get("code") != "input_too_large":
             return self._record(
                 name, request, status, headers, assertion, False, True,
                 detail="/messages is not served on this plane",
@@ -507,6 +433,8 @@ class ContextLimitCurlHealthCheck:
 
 def run_self_test() -> int:
     print("Running context_limit_curl.py --self-test (offline mode)...")
+
+    parser_contract_self_test()
 
     def payload_of(args: List[str], stdin_data: Optional[str]) -> Dict[str, Any]:
         for index, arg in enumerate(args):
@@ -640,23 +568,47 @@ def run_self_test() -> int:
         "the oversize body was not delivered over stdin"
     )
 
+    # A transport failure while sending a multi-megabyte body is a FAIL, never a
+    # quiet pass and never an absent precondition: curl 55/56 on a large upload
+    # is exactly the case where a partial read used to look like a clean 400.
+    def upload_truncated(args, timeout_s=60, stdin_data=None):
+        return 0, {}, "curl exit code 55: Send failure", 40.0
+
+    truncated = ContextLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", oversize_words=40_000,
+        curl_fn=upload_truncated,
+    )
+    truncated_suite = truncated.run_suite()
+    assert truncated_suite["all_passed"] is False, "a failed upload must fail the suite"
+    assert truncated_suite["not_configured_checks"] == 0, (
+        "a transport failure must never be reported as NOT-CONFIGURED"
+    )
+
+    # A 404 carrying the ceiling code is the ceiling firing, not an absent
+    # route, and must be judged as a refusal rather than excused.
+    def messages_404_with_code(args, timeout_s=60, stdin_data=None):
+        if endpoint_of(args).endswith("/messages"):
+            return 404, dict(base), json.dumps({
+                "error": {"type": "gateway_error", "code": "input_too_large", "message": "too large"}
+            }), 5.0
+        return mock_curl(args, timeout_s, stdin_data)
+
+    odd = ContextLimitCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", oversize_words=40_000,
+        curl_fn=messages_404_with_code,
+    )
+    odd_row = next(
+        r for r in odd.run_suite()["checks"] if r["name"] == "oversize_refused_on_messages_route"
+    )
+    assert odd_row["result"] == FAIL, (
+        "a 404 that carries the ceiling code is the route answering, not an absent "
+        f"route; got {odd_row['result']}"
+    )
+
     assert "Context & Output Ceilings" in checker.render_markdown_summary(suite)
+    json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] context_limit_curl.py self-test passed cleanly.")
     return 0
-
-
-def resolve_api_key(explicit: str) -> str:
-    if explicit:
-        return explicit
-    creds = Path.home() / ".nrouter_admin_keys/nrouter-test/prod/credentials.env"
-    if creds.is_file():
-        try:
-            match = re.search(r'NROUTER_TEST_API_KEY=["\']?([^"\'\n]+)["\']?', creds.read_text())
-            if match:
-                return match.group(1)
-        except Exception:
-            return ""
-    return ""
 
 
 def main() -> int:
@@ -676,8 +628,8 @@ def main() -> int:
 
     api_key = resolve_api_key(args.api_key)
     if not api_key:
-        print("ERROR: NROUTER_API_KEY is required to run live health checks.", file=sys.stderr)
-        return 1
+        print(MISSING_KEY_MESSAGE, file=sys.stderr)
+        return EXIT_UNRUNNABLE
 
     checker = ContextLimitCurlHealthCheck(
         base_url=args.base_url,
@@ -685,31 +637,17 @@ def main() -> int:
         model=args.model,
         oversize_words=args.oversize_words,
     )
-    print("=== nRouter Context & Output Ceiling Curl Health Check ===")
-    print(f"Base URL: {args.base_url}")
-    suite = checker.run_suite(quick=args.quick)
-    for row in suite["checks"]:
-        print(f"[{row['result']}] {row['name']} - HTTP {row['status']}")
-        if row.get("detail"):
-            print(f"        {row['detail']}")
     print(
-        f"Checks: {suite['total_checks']} | passed {suite['passed_checks']} | "
-        f"failed {suite['failed_checks']} | not-configured {suite['not_configured_checks']}"
+        f"=== nRouter Context & Output Ceiling Curl Health Check ===\nBase URL: {args.base_url}",
+        file=sys.stderr if args.json else sys.stdout,
     )
-
-    if args.step_summary:
-        target = os.environ.get("GITHUB_STEP_SUMMARY")
-        if target:
-            try:
-                with open(target, "a") as handle:
-                    handle.write("\n" + checker.render_markdown_summary(suite) + "\n")
-            except Exception as exc:
-                print(f"Warning: could not write step summary: {exc}", file=sys.stderr)
-
-    if args.json:
-        print(json.dumps(suite, indent=2))
-
-    return 0 if suite["all_passed"] else 1
+    suite = checker.run_suite(quick=args.quick)
+    return emit_results(
+        suite,
+        checker.render_markdown_summary(suite),
+        as_json=args.json,
+        step_summary=args.step_summary,
+    )
 
 
 if __name__ == "__main__":

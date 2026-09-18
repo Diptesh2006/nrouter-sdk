@@ -36,24 +36,41 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# Shared plumbing: ONE curl invocation, ONE response parser, ONE credential rule.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _curl_common import (  # noqa: E402
+    DEFAULT_BASE_URL,
+    EXIT_FAILED,
+    EXIT_OK,
+    EXIT_UNRUNNABLE,
+    FAIL,
+    MISSING_KEY_MESSAGE,
+    NOT_CONFIGURED,
+    PASS,
+    assert_all,
+    emit_results,
+    error_of,
+    json_stdout_contract_self_test,
+    parse_json,
+    parser_contract_self_test,
+    reported_headers,
+    resolve_api_key,
+    run_curl,
+    sanitize,
+)
+
 FEATURE = "mcp"
-DEFAULT_BASE_URL = "https://api.nrouter.ai/v1"
 MCP_PATH = "/mcp"
 UNKNOWN_SERVER = "non-existent-server-xyz"
 TRAVERSAL_SERVER = "../../api/providers"
 # Shaped like a management credential, never issued to anyone. The real one, if
 # the operator exports it, is read from the environment instead.
 CONTROL_PLANE_SHAPED_KEY = "sk-nrouter-master-0000000000000000"
-
-PASS = "PASS"
-FAIL = "FAIL"
-NOT_CONFIGURED = "NOT-CONFIGURED"
 
 AUTH_REASON_VALUES = {
     "unauthorized",
@@ -64,96 +81,6 @@ AUTH_REASON_VALUES = {
     "key_network_policy_invalid",
     "auth_backend_unavailable",
 }
-
-SECRET_PATTERNS = [
-    re.compile(r"sk-nrouter-[A-Za-z0-9_-]+"),
-    re.compile(r"Bearer\s+[A-Za-z0-9._-]+", re.IGNORECASE),
-]
-REPORTED_HEADERS = ("content-type", "cache-control", "retry-after", "x-content-type-options")
-
-
-def sanitize(text: str) -> str:
-    for pattern in SECRET_PATTERNS:
-        text = pattern.sub("[REDACTED]", text)
-    return text
-
-
-def run_curl(
-    args: List[str],
-    timeout_s: int = 40,
-    stdin_data: Optional[str] = None,
-) -> Tuple[int, Dict[str, str], str, float]:
-    """Execute raw curl and parse status, headers, body and latency."""
-    cmd = ["curl", "-sS", "-D", "-"] + args
-    start = time.monotonic()
-    try:
-        proc = subprocess.run(
-            cmd,
-            input=stdin_data,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout_s,
-        )
-        latency = round((time.monotonic() - start) * 1000.0, 1)
-        raw = proc.stdout
-    except subprocess.TimeoutExpired:
-        return 0, {}, "Request timed out", round((time.monotonic() - start) * 1000.0, 1)
-    except Exception as exc:  # pragma: no cover - defensive
-        return 0, {}, f"Subprocess error: {exc}", 0.0
-
-    if proc.returncode != 0 and not raw:
-        return 0, {}, f"curl exit code {proc.returncode}: {proc.stderr.strip()}", latency
-
-    parts = raw.split("\r\n\r\n")
-    if len(parts) == 1:
-        parts = raw.split("\n\n")
-    header_block = ""
-    for part in parts[:-1]:
-        if part.startswith("HTTP/") or "\nHTTP/" in part or "\r\nHTTP/" in part:
-            header_block = part
-    body = parts[-1] if parts else ""
-
-    headers: Dict[str, str] = {}
-    status = 0
-    for line in header_block.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("HTTP/"):
-            match = re.match(r"^HTTP/[0-9.]+\s+(\d+)", line)
-            if match:
-                status = int(match.group(1))
-        elif ":" in line:
-            key, value = line.split(":", 1)
-            headers[key.strip().lower()] = value.strip()
-    return status, headers, body, latency
-
-
-def assert_all(conditions: List[Tuple[bool, str]]) -> Tuple[bool, str]:
-    failed = [message for ok, message in conditions if not ok]
-    return (not failed, "; ".join(failed))
-
-
-def parse_json(body: str) -> Dict[str, Any]:
-    try:
-        parsed = json.loads(body)
-        return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        return {}
-
-
-def error_of(body: str) -> Dict[str, Any]:
-    err = parse_json(body).get("error")
-    return err if isinstance(err, dict) else {}
-
-
-def reported_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    return {
-        key: value
-        for key, value in sorted(headers.items())
-        if key.startswith("x-nr-") or key in REPORTED_HEADERS
-    }
 
 
 class McpCurlHealthCheck:
@@ -524,6 +451,8 @@ class McpCurlHealthCheck:
 def run_self_test() -> int:
     print("Running mcp_curl.py --self-test (offline mode)...")
 
+    parser_contract_self_test()
+
     configured_server = "example-server"
 
     def header_of(args: List[str], name: str) -> Optional[str]:
@@ -671,23 +600,28 @@ def run_self_test() -> int:
     absent_row = next(r for r in absent.run_suite()["checks"] if r["name"] == "tools_list_answers")
     assert absent_row["result"] == NOT_CONFIGURED, absent_row["result"]
 
+    # A transport failure is NOT "no MCP server configured": the probe never
+    # reached the plane, so nothing about it was established. It must FAIL.
+    def transport_failure(args, timeout_s=40, stdin_data=None):
+        return 0, {}, "curl exit code 56: Recv failure", 6.0
+
+    broken = McpCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", server=configured_server,
+        curl_fn=transport_failure,
+    )
+    broken_suite = broken.run_suite()
+    broken_row = next(r for r in broken_suite["checks"] if r["name"] == "tools_list_answers")
+    assert broken_row["result"] == FAIL, (
+        f"a transport failure must FAIL, not look like an absent server; got {broken_row['result']}"
+    )
+    assert broken_suite["not_configured_checks"] == 0, (
+        "a transport failure must never be reported as NOT-CONFIGURED"
+    )
+
     assert "MCP" in checker.render_markdown_summary(suite)
+    json_stdout_contract_self_test(suite, checker.render_markdown_summary(suite))
     print("[PASS] mcp_curl.py self-test passed cleanly.")
     return 0
-
-
-def resolve_api_key(explicit: str) -> str:
-    if explicit:
-        return explicit
-    creds = Path.home() / ".nrouter_admin_keys/nrouter-test/prod/credentials.env"
-    if creds.is_file():
-        try:
-            match = re.search(r'NROUTER_TEST_API_KEY=["\']?([^"\'\n]+)["\']?', creds.read_text())
-            if match:
-                return match.group(1)
-        except Exception:
-            return ""
-    return ""
 
 
 def main() -> int:
@@ -706,35 +640,21 @@ def main() -> int:
 
     api_key = resolve_api_key(args.api_key)
     if not api_key:
-        print("ERROR: NROUTER_API_KEY is required to run live health checks.", file=sys.stderr)
-        return 1
+        print(MISSING_KEY_MESSAGE, file=sys.stderr)
+        return EXIT_UNRUNNABLE
 
     checker = McpCurlHealthCheck(base_url=args.base_url, api_key=api_key, server=args.server)
-    print("=== nRouter MCP Curl Health Check ===")
-    print(f"Base URL: {args.base_url}")
-    suite = checker.run_suite(quick=args.quick)
-    for row in suite["checks"]:
-        print(f"[{row['result']}] {row['name']} - HTTP {row['status']}")
-        if row.get("detail"):
-            print(f"        {row['detail']}")
     print(
-        f"Checks: {suite['total_checks']} | passed {suite['passed_checks']} | "
-        f"failed {suite['failed_checks']} | not-configured {suite['not_configured_checks']}"
+        f"=== nRouter MCP Curl Health Check ===\nBase URL: {args.base_url}",
+        file=sys.stderr if args.json else sys.stdout,
     )
-
-    if args.step_summary:
-        target = os.environ.get("GITHUB_STEP_SUMMARY")
-        if target:
-            try:
-                with open(target, "a") as handle:
-                    handle.write("\n" + checker.render_markdown_summary(suite) + "\n")
-            except Exception as exc:
-                print(f"Warning: could not write step summary: {exc}", file=sys.stderr)
-
-    if args.json:
-        print(json.dumps(suite, indent=2))
-
-    return 0 if suite["all_passed"] else 1
+    suite = checker.run_suite(quick=args.quick)
+    return emit_results(
+        suite,
+        checker.render_markdown_summary(suite),
+        as_json=args.json,
+        step_summary=args.step_summary,
+    )
 
 
 if __name__ == "__main__":

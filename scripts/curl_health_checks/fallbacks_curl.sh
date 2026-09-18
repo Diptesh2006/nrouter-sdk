@@ -21,19 +21,15 @@ for arg in "$@"; do
   fi
 done
 
+# The key comes from NROUTER_API_KEY only. This wrapper deliberately does not
+# read a credential out of a file on disk: the repository is public, a hardcoded
+# path leaks an internal convention, and a fallback would send whatever key it
+# found to whatever NROUTER_BASE_URL happens to be set to.
 if [[ "$IS_SELF_TEST" != "true" && -z "${NROUTER_API_KEY:-}" ]]; then
-  TEST_ENV_FILE="${HOME}/.nrouter_admin_keys/nrouter-test/prod/credentials.env"
-  if [[ -f "${TEST_ENV_FILE}" ]]; then
-    # shellcheck disable=SC1090
-    source "${TEST_ENV_FILE}"
-    export NROUTER_API_KEY="${NROUTER_TEST_API_KEY:-}"
-  fi
-fi
-
-if [[ "$IS_SELF_TEST" != "true" && -z "${NROUTER_API_KEY:-}" ]]; then
-  echo "Error: NROUTER_API_KEY environment variable is required." >&2
-  echo "Provide NROUTER_API_KEY or use --self-test for offline validation." >&2
-  exit 1
+  echo "NOT-CONFIGURED: NROUTER_API_KEY is not set, so no live check can run." >&2
+  echo "  export NROUTER_API_KEY=sk-nrouter-...   # your own virtual key" >&2
+  echo "  ...or pass --self-test for the offline verification, which needs no key." >&2
+  exit 2
 fi
 
 python3 "${SCRIPT_DIR}/fallbacks_curl.py" "$@"

@@ -7,7 +7,7 @@ Consolidates all modular health checks into a single runner:
      - Provider discovery & distribution (OpenAI, Anthropic, Google, Meta, etc.)
      - Live provider wire inference probe (POST /v1/chat/completions)
   2. Guardrails (`guardrail_curl`):
-     - Platform moderation floor (explicit, minors, toxicity, violence, self-harm, harmful intent)
+     - Platform moderation floor (explicit, toxicity, violence, self-harm, harmful intent)
      - Workplace / technical phrasing false-positive resistance
      - Guardrail presets: Prompt injection (DAN, overrides) and secret leakage detection
      - PII handling & redaction posture

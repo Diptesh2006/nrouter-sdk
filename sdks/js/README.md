@@ -118,16 +118,34 @@ const result = await client.nr.chat({
   promptTemplateId: "<prompt-template-id>",
   promptVariables: { customer: "Acme" },
   cache: false, // force provider egress; omit or true uses the gateway default
+  fallbacks: ["gpt-4o-mini"], // up to 4; replaces the org policy for this call
+  guardrails: ["pii-strict"], // up to 8; ADD-ONLY, never removes an assigned one
 });
 
 console.log(client.nr.text(result));
 console.log(result.meta.requestId, result.meta.cost, result.meta.model);
 ```
 
-Guardrails are **not** selected per request. They are assigned per key, team or
-organization in the nRouter dashboard and apply automatically to every call.
-The `guardrailIds` option is deprecated and throws a configuration error: the
-gateway runs no per-request override, so it never scoped anything.
+| nRouter option | Wire field | Notes |
+|---|---|---|
+| `promptTemplateId` | `nrouter_prompt_template_id` | Overrides the org default prompt template. |
+| `promptVariables` | `nrouter_prompt_variables` | Jinja2 variables; meaningful on their own when an org template is assigned. |
+| `cache` | `nrouter_cache` | Only `false` is sent — `true` is the gateway default. Streams are never cached. |
+| `fallbacks` | `nrouter_fallbacks` | Up to **4** model names tried in order. **Replaces** the org fallback policy for this one call; `model` stays the primary. |
+| `guardrails` | `nrouter_guardrails` | Up to **8** guardrail ids or names your org owns. **ADD-ONLY.** |
+
+`guardrails` is add-only by design: the listed guardrails run **in addition to**
+the ones assigned to your key, team or organization and to the platform
+moderation floor. A request can never remove, relax or replace one. A name your
+organization does not own is refused with `guardrail_not_found` rather than
+ignored — a silently dropped guardrail is a request you believe was inspected
+and was not. A fallback target your key cannot route is refused with
+`fallback_not_allowed`. Both refusals happen before any provider call, so
+nothing is reserved and nothing is spent; the SDK refuses an over-long list
+locally so you do not pay a round trip to learn the ceiling.
+
+An empty array means *no selection* and is omitted rather than sent, so
+`guardrails: state.selected` with an empty default keeps working.
 
 Other helpers:
 

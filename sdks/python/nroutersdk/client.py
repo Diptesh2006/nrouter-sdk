@@ -375,8 +375,17 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
     # error path sends none — see the note above — so this is a preference, not
     # the primary route, and it stays forward-compatible with a gateway that
     # starts sending codes on every path.
+    #
+    # The four pre-egress refusals added 2026-09-17 MUST be listed. An
+    # unrecognized code is deliberately NOT allowed to fall through to status
+    # classification below — it raises the base ``nRouterError`` instead — so an
+    # unmapped code here is a real misclassification, not merely a missing name.
     _BY_CODE = {
         "invalid_request": nRouterRequestError,
+        "input_too_large": nRouterRequestError,
+        "max_output_tokens_too_large": nRouterRequestError,
+        "fallback_not_allowed": nRouterRequestError,
+        "guardrail_not_found": nRouterRequestError,
         "guardrail_blocked": nRouterGuardrailBlockedError,
         "invalid_api_key": nRouterAuthenticationError,
         "insufficient_credits": nRouterCreditError,
@@ -883,7 +892,8 @@ class _nRouterChat:
         *,
         prompt_template_id: str | None = None,
         prompt_variables: dict[str, str] | None = None,
-        guardrail_ids: list[str] | None = None,
+        fallbacks: list[str] | None = None,
+        guardrails: list[str] | None = None,
         cache: bool | None = None,
         advanced_sampling: bool = False,
         temperature: float | None = None,
@@ -899,7 +909,12 @@ class _nRouterChat:
             model: Model name.
             prompt_template_id: Override org default prompt template.
             prompt_variables: Jinja2 variables for the template.
-            guardrail_ids: Not supported per request; non-empty values raise.
+            fallbacks: Up to 4 model names tried in order when the primary
+                cannot be served. REPLACES the org fallback policy for this
+                call; ``model`` stays the primary.
+            guardrails: Up to 8 guardrail ids or names owned by this org.
+                ADD-ONLY — they run in addition to the guardrails already
+                assigned, and a request can never remove or relax one.
             cache: Set false to force provider egress.
             advanced_sampling: When true, send validated temperature/top_p.
             stream: Stream the response.
@@ -916,7 +931,8 @@ class _nRouterChat:
             build_extra_body(
                 prompt_template_id=prompt_template_id,
                 prompt_variables=prompt_variables,
-                guardrail_ids=guardrail_ids,
+                fallbacks=fallbacks,
+                guardrails=guardrails,
                 cache=cache,
             )
         )

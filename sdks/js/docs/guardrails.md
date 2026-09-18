@@ -1,33 +1,50 @@
 # Guardrails
 
 Guardrails are configured in the nRouter dashboard and apply automatically to
-every call made with your key. **There is no per-request guardrail option**, and
-you do not need one.
+every call made with your key. You never have to ask for them.
 
 ```ts
-// This is the whole API surface. Guardrails already apply.
+// Guardrails already apply. Nothing to opt into.
 await client.nr.chat({ model, prompt: '…' });
 ```
 
 If a guardrail blocks the call you get an error, not a quiet edit — see
 [errors.md](./errors.md) for how to catch exactly that condition.
 
-## `guardrailIds` is refused, on purpose
+## `guardrails` adds; it can never remove
 
-Earlier versions of this SDK accepted a `guardrailIds` option. Nothing on the
-serving path ever read it: the gateway runs no per-request guardrail override, so
-the field was forwarded to the upstream provider like any other unknown argument
-and the provider rejected the call. The option was a fake surface — it looked
-like a safety control and scoped nothing.
+A request may name **up to 8** guardrail ids or names your organization owns,
+and they run **in addition to** everything already assigned to your key, team or
+organization, and in addition to the platform moderation floor.
 
-Passing a non-empty `guardrailIds` now **throws a configuration error** rather
-than being quietly dropped. Quietly dropping it would be the worse failure: you
-would ask for a safety control and get a normal-looking answer without it.
+```ts
+await client.nr.chat({
+  model,
+  prompt: '…',
+  guardrails: ['pii-strict'], // runs ON TOP of what already applies
+});
+```
 
-An empty array is accepted and does nothing, because an empty selection asks for
-nothing that could go unserved.
+Add-only is the point. There is no per-request way to turn a guardrail off,
+relax one, or replace the set: if that existed, your organization's safety
+controls would be caller-optional, and the caller is the party you are guarding
+against. A name your organization does not own is refused with
+`guardrail_not_found` rather than ignored — a silently dropped guardrail is a
+request you believe was inspected and was not.
 
-Remove the option. Your organization's guardrails were already running.
+An empty array is *no selection* and is omitted rather than sent, so
+`guardrails: state.selected` with an empty default keeps working. More than
+eight is refused by this SDK before the request leaves your process, so you do
+not pay a round trip to learn the ceiling.
+
+### The option this replaces
+
+An earlier `guardrailIds` option was a **fake surface**: nothing on the serving
+path read it, so the field went to the upstream provider like any other unknown
+argument and the provider rejected the call. It looked like a safety control and
+scoped nothing, and it was removed rather than left to look live. `guardrails`
+is not that field renamed — the gateway reads it, and add-only is what keeps a
+request field out of the safety decision.
 
 ## How the gateway decides which guardrails run
 

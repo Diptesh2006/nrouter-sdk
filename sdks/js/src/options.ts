@@ -12,8 +12,10 @@
 // and forwards the rest to the provider, so a field this SDK invents is not an
 // error a caller ever sees: it is a dead option that looks live.
 //
-// `nrouter_guardrail_ids` WAS exactly that dead option, and it is now refused
-// rather than sent. See the refusal in `buildExtraBody` for the measurement.
+// `nrouter_guardrail_ids` WAS exactly that dead option, and it was removed
+// rather than sent. Its replacements `nrouter_fallbacks` and
+// `nrouter_guardrails` are the opposite case — fields the gateway really does
+// read — and the note in `buildExtraBody` carries both measurements.
 
 import { configurationError } from './errors';
 import { dataUrlToPart } from './multimodal';
@@ -26,8 +28,45 @@ import type {
 } from './types';
 
 /**
- * Map the nRouter-specific options onto the three `extra_body_fields` the
- * gateway reads. Anything absent is OMITTED rather than sent as a null or an
+ * Published ceilings, from `extra_body_fields` in spec/nrouter-sdk-spec.json.
+ * Not folklore: an SDK that invents its own limit either refuses a request the
+ * gateway would have served, or learns the real one from a billed 400.
+ */
+const MAX_FALLBACKS = 4;
+const MAX_GUARDRAILS = 8;
+
+/**
+ * Normalize one override list, or refuse it.
+ *
+ * An empty entry is REFUSED rather than trimmed away. Dropping one leaves the
+ * caller with a SHORTER list than they wrote and nothing saying so: for
+ * guardrails that is a safety control the request was never inspected by, and
+ * for fallbacks it is a chain shorter than the one they reasoned about.
+ */
+function overrideNames(value: readonly string[], option: string, ceiling: number): string[] {
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.trim() === '') {
+      throw configurationError(
+        `${option} contains an empty entry. Every entry must be a non-empty name; ` +
+          'an entry silently dropped here is a shorter list than you wrote, with ' +
+          'nothing saying so.',
+      );
+    }
+    out.push(entry.trim());
+  }
+  if (out.length > ceiling) {
+    throw configurationError(
+      `${option} carries ${out.length} entries; the gateway accepts at most ${ceiling}. ` +
+        'Sent as-is the whole request is refused with a 400 before any provider call.',
+    );
+  }
+  return out;
+}
+
+/**
+ * Map the nRouter-specific options onto the `extra_body_fields` the gateway
+ * reads. Anything absent is OMITTED rather than sent as a null or an
  * empty value — omission and emptiness mean different things on this wire.
  *
  * TENANCY IS NEVER IN HERE. No `organization_id`, `team_id`, `org_id` or
@@ -63,50 +102,40 @@ export function buildExtraBody(opts: NRouterFeatureOptions): NRouterExtraBody {
     extra.nrouter_prompt_variables = opts.promptVariables;
   }
 
-  // REFUSED, and this used to send `nrouter_guardrail_ids`. It was a FAKE
-  // SURFACE — an option our own docs advertised that nothing on the serving
-  // path has ever read.
+  // The per-request overrides the gateway added on 2026-09-17.
   //
-  // MEASURED 2026-08-28 against nrouter-rust-gateway:
-  //   * `grep -rn nrouter_guardrail_ids` over the WHOLE repo returns ZERO
-  //     hits, against 608 `guardrail` references. Guardrail selection there is
-  //     resolved per org/key/team from config, with no per-request override.
-  //   * the gateway's own OpenAPI advertises only the other three extra_body
-  //     fields (`src/http/openapi.rs`, the `nrouter_cache` /
-  //     `nrouter_prompt_template_id` / `nrouter_prompt_variables` triple).
-  //   * every provider transformation explicitly strips what it knows
-  //     (`object.remove("nrouter_cache")` in all six), and NONE strips this
-  //     one — so the field was serialized straight through to OpenAI or
-  //     Anthropic, which rejected the call as an unrecognized argument. The
-  //     caller paid a round trip to learn nothing that named the cause.
+  // Their predecessor `guardrailIds` was REFUSED here for two releases, and
+  // that refusal was correct for as long as it stood. MEASURED 2026-08-28
+  // against nrouter-rust-gateway: `grep -rn nrouter_guardrail_ids` over the
+  // WHOLE repo returned ZERO hits against 608 `guardrail` references; the
+  // gateway's OpenAPI advertised only the three older extra_body fields; and
+  // every provider transformation strips what it knows
+  // (`object.remove("nrouter_cache")` in all six) while NONE stripped that one,
+  // so it was serialized straight through to OpenAI or Anthropic, which
+  // rejected the call as an unrecognized argument.
   //
-  // THROWING rather than dropping, deliberately, and this is the whole point.
-  // nrouter-app already faced the same choice for the playground and refuses
-  // with 400 GATEWAY_FEATURE_UNSUPPORTED, because "the user picked a safety
-  // control and would get a normal-looking answer without it" is a fake
-  // success and a security regression. Quietly deleting the option here would
-  // ship precisely that: this is a PUBLISHED package, and TypeScript's
-  // excess-property check only fires on a fresh object literal, so a plain-JS
-  // caller — or a TS caller spreading a widened options object — would see no
-  // error at all. This SDK must not be the laxer surface than our own BFF.
+  // What changed is the gateway, not the judgement. It now READS both fields,
+  // so the same reasoning that produced the refusal now forbids it: a caller
+  // who cannot reach a shipped safety control from npm, while our own hosted
+  // surfaces can, has the fake-success problem from the other side.
   //
-  // CONFIGURATION kind, which is permanent and never retried: a caller's
-  // generic `if (isRetryable(e)) retry` loop must not spin on a condition no
-  // retry improves.
+  // The CEILINGS are enforced here, before egress, for the reason the old
+  // refusal was loud: the gateway's 400 names the wire field
+  // (`fallback_not_allowed`), costs a round trip, and does not name the option
+  // the caller set. CONFIGURATION kind, which is permanent and never retried,
+  // so a caller's `if (isRetryable(e)) retry` loop cannot spin on it.
   //
-  // Scoped to a NON-EMPTY list on purpose. `[]` expresses no selection, so
-  // nothing the caller asked for goes unserved and the org's guardrails apply
-  // exactly as before; refusing it would break `guardrailIds: state.selected`
-  // with an empty default on a request that is, and stays, correct.
-  if (opts.guardrailIds && opts.guardrailIds.length > 0) {
-    throw configurationError(
-      'guardrailIds is not supported: the gateway runs no per-request ' +
-        'guardrail override, so this option was never applied to a request. ' +
-        'Guardrails are assigned per key, team or organization in the nRouter ' +
-        'dashboard and already apply automatically to every call — remove ' +
-        '`guardrailIds` to use them. Sent as-is it reached the provider as an ' +
-        'unrecognized argument and the request failed there.',
-    );
+  // An EMPTY array is omitted rather than sent, and that is scoped
+  // deliberately: `[]` expresses no selection, so nothing the caller asked for
+  // goes unserved — the org's own fallback policy and guardrails apply exactly
+  // as before — and refusing it would break `guardrails: state.selected` with
+  // an empty default on a request that is, and stays, correct.
+  if (opts.fallbacks && opts.fallbacks.length > 0) {
+    extra.nrouter_fallbacks = overrideNames(opts.fallbacks, 'fallbacks', MAX_FALLBACKS);
+  }
+
+  if (opts.guardrails && opts.guardrails.length > 0) {
+    extra.nrouter_guardrails = overrideNames(opts.guardrails, 'guardrails', MAX_GUARDRAILS);
   }
 
   // `nrouter_cache` is sent ONLY to turn caching off. `true` is the gateway

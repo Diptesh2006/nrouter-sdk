@@ -225,6 +225,111 @@ class SpecContractTests(unittest.TestCase):
         )
         self.assertIn("x-nr-response-cache-age", spec["response_headers"])
 
+    # ------------------------------------------------------------------
+    # The refusal codes now on the wire.
+    #
+    # A KEY-SET pin, and that is the whole point of writing it separately.
+    # `test_spec_matches_gateway_contract` already walks `spec["errors"]` — but
+    # it only reads each entry's `class` and asserts the package exports it, so
+    # it is BLIND to a key that is never there: delete an entry and the set of
+    # classes is unchanged, the assertion still passes, and the SDK stops
+    # naming a code the gateway sends. `codes = list(spec["errors"])` in
+    # conformance/check_conformance.py has the same blindness for the same
+    # reason. Nothing asserted WHICH codes must exist until this test.
+    #
+    # The four below became customer-visible with the per-request routing and
+    # guardrail overrides (gateway 74b6970). They are all 400s in the request
+    # class: the caller sent something the gateway can name and refuse before
+    # any provider egress, so nothing was reserved and nothing was spent, and
+    # a retry of the identical body is refused identically.
+    # ------------------------------------------------------------------
+    WIRE_REFUSAL_CODES = {
+        "input_too_large",
+        "max_output_tokens_too_large",
+        "fallback_not_allowed",
+        "guardrail_not_found",
+    }
+
+    def test_spec_errors_name_every_refusal_code_on_the_wire(self) -> None:
+        spec = json.loads((SDK_ROOT / "spec" / "nrouter-sdk-spec.json").read_text())
+        missing = sorted(self.WIRE_REFUSAL_CODES - set(spec["errors"]))
+        self.assertEqual(
+            missing,
+            [],
+            "the gateway sends these `error.code` values and the spec does not "
+            "name them, so no SDK can map them and every one arrives as an "
+            "unclassified refusal",
+        )
+        for code in sorted(self.WIRE_REFUSAL_CODES):
+            entry = spec["errors"][code]
+            # Same shape as every other entry — a new key here would be a
+            # second schema for one section.
+            self.assertEqual(
+                sorted(entry),
+                ["class", "description", "http"],
+                f"{code} does not use the shape the other errors entries use",
+            )
+            self.assertEqual(entry["http"], 400, f"{code} is a pre-egress refusal")
+            self.assertEqual(entry["class"], "nRouterRequestError")
+            self.assertTrue(entry["description"].strip(), f"{code} has no description")
+
+    def test_spec_extra_body_carries_the_per_request_routing_and_guardrail_overrides(
+        self,
+    ) -> None:
+        """`nrouter_fallbacks` and `nrouter_guardrails` are READ by the gateway.
+
+        That is what puts them here rather than nowhere: the field set is CLOSED
+        (`extra_body_fields` is the whole of what the gateway takes off a body),
+        and anything absent from it is forwarded to the provider verbatim and
+        rejected there. A per-request override the SDKs cannot express is a
+        feature only our own surfaces can reach.
+        """
+        spec = json.loads((SDK_ROOT / "spec" / "nrouter-sdk-spec.json").read_text())
+        fields = spec["extra_body_fields"]
+
+        for name, ceiling in (("nrouter_fallbacks", 4), ("nrouter_guardrails", 8)):
+            self.assertIn(name, fields, f"{name} is absent from extra_body_fields")
+            entry = fields[name]
+            self.assertEqual(entry["type"], "array", f"{name} is a list of names")
+            # The ceiling is PUBLISHED, not folklore. Without it every SDK
+            # either invents its own limit or sends an over-long list and
+            # learns the real one from a 400.
+            self.assertEqual(entry["max"], ceiling, f"{name} publishes no ceiling")
+            self.assertTrue(entry["description"].strip())
+
+        # Each override names the code its own violation raises, so a caller
+        # reading the field learns the refusal without a round trip.
+        self.assertIn("fallback_not_allowed", fields["nrouter_fallbacks"]["description"])
+        self.assertIn("guardrail_not_found", fields["nrouter_guardrails"]["description"])
+        # ADD-ONLY is a SAFETY property, not an ergonomic one: a per-request
+        # list that could REMOVE an assigned guardrail would make the org's
+        # safety controls caller-optional.
+        self.assertRegex(
+            fields["nrouter_guardrails"]["description"],
+            r"(?i)add[- ]only",
+            "the guardrail override must state that it cannot remove an "
+            "assigned guardrail",
+        )
+
+    def test_spend_row_metadata_publishes_how_the_request_was_routed(self) -> None:
+        spec = json.loads((SDK_ROOT / "spec" / "nrouter-sdk-spec.json").read_text())
+        section = spec["spend_row_metadata_fields"]
+        self.assertIn(
+            "nrouter_routing",
+            section,
+            "the spend row now carries the routing outcome and the spec does "
+            "not publish it, so a customer reading their own log row sees a "
+            "key the contract calls gateway-internal",
+        )
+        entry = section["nrouter_routing"]
+        self.assertEqual(entry["type"], "object")
+        for key in ("attempts", "served_rank", "fallback_used", "source"):
+            self.assertIn(
+                key,
+                entry["description"],
+                f"the routing object's `{key}` member is undocumented",
+            )
+
 
 class ClientContractTests(unittest.TestCase):
     def test_every_advertised_python_sdk_method_is_callable(self) -> None:

@@ -327,9 +327,16 @@ export class nRouterConfigurationError extends nRouterError {
 }
 
 /**
- * The nine spec codes to their classes, verbatim from
- * spec/nrouter-sdk-spec.json. Exported as data so a test can assert the table
- * against the spec instead of re-typing it.
+ * Every spec code to its class, verbatim from spec/nrouter-sdk-spec.json.
+ * Exported as data so a test can assert the table against the spec instead of
+ * re-typing it.
+ *
+ * The last four are PRE-EGRESS refusals (2026-09-17): the gateway can name
+ * what the caller sent and refuse it before any provider call, so nothing was
+ * reserved and nothing was spent, and a retry of the identical body is refused
+ * identically. They classify as request errors, which is also where the
+ * codeless 400 dispatch would have put them — mapping them by name is what
+ * gives a caller `err.code` to branch on.
  */
 export const ERROR_CLASS_BY_CODE: Readonly<Record<string, typeof nRouterError>> = Object.freeze({
   invalid_request: nRouterRequestError,
@@ -343,6 +350,10 @@ export const ERROR_CLASS_BY_CODE: Readonly<Record<string, typeof nRouterError>> 
   service_unavailable: nRouterServiceError,
   plan_allowance_exhausted: nRouterCreditError,
   plan_required: nRouterCreditError,
+  input_too_large: nRouterRequestError,
+  max_output_tokens_too_large: nRouterRequestError,
+  fallback_not_allowed: nRouterRequestError,
+  guardrail_not_found: nRouterRequestError,
 });
 
 /** The HTTP status the spec pairs with each code. */
@@ -358,6 +369,10 @@ export const ERROR_STATUS_BY_CODE: Readonly<Record<string, number>> = Object.fre
   service_unavailable: 503,
   plan_allowance_exhausted: 402,
   plan_required: 402,
+  input_too_large: 400,
+  max_output_tokens_too_large: 400,
+  fallback_not_allowed: 400,
+  guardrail_not_found: 400,
 });
 
 /**

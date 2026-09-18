@@ -48,11 +48,66 @@ def test_empty_prompt_id_is_refused():
         prompt_template("  ")
 
 
-def test_guardrail_ids_are_refused_and_cache_true_is_omitted():
-    with pytest.raises(nRouterRequestError, match="guardrail_ids"):
-        build_extra_body(guardrail_ids=["gr_1"])
+def test_cache_true_is_omitted_and_false_is_sent():
     assert build_extra_body(cache=True) == {}
     assert build_extra_body(cache=False) == {"nrouter_cache": False}
+
+
+def test_guardrails_map_onto_the_gateway_field_instead_of_being_refused():
+    """`guardrail_ids` USED to raise, and that refusal was correct when it was
+    written: no gateway read a per-request guardrail field, so sending one
+    reached the provider as an unrecognized argument.
+
+    The gateway now reads `nrouter_guardrails` (74b6970). Keeping the refusal
+    would make the SDK the reason a shipped feature is unreachable — the exact
+    inversion of what the refusal existed to prevent.
+    """
+    assert build_extra_body(guardrails=["pii-strict", "gr_1"]) == {
+        "nrouter_guardrails": ["pii-strict", "gr_1"]
+    }
+    # Empty expresses no selection, so it is OMITTED rather than sent as `[]`.
+    # An empty list on the wire is a caller asking for something; omission is
+    # the caller asking for nothing, and only the second is true here.
+    assert build_extra_body(guardrails=[]) == {}
+    assert build_extra_body() == {}
+
+
+def test_more_than_eight_guardrails_is_refused_locally():
+    # The spec publishes the ceiling; refusing here costs nothing and refusing
+    # at the gateway costs a round trip that names no option.
+    with pytest.raises(nRouterRequestError, match="guardrails"):
+        build_extra_body(guardrails=[f"g{n}" for n in range(9)])
+
+
+def test_fallbacks_map_onto_the_gateway_field():
+    assert build_extra_body(fallbacks=["gpt-4o-mini", "claude-haiku"]) == {
+        "nrouter_fallbacks": ["gpt-4o-mini", "claude-haiku"]
+    }
+    assert build_extra_body(fallbacks=[]) == {}
+
+
+def test_more_than_four_fallbacks_is_refused_locally():
+    with pytest.raises(nRouterRequestError, match="fallbacks"):
+        build_extra_body(fallbacks=["a", "b", "c", "d", "e"])
+
+
+def test_every_spec_extra_body_field_is_reachable_from_the_builder():
+    """The builder's field constants ARE the spec's field set.
+
+    Derived rather than hand-listed: a spec that grows a field the builder
+    cannot emit is a caller who has to hand-roll `extra_body` to reach a
+    feature the gateway already serves.
+    """
+    import json
+    from pathlib import Path
+
+    from nroutersdk import _options
+
+    spec_path = (
+        Path(__file__).resolve().parents[3] / "spec" / "nrouter-sdk-spec.json"
+    )
+    spec_fields = set(json.loads(spec_path.read_text())["extra_body_fields"])
+    assert set(_options.EXTRA_BODY_FIELDS) == spec_fields
 
 
 def test_extra_body_tenancy_fields_are_refused():

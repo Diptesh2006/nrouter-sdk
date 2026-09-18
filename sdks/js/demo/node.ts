@@ -124,17 +124,19 @@ async function main() {
     console.log("\nprompt template skipped: set NROUTER_PROMPT_TEMPLATE_ID to test it");
   }
 
-  // Guardrails run server-side from dashboard policy. There is no per-request
-  // guardrail override; this local refusal proves callers cannot pretend there is.
+  // A request MAY add guardrails — up to 8 the org already owns, on top of the
+  // ones the dashboard already assigns; it can never remove or relax one. Over
+  // the ceiling is refused here, before the network, rather than bought as a
+  // 400 that names the wire field instead of the option you set.
   try {
     await client.nr.chat({
       model: MODEL,
       prompt: "This should fail before the network.",
       maxTokens: 16,
-      guardrailIds: ["gr_test"],
+      guardrails: ["g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8", "g9"],
     });
   } catch (error) {
-    console.log("\nguardrailIds local refusal");
+    console.log("\nguardrails ceiling refused locally");
     console.log(error instanceof Error ? error.message : error);
   }
 

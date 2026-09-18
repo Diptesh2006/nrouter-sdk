@@ -251,6 +251,26 @@
       "http": 402,
       "class": "nRouterCreditError",
       "description": "Only plan subscribers can use nrouter/auto, or the plan's usage allowance is paused pending payment. Named models are paid from credits."
+    },
+    "input_too_large": {
+      "http": 400,
+      "class": "nRouterRequestError",
+      "description": "The request's input exceeds the served model's context window. Refused before any provider egress, so nothing was reserved and nothing was spent. Permanent for this body: shorten the input or pick a model with a larger window."
+    },
+    "max_output_tokens_too_large": {
+      "http": 400,
+      "class": "nRouterRequestError",
+      "description": "The requested output ceiling (max_tokens / max_output_tokens) exceeds what the served model allows. Refused before any provider egress, so nothing was reserved and nothing was spent. Lower the ceiling; it is not clamped for you, because silently changing it changes what the request costs."
+    },
+    "fallback_not_allowed": {
+      "http": 400,
+      "class": "nRouterRequestError",
+      "description": "A model named in the request's nrouter_fallbacks list cannot be used as a fallback target by this virtual key: the key cannot route it, or it is a Smart Router alias, nrouter/auto, an allowance model or a capacity-pool model, none of which are valid targets. Refused before any provider egress; nothing was reserved and nothing was spent."
+    },
+    "guardrail_not_found": {
+      "http": 400,
+      "class": "nRouterRequestError",
+      "description": "A guardrail id or name in the request's nrouter_guardrails list is not owned by this organization. Refused rather than ignored: a silently dropped guardrail is a request the caller believes was inspected and was not. Nothing was reserved and nothing was spent."
     }
   },
   "supported_endpoints": [
@@ -409,6 +429,18 @@
       "type": "boolean",
       "default": true,
       "description": "Use nRouter's tenant-isolated response cache for buffered text requests. Set false to force provider egress; streams are never cached."
+    },
+    "nrouter_fallbacks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "max": 4,
+      "description": "Per-request fallback chain: up to 4 model names, tried in order when the primary cannot be served. `model` stays the primary and is never listed here. This REPLACES the organization's fallback policy for this one call and is not merged with it. A target this virtual key cannot route — and any Smart Router alias, nrouter/auto, allowance model or capacity-pool model, none of which are valid targets — is refused with 400 fallback_not_allowed before any provider egress. Text wires only (/v1/chat/completions, /v1/completions, /v1/messages, /v1/responses)."
+    },
+    "nrouter_guardrails": {
+      "type": "array",
+      "items": { "type": "string" },
+      "max": 8,
+      "description": "Per-request guardrail selection: up to 8 guardrail ids or names owned by this organization. ADD-ONLY — the listed guardrails run IN ADDITION to the ones already assigned to the key, team or organization, and a request can never remove, relax or replace an assigned guardrail or the platform moderation floor. An id or name the organization does not own is refused with 400 guardrail_not_found rather than ignored, because a silently dropped guardrail is a request the caller believes was inspected and was not. Text wires only (/v1/chat/completions, /v1/completions, /v1/messages, /v1/responses)."
     }
   },
   "spend_row_metadata_fields": {
@@ -440,6 +472,10 @@
     "nrouter_model": {
       "type": "string",
       "description": "The model actually served, after alias resolution and any fallback."
+    },
+    "nrouter_routing": {
+      "type": "object",
+      "description": "How the request was routed, as { attempts, served_rank, fallback_used, source }. `attempts` is the number of provider calls this request made (1 when the primary answered first). `served_rank` is the 0-based position in the chain that answered, so 0 is the primary. `fallback_used` is true when the model served was not the primary. `source` names which chain was in force: the organization's fallback policy, or a per-request nrouter_fallbacks list. Pairs with nrouter_model, which names the model that answered."
     },
     "nrouter_request_id": {
       "type": "string",

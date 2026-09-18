@@ -89,11 +89,18 @@ async function main() {
   checks.push({ name: 'models.list', ok: Array.isArray(models.data), count: models.data.length });
   assert.ok(Array.isArray(models.data), 'models list must return a data array');
 
+  // Five fallbacks is one over the published ceiling of four, so the whole
+  // request is refused here rather than at the gateway.
   await assert.rejects(
-    () => client.nr.chat({ model: DEFAULT_MODEL, prompt: 'do not send', guardrailIds: ['demo'] }),
+    () =>
+      client.nr.chat({
+        model: DEFAULT_MODEL,
+        prompt: 'do not send',
+        fallbacks: ['a', 'b', 'c', 'd', 'e'],
+      }),
     nRouterConfigurationError,
   );
-  checks.push({ name: 'guardrailIds local refusal', ok: true });
+  checks.push({ name: 'fallbacks ceiling refused locally', ok: true });
 
   assert.throws(
     () => new nRouter({ apiKey: 'sk-openai-not-an-nrouter-key' }),

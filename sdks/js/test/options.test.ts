@@ -6,21 +6,26 @@
 //     extra_body_fields.nrouter_cache.default), so sending it changes nothing
 //     and just grows every body. `cache: false` MUST be sent: it is the only
 //     way to force provider egress.
-//   * `guardrailIds` REFUSED, loudly. It was a fake surface: MEASURED
-//     2026-08-28, `nrouter_guardrail_ids` appears NOWHERE in the whole
-//     nrouter-rust-gateway repo (0 hits against 608 guardrail references),
-//     and the gateway's own OpenAPI advertises only the other three
-//     extra_body fields. Guardrail selection there is org/config driven,
-//     with no per-request override. Sending it anyway reached the PROVIDER
-//     verbatim — every provider transformation explicitly
-//     `object.remove("nrouter_cache")` and none removes this one — so the
-//     caller got an opaque upstream rejection. Deleting the option silently
-//     would be worse still: a plain-JS caller, or a TS caller spreading a
-//     widened options object, would see NO error and a normal-looking answer
-//     with the safety control they selected never applied. That is the
-//     "fake success" nrouter-app already refuses by name in
-//     `api/nrouter-proxy/chat/route.ts` (400 GATEWAY_FEATURE_UNSUPPORTED);
-//     this SDK must not be the laxer surface.
+//   * `guardrails` and `fallbacks` MAPPED, with their ceilings enforced
+//     locally. The predecessor option `guardrailIds` was REFUSED here for two
+//     releases, and that was right at the time: MEASURED 2026-08-28,
+//     `nrouter_guardrail_ids` appeared NOWHERE in the gateway (0 hits against
+//     608 guardrail references), so the field reached the PROVIDER verbatim —
+//     every provider transformation explicitly `object.remove("nrouter_cache")`
+//     and none removed that one — and the caller paid a round trip for an
+//     opaque upstream rejection.
+//
+//     The gateway added real per-request overrides on 2026-09-17 (74b6970):
+//     `nrouter_fallbacks` (<= 4 model names, replacing the org fallback policy
+//     for that one call) and `nrouter_guardrails` (<= 8 org-owned ids or names,
+//     ADD-ONLY — it can never remove a guardrail the org assigned). A refusal
+//     kept past that point inverts its own reason: instead of stopping a fake
+//     success, it makes a shipped safety control unreachable from npm while our
+//     own surfaces can reach it.
+//
+//     The CEILINGS are refused locally rather than at the gateway for the same
+//     reason the old refusal was loud: a 400 naming `fallback_not_allowed`
+//     costs a round trip and does not name the option the caller set.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -57,63 +62,88 @@ test('cache undefined is not confused with cache false', () => {
   assert.equal('nrouter_cache' in buildExtraBody({ model: 'gpt-4o', cache: undefined }), false);
 });
 
-test('an EMPTY guardrailIds array is accepted and omitted, NOT refused', () => {
-  // The refusal must fire exactly when the caller's intent goes unserved. `[]`
-  // expresses no selection at all — the org's guardrails apply either way — so
-  // refusing it would break a caller wiring `guardrailIds: state.selected` with
-  // an empty default, on a request that works correctly today and will keep
-  // working correctly. Scope the throw to a REAL selection.
-  const extra = buildExtraBody({ model: 'gpt-4o', guardrailIds: [] });
-  assert.deepEqual(extra, {});
+test('an EMPTY guardrails array is OMITTED, not sent as []', () => {
+  // `[]` expresses no selection at all, and omission is what says that on this
+  // wire. Sending an empty array is a caller asking for something; it is not
+  // what `guardrails: state.selected` with an empty default means.
+  assert.deepEqual(buildExtraBody({ model: 'gpt-4o', guardrails: [] }), {});
 });
 
-test('a non-empty guardrailIds array is REFUSED, naming what to do instead', () => {
-  // Locally, before egress: today this reaches the provider as an unrecognized
-  // argument and costs a round trip to learn nothing useful.
+test('guardrails MAP onto nrouter_guardrails — the gateway now reads it', () => {
+  // This option used to THROW, and that refusal was right when it was written:
+  // no gateway read a per-request guardrail field, so the SDK sending one
+  // bought the caller an opaque provider rejection. The gateway added
+  // `nrouter_guardrails` (74b6970), and a refusal kept past that point is the
+  // SDK being the reason a shipped safety control is unreachable.
+  assert.deepEqual(buildExtraBody({ model: 'gpt-4o', guardrails: ['pii-strict'] }), {
+    nrouter_guardrails: ['pii-strict'],
+  });
+});
+
+test('more than eight guardrails is refused locally, naming the option', () => {
   assert.throws(
-    () => buildExtraBody({ model: 'gpt-4o', guardrailIds: ['gr-1'] }),
+    () => buildExtraBody({ model: 'gpt-4o', guardrails: Array.from({ length: 9 }, (_, i) => `g${i}`) }),
     (err: unknown) => {
       const e = err as { kind?: string; message?: string };
-      // CONFIGURATION, and that is load-bearing: it is permanent and never
-      // retried, so a caller's `if (isRetryable(e)) retry` loop cannot spin on
-      // a condition no retry improves.
+      // CONFIGURATION: permanent, never retried, so a caller's
+      // `if (isRetryable(e)) retry` loop cannot spin on it.
       assert.equal(e.kind, 'configuration');
-      const m = String(e.message);
-      assert.match(m, /guardrailIds/, 'must name the option the caller set');
-      assert.match(m, /dashboard/i, 'must name where guardrails ARE configured');
-      assert.match(
-        m,
-        /automatically|already appl/i,
-        'must say the org guardrails still run — otherwise it reads as "no guardrails"',
-      );
+      assert.match(String(e.message), /guardrails/);
+      assert.match(String(e.message), /8/);
       return true;
     },
   );
 });
 
-test('the refusal reaches callers through buildChatBody, not just buildExtraBody', () => {
+test('fallbacks MAP onto nrouter_fallbacks, and an empty list is omitted', () => {
+  assert.deepEqual(buildExtraBody({ model: 'gpt-4o', fallbacks: ['gpt-4o-mini'] }), {
+    nrouter_fallbacks: ['gpt-4o-mini'],
+  });
+  assert.deepEqual(buildExtraBody({ model: 'gpt-4o', fallbacks: [] }), {});
+});
+
+test('more than four fallbacks is refused locally, naming the option', () => {
+  assert.throws(
+    () => buildExtraBody({ model: 'gpt-4o', fallbacks: ['a', 'b', 'c', 'd', 'e'] }),
+    (err: unknown) => {
+      const e = err as { kind?: string; message?: string };
+      assert.equal(e.kind, 'configuration');
+      assert.match(String(e.message), /fallbacks/);
+      assert.match(String(e.message), /4/);
+      return true;
+    },
+  );
+});
+
+test('the ceiling refusal reaches callers through buildChatBody, not just buildExtraBody', () => {
   // buildExtraBody is internal; every real caller arrives via buildChatBody.
   // A guard wired only into the helper nobody calls is not a guard.
   assert.throws(
-    () => buildChatBody({ model: 'm', prompt: 'hi', guardrailIds: ['gr-1'] }, {}),
+    () => buildChatBody({ model: 'm', prompt: 'hi', fallbacks: ['a', 'b', 'c', 'd', 'e'] }, {}),
     (err: unknown) => (err as { kind?: string }).kind === 'configuration',
   );
 });
 
-test('NO guardrail-shaped key can ever reach the wire', () => {
-  // Keyed on the SHAPE rather than the one spelling: the defect was a field
-  // this SDK invented that the gateway never read, and a second invented
-  // spelling would be the same defect with a green suite.
+test('NO invented nrouter_ key can reach the wire', () => {
+  // Keyed on the SHAPE rather than one spelling: the original defect was a
+  // field this SDK invented that the gateway never read, and a second invented
+  // spelling would be the same defect with a green suite. The spec's
+  // `extra_body_fields` is the closed set.
+  const specFields = new Set(Object.keys(JSON.parse(fs.readFileSync(SPEC_PATH, 'utf8')).extra_body_fields));
   const extra = buildExtraBody({
     model: 'gpt-4o',
     promptTemplateId: 'tpl-1',
     promptVariables: { a: 'b' },
-    guardrailIds: [],
+    guardrails: ['pii-strict'],
+    fallbacks: ['gpt-4o-mini'],
     cache: false,
   });
   for (const key of Object.keys(extra)) {
-    assert.equal(/guardrail/i.test(key), false, `emitted a guardrail field: ${key}`);
+    assert.equal(specFields.has(key), true, `emitted a field the gateway does not read: ${key}`);
   }
+  // And the positive control: every spec field IS reachable from the builder,
+  // so this cannot pass by emitting nothing.
+  assert.deepEqual(new Set(Object.keys(extra)), specFields);
 });
 
 test('the prompt template and its variables map onto the spec field names', () => {
@@ -165,6 +195,8 @@ test('the emittable fields and the SPEC agree in BOTH directions', () => {
       promptTemplateId: 'tpl-1',
       promptVariables: { a: 'b' },
       cache: false,
+      fallbacks: ['gpt-4o-mini'],
+      guardrails: ['pii-strict'],
     }),
   ).sort();
   assert.deepEqual(

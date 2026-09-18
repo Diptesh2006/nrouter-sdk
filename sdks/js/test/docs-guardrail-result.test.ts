@@ -78,11 +78,15 @@ test('the sibling modality docs still carry the same token (the shape being mirr
   // replaces would have gone on passing after the status token was deleted
   // outright, as long as ordinary English survived anywhere in the file. That is
   // the false green: the assertion cannot distinguish the contract from prose.
-  const audio = fs.readFileSync(path.join(__dirname, '..', 'docs', 'audio.md'), 'utf8');
-  assert.match(
-    audio,
-    /`none \| monitor \| redacted \| pass \| partial \| blocked`/,
-    'docs/audio.md no longer carries the status token verbatim — the ' +
-      'mirror in guardrails.md is then copying a pattern its sibling dropped',
-  );
+  // All three modality docs carry the token, and all seven values: a list
+  // that drops `unavailable` tells a reader a 503 posture does not exist.
+  for (const doc of ['audio.md', 'images.md', 'video.md']) {
+    const text = fs.readFileSync(path.join(__dirname, '..', 'docs', doc), 'utf8');
+    assert.match(
+      text,
+      /`none \| monitor \| redacted \| pass \| partial \| blocked \| unavailable`/,
+      `docs/${doc} no longer carries the seven-value status token verbatim — the ` +
+        'mirror in guardrails.md is then copying a pattern its sibling dropped',
+    );
+  }
 });

@@ -114,9 +114,13 @@ There are **seven** values, and they do not collapse into "blocked or fine":
 `partial` means *only* that something went uninspected. It never means "acted on"
 — a rewrite is `redacted`, and the two are not interchangeable.
 
-When more than one of these is true of a single request, the gateway reports the
-first that applies, in this order: `none`, `monitor`, `redacted`, `partial`,
-`pass`.
+The gateway decides the token in this order: `none`, `monitor`, `redacted`,
+`partial`, `pass`. This is a decision order, not a ranking of strength: each
+earlier state describes a chain in which the later ones cannot have happened.
+No chain (`none`) rewrote nothing; a chain with no enforcing rule (`monitor`)
+cannot have redacted or refused anything; only an enforcing chain reaches
+`redacted`, `partial` or `pass`, and a rewrite is reported ahead of a coverage
+gap. `blocked` and `unavailable` are refusals and never compete with these.
 
 **`none` and `monitor` are not protection.** That is the whole reason this
 section exists. Both return a normal, successful completion, so code written as

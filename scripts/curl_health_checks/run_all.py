@@ -32,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import sys
@@ -81,6 +82,48 @@ FEATURE_MODULES = [
 ]
 
 
+def _accepted_init_kwargs(factory: Any) -> set:
+    """The keyword arguments a module's constructor DECLARES.
+
+    Read from the signature, never from ``__code__.co_varnames``: that tuple
+    lists every local variable in the body too, so a constructor that merely
+    used a local called ``route`` would be handed ``route=`` and raise
+    ``TypeError`` before a single request was sent.
+    """
+    try:
+        return set(inspect.signature(factory.__init__).parameters) - {"self"}
+    except (TypeError, ValueError):
+        return set()
+
+
+def _kwargs_detection_self_test() -> int:
+    """The route/model hand-off must read a constructor's PARAMETERS, never its locals.
+
+    A class whose ``__init__`` merely uses a local variable called ``route`` must
+    not be handed ``route=`` — that call would raise ``TypeError`` and abort the
+    whole run before a single request. A class that declares the parameter must
+    receive it.
+    """
+
+    class Locals:
+        def __init__(self, base_url: str, api_key: str) -> None:
+            route = base_url  # a local, not a parameter
+            self.route = route
+
+    class Params:
+        def __init__(self, base_url: str, api_key: str, route: str = "", model: str = "") -> None:
+            self.route, self.model = route, model
+
+    if "route" in _accepted_init_kwargs(Locals):
+        print("[FAIL] kwargs detection reads locals as parameters", file=sys.stderr)
+        return 1
+    if {"route", "model"} - _accepted_init_kwargs(Params):
+        print("[FAIL] kwargs detection misses declared parameters", file=sys.stderr)
+        return 1
+    print("  kwargs detection: parameters only — OK")
+    return 0
+
+
 def run_all_self_tests() -> int:
     """Run offline self-tests for all consolidated check modules."""
     print("=== Running Consolidated Offline Self-Tests ===")
@@ -89,6 +132,9 @@ def run_all_self_tests() -> int:
     if common_code != 0:
         print("[FAIL] _curl_common self-test failed", file=sys.stderr)
         return common_code
+    kwargs_code = _kwargs_detection_self_test()
+    if kwargs_code != 0:
+        return kwargs_code
 
     print("\n1. Testing model_curl module...")
     model_code = model_curl.run_self_test()
@@ -133,7 +179,7 @@ def run_feature_suites(
     for feature, module, class_name in FEATURE_MODULES:
         factory = getattr(module, class_name)
         kwargs: Dict[str, Any] = {"base_url": base_url, "api_key": api_key}
-        accepted = factory.__init__.__code__.co_varnames
+        accepted = _accepted_init_kwargs(factory)
         if "route" in accepted:
             kwargs["route"] = route
         if "model" in accepted:

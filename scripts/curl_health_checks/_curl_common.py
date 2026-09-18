@@ -611,7 +611,10 @@ def suite_verdict(passed: int, failed: int, not_configured: int) -> Dict[str, bo
     return {
         "all_passed": failed == 0 and passed >= 1,
         "partial": not_configured > 0,
-        "proved_nothing": passed == 0,
+        # A FAILURE is a real result — the strongest one this harness produces.
+        # "proved nothing" is reserved for a suite with no real result at all;
+        # a failing suite must never be filed as benign non-evidence.
+        "proved_nothing": passed == 0 and failed == 0,
     }
 
 
@@ -1131,13 +1134,16 @@ def suite_verdict_contract_self_test() -> None:
     assert clean["partial"] is False, clean
     assert clean["proved_nothing"] is False, clean
 
-    # ANY failure fails the suite, whatever else is in it.
+    # ANY failure fails the suite, whatever else is in it — and a failure is a
+    # REAL result, so a failing suite is never "proved nothing" (a reader
+    # triaging by that flag would file a broken domain as benign non-evidence).
     for verdict in (
         suite_verdict(passed=0, failed=1, not_configured=0),
         suite_verdict(passed=9, failed=1, not_configured=0),
         suite_verdict(passed=9, failed=1, not_configured=3),
         suite_verdict(passed=0, failed=1, not_configured=6),
     ):
+        assert verdict["proved_nothing"] is False, verdict
         assert verdict["all_passed"] is False, verdict
 
     # The keys are the contract: every module and `run_all.py` read these three

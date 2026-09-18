@@ -3,14 +3,14 @@
 
 Executes direct curl HTTP requests against the nRouter production Gateway (https://api.nrouter.ai/v1)
 to continuously verify and showcase platform capabilities:
-  1. Models Catalog (GET /v1/models) - verifies catalog status, dynamic catalog count, and active providers.
+  1. Models Catalog (GET /v1/models and /v1/models/{id}) - verifies catalog status, detail lookup, dynamic catalog count, and active providers.
   2. Gateway Response Cache & Controls - verifies nrouter_cache: false bypass, streaming bypass, repeat latency.
   3. Smart Routing & Provider Aliases - tests nrouter/auto allowance policy and multi-wire alias resolution (OpenAI, Qwen).
   4. Guardrails - runs the guardrail matrix (moderation floor, evasion forms, PII redaction, credential and
      prompt-injection scanning, scan coverage, long prompts, streaming, cache) against the Messages route and
      checks the response contract: a block is HTTP 400 with x-nr-guardrails: blocked and no charge, a served
      request reports its charge, and PII is redacted and served.
-  5. Multi-Modality & Wire Features - tests Anthropic messages (/v1/messages), Embeddings (/v1/embeddings), and text completions (/v1/completions).
+  5. Multi-Modality & Wire Features - tests Anthropic messages (/v1/messages), Responses (/v1/responses), Embeddings (/v1/embeddings), and text completions (/v1/completions).
   6. Platform Security & Refusals - tests auth refusal (HTTP 401) and unknown model refusal (HTTP 404).
   7. Summarize & Showcase - generates customer-facing dashboard, status.json, and dispatches email alert to rama@nrouter.ai.
 
@@ -32,6 +32,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -199,6 +200,25 @@ def parse_request_cost(headers: Dict[str, str]) -> Optional[float]:
         return float(raw)
     except (TypeError, ValueError):
         return None
+
+
+def model_id_from_detail(body: str) -> Optional[str]:
+    """Read a model id from either supported detail response envelope."""
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    detail = payload.get("data", payload)
+    return detail.get("id") if isinstance(detail, dict) and isinstance(detail.get("id"), str) else None
+
+
+def first_model_for_endpoint(
+    model_ids: List[str], catalog_endpoints: Dict[str, set[str]], endpoint: str
+) -> Optional[str]:
+    """Choose the first discovered model that explicitly advertises an endpoint."""
+    return next((model_id for model_id in model_ids if endpoint in catalog_endpoints.get(model_id, set())), None)
 
 
 def summarize_costs(results: List[Dict[str, Any]]) -> Tuple[float, int]:
@@ -542,6 +562,7 @@ class CurlHealthRunner:
         self.api_key = api_key
         self.results: List[Dict[str, Any]] = []
         self.catalog_models: List[str] = []
+        self.catalog_endpoints: Dict[str, set[str]] = {}
         self.catalog_count: int = 0
         self.catalog_providers: List[str] = []
 
@@ -568,8 +589,17 @@ class CurlHealthRunner:
                 model_list = data.get("data", [])
                 models_count = len(model_list)
                 self.catalog_count = models_count
-                self.catalog_models = [m.get("id", "") for m in model_list if isinstance(m, dict)]
-                
+                self.catalog_models = [m.get("id", "") for m in model_list if isinstance(m, dict) and m.get("id")]
+                self.catalog_endpoints = {
+                    str(m["id"]): {
+                        str(endpoint)
+                        for endpoint in m.get("nrouter_endpoints", [])
+                        if isinstance(endpoint, str)
+                    }
+                    for m in model_list
+                    if isinstance(m, dict) and m.get("id")
+                }
+
                 # Derive unique provider prefixes
                 prov_set = set()
                 for m in self.catalog_models:
@@ -600,6 +630,47 @@ class CurlHealthRunner:
             "sample_models": sample_models,
             "cost_usd": 0.0,
             "error": error_msg,
+        }
+        self.results.append(res)
+        return res
+
+    def check_model_retrieval(self) -> Dict[str, Any]:
+        """Verify the supported GET /v1/models/{model_id} detail route without spend."""
+        model_id = self.catalog_models[0] if self.catalog_models else None
+        if not model_id:
+            res = {
+                "lane": "Models Catalog",
+                "name": "GET /v1/models/{model_id} (Catalog Detail)",
+                "method": "GET",
+                "endpoint": "/v1/models/{model_id}",
+                "status": "skipped",
+                "http_status": 0,
+                "latency_ms": 0.0,
+                "request_id": "N/A",
+                "cost_usd": 0.0,
+                "note": "catalog list did not provide a model id",
+                "error": None,
+            }
+            self.results.append(res)
+            return res
+
+        endpoint = f"{self.base_url}/models/{quote(model_id, safe='')}"
+        status, headers, body, latency = run_curl(self._auth_header() + [endpoint])
+        retrieved_id = model_id_from_detail(body) if status == 200 else None
+        passed = status == 200 and retrieved_id == model_id and bool(headers.get("x-nr-request-id"))
+        res = {
+            "lane": "Models Catalog",
+            "name": "GET /v1/models/{model_id} (Catalog Detail)",
+            "method": "GET",
+            "endpoint": "/v1/models/{model_id}",
+            "status": "passed" if passed else "failed",
+            "http_status": status,
+            "latency_ms": latency,
+            "request_id": headers.get("x-nr-request-id", "N/A"),
+            "model_requested": model_id,
+            "model_returned": retrieved_id,
+            "cost_usd": 0.0,
+            "error": None if passed else f"Expected detail for {model_id!r} with x-nr-request-id, got HTTP {status}: {sanitize(body)}",
         }
         self.results.append(res)
         return res
@@ -943,7 +1014,7 @@ class CurlHealthRunner:
     # Lane 5: Multi-Modality & Wire Features Lane
     # -------------------------------------------------------------------------
     def check_features(self) -> List[Dict[str, Any]]:
-        """Test Anthropic wire, Text Embeddings vector API, and legacy text completions."""
+        """Test Anthropic wire, Responses, embeddings, and legacy text completions."""
         checks = []
 
         # 5a: Anthropic wire format (/v1/messages)
@@ -975,7 +1046,60 @@ class CurlHealthRunner:
             "error": None if anthropic_passed else f"HTTP {status}: {sanitize(body)}",
         })
 
-        # 5b: Text Embeddings Vector API (/v1/embeddings)
+        # 5b: Responses API. Select only a model that discovery says serves this wire.
+        responses_model = first_model_for_endpoint(
+            self.catalog_models, self.catalog_endpoints, "/v1/responses"
+        )
+        if responses_model is None:
+            checks.append({
+                "lane": "Wire Features",
+                "name": "Responses API (/v1/responses)",
+                "method": "POST",
+                "endpoint": "/v1/responses",
+                "status": "skipped",
+                "http_status": 0,
+                "latency_ms": 0.0,
+                "request_id": "N/A",
+                "cost_usd": None,
+                "note": "no catalog model advertises /v1/responses",
+                "error": None,
+            })
+        else:
+            endpoint_responses = f"{self.base_url}/responses"
+            payload_responses = json.dumps({
+                "model": responses_model,
+                "input": "Reply OK",
+                "max_output_tokens": 2,
+            })
+            args_responses = self._auth_header() + [
+                "-H", "Content-Type: application/json",
+                "-d", payload_responses,
+                endpoint_responses,
+            ]
+            status, headers, body, latency = run_curl(args_responses)
+            response_document = None
+            if status == 200:
+                try:
+                    response_document = json.loads(body)
+                except Exception:
+                    pass
+            responses_passed = bool(response_document) and bool(headers.get("x-nr-request-id"))
+            checks.append({
+                "lane": "Wire Features",
+                "name": "Responses API (/v1/responses)",
+                "method": "POST",
+                "endpoint": "/v1/responses",
+                "status": "passed" if responses_passed else "failed",
+                "http_status": status,
+                "latency_ms": latency,
+                "request_id": headers.get("x-nr-request-id", "N/A"),
+                "model_requested": responses_model,
+                "model_served": headers.get("x-nr-model", "N/A"),
+                "cost_usd": parse_request_cost(headers),
+                "error": None if responses_passed else f"Expected a non-empty Responses document with x-nr-request-id, got HTTP {status}: {sanitize(body)}",
+            })
+
+        # 5c: Text Embeddings Vector API (/v1/embeddings)
         endpoint_embed = f"{self.base_url}/embeddings"
         payload_embed = json.dumps({
             "model": "text-embedding-3-small",
@@ -1009,7 +1133,7 @@ class CurlHealthRunner:
             "error": None if embed_passed else f"HTTP {status}: {sanitize(body)}",
         })
 
-        # 5c: Legacy Text Completions (/v1/completions)
+        # 5d: Legacy Text Completions (/v1/completions)
         endpoint_completions = f"{self.base_url}/completions"
         payload_completions = json.dumps({
             "model": "openai/gpt-4o-mini",
@@ -1244,6 +1368,7 @@ class CurlHealthRunner:
         """Execute all health check lanes sequentially via curl."""
         print(f"Executing comprehensive pure-curl health checks against {self.base_url}...")
         self.check_models_catalog()
+        self.check_model_retrieval()
         self.check_response_cache()
         self.check_smart_routing()
         self.check_guardrails()
@@ -1505,7 +1630,19 @@ def self_test() -> None:
     cost_report = {"results": [{"cost_usd": None}, {"cost_usd": 0.00004}, {"cost_usd": 0.00001}]}
     assert summarize_costs(cost_report["results"]) == (0.00005, 1)
 
-    # 5. Guardrail response contract bites
+    # 5. Discovery-selected wires never call a model that did not advertise the endpoint.
+    endpoint_map = {
+        "chat-only": {"/v1/chat/completions"},
+        "responses-model": {"/v1/responses", "/v1/chat/completions"},
+    }
+    assert first_model_for_endpoint(["chat-only", "responses-model"], endpoint_map, "/v1/responses") == "responses-model"
+    assert first_model_for_endpoint(["chat-only"], endpoint_map, "/v1/responses") is None
+    assert model_id_from_detail('{"id":"model-a"}') == "model-a"
+    assert model_id_from_detail('{"data":{"id":"model-b"}}') == "model-b"
+    assert model_id_from_detail('{"data":{}}') is None
+    assert model_id_from_detail("not json") is None
+
+    # 6. Guardrail response contract bites
     blocked_body = json.dumps({"error": {"type": "gateway_error", "message": "request blocked by a guardrail: content moderation detected: toxicity"}})
     assert refusal_reason(blocked_body) == "content moderation detected: toxicity"
     blocked_h = {"x-nr-guardrails": "blocked", "content-type": "application/json"}

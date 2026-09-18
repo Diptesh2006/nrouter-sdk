@@ -293,11 +293,20 @@ class MeteringCurlHealthCheck:
                 detail="served, but this plane emits no token headers, so reconciliation is unprovable",
                 not_configured=True,
             )
+        # Evaluated BEFORE the clause list: assert_all reads every clause, so
+        # the arithmetic must never run against an absent header (a refusal
+        # carries none). A missing header on a non-200 is simply "not
+        # reconcilable", and the status clause already names the real failure.
+        reconciles = (
+            input_tokens is not None
+            and total_tokens is not None
+            and total_tokens >= input_tokens + output_tokens
+        )
         ok, detail = assert_all([
             (status == 200, f"expected 200, got {status}"),
             (
-                total_tokens >= input_tokens + output_tokens,
-                f"x-nr-total-tokens {total_tokens} < input {input_tokens} + output {output_tokens}",
+                reconciles,
+                f"x-nr-total-tokens {total_tokens!r} < input {input_tokens!r} + output {output_tokens!r}",
             ),
         ])
         return self._record(name, request, status, headers, assertion, ok, False, detail)
@@ -656,6 +665,21 @@ def run_self_test() -> int:
         base_url="https://mock.invalid/v1", api_key="k", curl_fn=billed_refusal
     )
     assert billed.run_suite(quick=True)["all_passed"] is False, "a billed refusal must fail"
+
+    # A refused or throttled request carries no token headers. The check must
+    # report that as a FAIL row, never raise: on stage 2026-09-18 a non-200 took
+    # the whole run down at `total_tokens >= input_tokens + output_tokens`, so
+    # every check after it was never run and nothing was recorded.
+    def throttled_no_headers(args, timeout_s=45, stdin_data=None):
+        return 429, dict(base), '{"error":{"type":"gateway_error","message":"rate limited"}}', 1.0
+
+    throttled = MeteringCurlHealthCheck(
+        base_url="https://mock.invalid/v1", api_key="k", curl_fn=throttled_no_headers
+    )
+    throttled_row = throttled.check_token_headers_reconcile()
+    assert throttled_row["result"] == FAIL and throttled_row["status"] == 429, (
+        "a non-200 with no token headers is a FAIL row, not a crash"
+    )
 
     # BITE 3: embeddings that bill output tokens must go red.
     def embeds_output(args, timeout_s=45, stdin_data=None):

@@ -8,38 +8,30 @@ The customer support agent is a streaming, in-process assistant library built di
 
 1. **Zero Database Dependency**: All retrieval happens in-memory over pre-computed chunk embeddings (typically loaded from a static `kb.json` index), eliminating database, vector extension, and microservice dependencies.
 2. **SDK Dogfooding**: The only runtime dependency is `@nrouter_ai/sdk` (`nRouter` universal client).
-3. **SSE Streaming Contract**: `chatSSE(req, context)` returns an asynchronous `ReadableStream` emitting standard Server-Sent Event lines (`confidence`, `citations`, `token`, `cost`, `done`) matching the `AskNRouterWidget` UI contract.
+3. **SSE Streaming Contract**: `chatSSE(req, context)` returns an asynchronous `ReadableStream` of Server-Sent Event lines, each carrying an `nrouter_event` discriminator (`confidence`, `citations`, `token`, `cost`, `done` — derive from `src/sse.ts`). A `cost` frame carries `status: 'exact'` with a `costUsd`, or `status: 'unpriced'` with **no** amount — never a `0`, which would report a free request (Rule #28).
 4. **Offline by Default**: Like the rest of `nrouter-sdk`, all default unit and contract tests run completely offline with zero network, zero gateway, and zero credentials.
 
 ## Package Structure
 
-```
-agents/customer-support-agent/
-├── bin/
-│   └── support-agent.mjs       # CLI tool for building KB indices
-├── src/
-│   ├── agent.ts                # createSupportAgent factory & agent core
-│   ├── build.ts                # buildKnowledgeIndex pipeline
-│   ├── client.ts               # SDK wrapper
-│   ├── node.ts                 # Node.js file system helpers (readDocsDir, saveKnowledgeIndex, loadKnowledgeIndex)
-│   ├── pii.ts                  # PII redaction and masking
-│   ├── retrieval.ts            # Cosine similarity ranking
-│   ├── sse.ts                  # SSE stream formatter
-│   └── types.ts                # Request, response, and config types
-├── test/                       # 24 test suites (offline)
-└── package.json
-```
+Derive it rather than trusting a tree that goes stale: `ls agents/customer-support-agent/src
+agents/customer-support-agent/src/knowledge agents/customer-support-agent/test`. The entry points
+that matter: `src/agent.ts` (the `createSupportAgent` factory), `src/client.ts` (the SDK wrapper),
+`src/retrieval.ts` (cosine ranking), `src/pii.ts` (masking), `src/sse.ts` (the SSE formatter),
+`src/node.ts` (file-system helpers: `readDocsDir`, `saveKnowledgeIndex`, `loadKnowledgeIndex`),
+`src/knowledge/` (the index build pipeline: fetch, chunk, build, validate, store) and
+`bin/support-agent.mjs` (the `build-kb` CLI). Every `src/*.ts` has a matching `test/*.test.ts`.
 
 ## CLI Usage: Building Knowledge Base Index
 
+**The key is read from `NROUTER_API_KEY` in the environment; there is no `--api-key` flag**, so a key
+never lands in shell history or the process table. `--base-url` is optional and defaults to the
+SDK's own base URL. Derive the flag list rather than trusting this block — the CLI prints it:
+
 ```bash
-npx @nrouter_ai/support-agent build-kb \
-  --docs <docs-directory> \
-  --base-url <nrouter-gateway-v1-url> \
-  --api-key <nrouter-key> \
-  --embedding-model text-embedding-3-small \
-  --dimensions 768 \
-  --out kb.json
+export NROUTER_API_KEY="sk-nrouter-..."
+npx @nrouter_ai/support-agent help
+npx @nrouter_ai/support-agent build-kb --docs <docs-directory> --out kb.json \
+  --model text-embedding-3-small --dimensions 768
 ```
 
 ## Host Application Integration
@@ -52,8 +44,7 @@ import { loadKnowledgeIndex } from '@nrouter_ai/support-agent/node';
 
 const knowledge = await loadKnowledgeIndex('./data/support-agent-kb.json');
 const agent = createSupportAgent({
-  apiKey: process.env.NROUTER_SUPPORT_AGENT_KEY,
-  baseURL: 'http://127.0.0.1:4000/v1',
+  apiKey: process.env.NROUTER_API_KEY,   // a virtual key; baseURL defaults to the public gateway
   model: 'claude-haiku-4-5-20251001',
   knowledge,
   maskPii: true,
@@ -70,14 +61,17 @@ const sseStream = agent.chatSSE(
 Run from `agents/customer-support-agent/`:
 
 ```bash
-pnpm test          # vitest run (24 test suites, 236 offline tests)
-pnpm typecheck     # tsc --noEmit
-pnpm build         # compiles to dist/
+npm test           # vitest run — the offline suite; derive the count, do not pin it
+npm run typecheck  # tsc --noEmit
+npm run build      # compiles to dist/
+npm run e2e        # builds, then playwright — needs a key and a browser; never a default path
 ```
 
-## Cross-Repo Wiring & Health Verification
+This package uses **npm** (`package-lock.json`), not pnpm. Derive the scripts rather than trusting
+this block: `python3 -c "import json;print(json.load(open('agents/customer-support-agent/package.json'))['scripts'])"`.
 
-- Host route: `nrouter-app` at `/api/public/ask`
-- Frontend UI: `nrouter-frontend-ui` (`AskNRouterWidget`, `AskAiGuruFab`)
-- Operational Skill: `nrouter-customer-support-widget` in `nrouter-app`
-- Live E2E Health Check: `bash nrouter-app/skills/nrouter-customer-support-widget/scripts/verify-widget-e2e.sh`
+## Host integration is the host's concern
+
+This package is a library: it takes a key, a model and a knowledge index, and returns a stream. It
+knows nothing about any particular host, and this sub-skill deliberately documents no host's
+routes, deployments or verification scripts — those live with the host, not in the public SDK repo.

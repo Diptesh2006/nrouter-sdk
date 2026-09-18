@@ -11,27 +11,52 @@ mistake costs a customer money, leaks a credential, or hangs a caller — and wh
 
 ## Read this first: what `check_conformance.py` structurally cannot see
 
-The three blind spots — it cannot bind an error code to its status, it cannot prove a header is used
-correctly, and any status outside the spec'd errors is invisible to it — are stated once in the
-router (`../SKILL.md`, "Shared facts → What the conformance gate cannot see"). **Every drift class
-below lives inside them**, and the third is where the worst divergence lives (§1).
+The blind spots — it cannot bind an error code to its status, it cannot prove a header is used
+correctly, any status outside the spec'd errors is invisible to it, and it never touches the
+gateway — are stated once in the router (`../SKILL.md`, "Shared facts → What the conformance gate
+cannot see"). **Every drift class below lives inside them**, and the third is where the worst
+divergence lives (§1).
 
 **So: a green conformance run is necessary and never sufficient.** Behaviour needs a behavioural
-test in the SDK's own suite.
+test in the SDK's own suite; what the wire answers needs the curl proof harness.
 
 ## 1. Error classification — three signals, in order
 
-The gateway's ordinary error envelope carries **no `code` field** — it emits
-`{"error":{"type":"gateway_error","message":…}}`. Only a post-call guardrail cut carries a real
-stable code. Every SDK therefore classifies in the same order:
+`error.code` is **OPTIONAL** on the wire (`spec.error_envelope`, `code_optional: true`): the gateway
+emits it only where it can name a key under `spec.errors`, and omits it rather than inventing one
+elsewhere. Model it as nullable, or a strict decoder breaks on an ordinary 401, 404 or 429. Every SDK
+classifies in the same order:
 
-**`code` when present → HTTP status → message substring** (the substring only to split the two 400s
-and the two 402s).
+**`code` when present → `type` → HTTP status.** Never on `message` — it is prose written for a
+person and it changes. The one exception is the compatibility fallback the spec documents verbatim
+under `errors.guardrail_blocked.detection`, for a gateway older than the current spec; use it only
+after the first two arms have missed, never as a general rule.
 
 An SDK that classifies on `code` alone silently degrades every ordinary gateway error to a generic
 class. That mistake shipped in five SDKs at once; it is why the order above is written down.
 
-⚠️ **The spec'd codes are well aligned** (count them in the spec; it was nine until `plan_allowance_exhausted` and `plan_required` landed). **The UNDOCUMENTED statuses are not.** 502 and 504 are
+⚠️ **The status alone is no longer a discriminator.** Read `spec.errors` and count how many share a
+status before you write a dispatch — several codes now land on 400 and several on 402:
+
+```bash
+python3 -c "import json,collections;e=json.load(open('spec/nrouter-sdk-spec.json'))['errors'];\
+d=collections.defaultdict(list);[d[v['http']].append(k) for k,v in e.items()];\
+print(dict(sorted(d.items())))"
+```
+
+Four of the newer ones matter to a retry layer because they are **permanent for that body and cost
+nothing** — nothing was reserved and nothing was spent, so a retry buys a second identical refusal:
+`input_too_large`, `max_output_tokens_too_large`, `fallback_not_allowed` and `guardrail_not_found`.
+`max_output_tokens_too_large` is deliberately not clamped for the caller, because silently changing
+the ceiling changes what the request costs. The generic `invalid_request` covers a malformed shape.
+
+⚠️ **`service_unavailable` (503) is the inverse case and the one SDKs get backwards.** When it
+carries `x-nr-guardrails: unavailable` the request was refused **without being judged** — the
+correct client behaviour is to RETRY, not to rewrite the prompt. A client that reports it as a
+content block sends callers to change content nothing objected to. That header is the only thing
+separating a guardrail-capacity 503 from any other.
+
+⚠️ **The spec'd codes are well aligned. The UNDOCUMENTED statuses are not.** 502 and 504 are
 ordinary gateway outcomes — the gateway maps upstream and sandbox failures to 502 — and the spec
 documents neither, so the gate cannot see them. Whenever you touch classification, check your SDK's
 dispatch for an explicit 502/504 arm and decide deliberately between these three, because all three

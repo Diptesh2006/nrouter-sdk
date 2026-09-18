@@ -138,12 +138,22 @@ class ContractCurlHealthCheck:
         key_label: str = "$NROUTER_API_KEY",
         extra_headers: Optional[List[Tuple[str, str]]] = None,
         raw_body: Optional[str] = None,
+        at_origin: bool = False,
     ) -> Tuple[List[str], str]:
         self._current_path = path
-        url = f"{self.base_url}{path}"
+        # `at_origin`: the document lives beside `/v1`, not under it. The
+        # OpenAPI document is `/openapi.json` on the gateway's origin, so a
+        # base URL that ends in `/v1` is trimmed to the origin first; the
+        # rendered command says so with `${NROUTER_BASE_URL%/v1}`.
+        base = self.base_url
+        shown_base = "$NROUTER_BASE_URL"
+        if at_origin and base.endswith("/v1"):
+            base = base[: -len("/v1")]
+            shown_base = "${NROUTER_BASE_URL%/v1}"
+        url = f"{base}{path}"
         args = ["-H", f"Authorization: Bearer {key or self.api_key}"]
         shown = [
-            f'curl -sS -D - -X {method} "$NROUTER_BASE_URL{path}"',
+            f'curl -sS -D - -X {method} "{shown_base}{path}"',
             f'  -H "Authorization: Bearer {key_label}"',
         ]
         for header_name, header_value in extra_headers or []:
@@ -213,7 +223,7 @@ class ContractCurlHealthCheck:
             "200; the OpenAPI document names every x-nr-* response header that "
             "spec/nrouter-sdk-spec.json publishes"
         )
-        args, request = self._prepare("GET", "/openapi.json")
+        args, request = self._prepare("GET", "/openapi.json", at_origin=True)
         status, headers, body, _ = self.curl_fn(args)
         if status != 200 or not body.strip():
             return self._record(

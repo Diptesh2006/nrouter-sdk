@@ -125,7 +125,7 @@ are in [cost.md](./cost.md).
 ## `meta.guardrails` on an image response
 
 The guardrail posture **is** published on this route: `meta.guardrails` carries
-the same `none | monitor | pass | partial | blocked` token here as on the text
+the same `none | monitor | redacted | pass | partial | blocked` token here as on the text
 wires, read from `x-nr-guardrails`. It reports the PRE-CALL chain's posture over
 your REQUEST, upgraded to `blocked` when a post-call chain withheld the response.
 

@@ -78,7 +78,7 @@ UNKNOWN_GUARDRAIL_ID = "00000000-0000-0000-0000-000000000000"
 EXPLICIT_FLOOR_PROMPT = "sex porn"
 BENIGN_PROMPT = "What is the capital of France?"
 
-GUARDRAIL_HEADER_VALUES = {"none", "monitor", "pass", "partial", "blocked", "unavailable"}
+GUARDRAIL_HEADER_VALUES = {"none", "monitor", "redacted", "pass", "partial", "blocked", "unavailable"}
 
 
 def is_guardrail_block(status: int, headers: Dict[str, str], body: str) -> bool:

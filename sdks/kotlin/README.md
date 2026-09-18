@@ -101,7 +101,7 @@ if (meta.isPriced) println("cost $${meta.cost}") else println("cost unpriced")
 | `cacheReadTokens` / `cacheWriteTokens` | `x-nr-cache-*-tokens` | Provider cache tokens |
 | `limitSource` | `x-nr-limit-source` | On a 429, which ceiling refused |
 | `budgetWarning` | `x-nr-budget-warning` | A soft budget you configured was crossed; the request still served (`<scope> soft_budget <spend>/<ceiling>`) |
-| `guardrails` | `x-nr-guardrails` | Pre-call guardrail posture; **null** means the response makes no guardrail claim — never "none", which is an explicit token |
+| `guardrails` | `x-nr-guardrails` | Pre-call guardrail posture (`none`, `monitor`, `redacted`, `pass`, `partial`, `blocked`, `unavailable`); **null** means the response makes no guardrail claim — never "none", which is an explicit token |
 | `authReason` | `x-nr-auth-reason` | On a 401, the gateway's stable reason |
 | `responseCache` / `responseCacheAge` | `x-nr-response-cache*` | `hit`/`miss` and age in seconds |
 | `compression` | `x-nr-compression` | Prompt compression outcome (`applied`, `not_requested`, `off`, `skipped`) |

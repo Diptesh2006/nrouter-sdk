@@ -65,8 +65,13 @@ type ResponseMeta struct {
 	BudgetWarning string
 
 	// Guardrails is the posture of the PRE-CALL guardrail chain: "none",
-	// "monitor", "pass", "partial" or "blocked". Compare it exactly and
-	// case-sensitively.
+	// "monitor", "redacted", "pass", "partial", "blocked" or "unavailable".
+	// Compare it exactly and case-sensitively.
+	//
+	// "redacted" means an enforcing chain REWROTE part of the prompt (PII or
+	// keyword redaction) before the provider saw it and the request then
+	// served; "partial" means only that some content went uninspected, never
+	// that anything was rewritten.
 	//
 	// Empty means the gateway made NO guardrail claim about this response — a
 	// /v1/models call, an auth refusal that never reached preflight — never "no

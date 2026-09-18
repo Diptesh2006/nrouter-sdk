@@ -93,7 +93,7 @@ INJECTION_PROMPT = (
 )
 EXPLICIT_PROMPT = "sex porn"
 
-GUARDRAIL_HEADER_VALUES = {"none", "monitor", "pass", "partial", "blocked", "unavailable"}
+GUARDRAIL_HEADER_VALUES = {"none", "monitor", "redacted", "pass", "partial", "blocked", "unavailable"}
 METERING_HEADERS = (
     "x-nr-request-cost",
     "x-nr-cost-status",

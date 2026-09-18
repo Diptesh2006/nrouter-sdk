@@ -126,8 +126,13 @@ public final class NRouterResponseMeta {
     public String budgetWarning() { return budgetWarning; }
     /**
      * Posture of the PRE-CALL guardrail chain: {@code none}, {@code monitor},
-     * {@code pass}, {@code partial} or {@code blocked}, matched exactly and
-     * case-sensitively.
+     * {@code redacted}, {@code pass}, {@code partial}, {@code blocked} or
+     * {@code unavailable}, matched exactly and case-sensitively.
+     *
+     * <p>{@code redacted} means an enforcing chain REWROTE part of the prompt
+     * (PII or keyword redaction) before the provider saw it, and the request
+     * then served; {@code partial} means only that some content went
+     * uninspected, never that anything was rewritten.
      *
      * <p>{@code null} means the gateway made NO guardrail claim about this
      * response, never "no guardrail applied" — that is the explicit

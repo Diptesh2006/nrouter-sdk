@@ -95,18 +95,28 @@ token on the text wires, the audio routes, images and video.
 
 ```ts
 const res = await client.chat.completions.create({ model, messages });
-res.meta?.guardrails; // 'none' | 'monitor' | 'pass' | 'partial' | 'blocked'
+res.meta?.guardrails;
+// 'none' | 'monitor' | 'redacted' | 'pass' | 'partial' | 'blocked' | 'unavailable'
 ```
 
-There are **five** values, and they do not collapse into "blocked or fine":
+There are **seven** values, and they do not collapse into "blocked or fine":
 
 | status | what it means | were you protected? |
 | --- | --- | --- |
 | `none` | no guardrail was resolved for this request at all | **no** |
 | `monitor` | a chain ran in observe-only mode — it recorded, and could not have refused | **no** |
+| `redacted` | an enforcing chain **rewrote** part of your prompt (PII or keyword redaction) before the provider saw it; the request then served | yes |
 | `pass` | an enforcing chain ran and found nothing to act on | yes |
-| `partial` | an enforcing chain ran and acted on some content (e.g. redaction) while the request proceeded | yes |
+| `partial` | an enforcing chain ran but did not inspect the whole request — some content went uninspected | yes |
 | `blocked` | an enforcing chain refused; you get an error, not a completion | yes |
+| `unavailable` | an enforcing chain could not run, so the request was refused **without being judged** (HTTP 503) — retry it, do not rewrite the prompt | yes |
+
+`partial` means *only* that something went uninspected. It never means "acted on"
+— a rewrite is `redacted`, and the two are not interchangeable.
+
+When more than one of these is true of a single request, the gateway reports the
+first that applies, in this order: `none`, `monitor`, `redacted`, `partial`,
+`pass`.
 
 **`none` and `monitor` are not protection.** That is the whole reason this
 section exists. Both return a normal, successful completion, so code written as
@@ -127,7 +137,7 @@ If your application depends on a guardrail actually being able to refuse, assert
 that:
 
 ```ts
-const protectedStatuses = new Set(['pass', 'partial', 'blocked']);
+const protectedStatuses = new Set(['redacted', 'pass', 'partial', 'blocked']);
 if (!protectedStatuses.has(res.meta?.guardrails ?? 'none')) {
   // Nothing could have refused this response. Decide deliberately.
 }

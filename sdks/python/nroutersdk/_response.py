@@ -36,8 +36,12 @@ class nRouterResponseMeta:
             configured; the request still served. ``<scope> soft_budget
             <spend>/<ceiling>``, e.g. ``org soft_budget 80.00/100.00``.
         guardrails: Posture of the PRE-CALL guardrail chain — ``none`` |
-            ``monitor`` | ``pass`` | ``partial`` | ``blocked``, matched exactly
-            and case-sensitively. ``None`` means the gateway made NO guardrail
+            ``monitor`` | ``redacted`` | ``pass`` | ``partial`` | ``blocked`` |
+            ``unavailable``, matched exactly and case-sensitively. ``redacted``
+            means an enforcing chain REWROTE part of the prompt before the
+            provider saw it and the request then served; ``partial`` means only
+            that some content went uninspected, never that anything was
+            rewritten. ``None`` means the gateway made NO guardrail
             claim about this response, never "no guardrail applied" — that is
             the explicit ``none``. Posture only by design: policy name, policy
             id, detector family, rule count and (for ``partial``) which channel

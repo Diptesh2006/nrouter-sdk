@@ -585,7 +585,7 @@ not itself the register of which ones exist.
 | `x-nr-cache-write-tokens` | integer | Cache-write tokens; emitted only when nonzero |
 | `x-nr-limit-source` | string | `key`, `plan`, `team`, `user`, `budget`, `plan_window_h8`, `plan_window_day`, `plan_window_week`, `capacity`, `plan_allowance_exhausted`, or `plan_required` on 429 and 402 responses |
 | `x-nr-budget-warning` | string | A soft budget you configured was crossed by this request, which still served; `<scope> soft_budget <spend>/<ceiling>`, e.g. `org soft_budget 80.00/100.00` |
-| `x-nr-guardrails` | string | Pre-call guardrail posture; absent means the response makes no guardrail claim, never `none`, which is an explicit token |
+| `x-nr-guardrails` | string | Pre-call guardrail posture — `none`, `monitor`, `redacted`, `pass`, `partial`, `blocked` or `unavailable`; absent means the response makes no guardrail claim, never `none`, which is an explicit token |
 | `x-nr-auth-reason` | string | On a 401, the gateway's stable reason for refusing the key |
 | `x-nr-response-cache` | string | `hit` or `miss`; absent when the response cache did not participate |
 | `x-nr-response-cache-age` | integer | Age of a cache `hit` in seconds |

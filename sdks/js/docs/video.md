@@ -195,7 +195,7 @@ extension the `contentType` implies rather than one you hoped for.
 
 The guardrail posture follows the create/collection line exactly. `video()`
 publishes `x-nr-guardrails`, so `meta.guardrails` carries the same
-`none | monitor | pass | partial | blocked` token there as on the text wires: the
+`none | monitor | redacted | pass | partial | blocked` token there as on the text wires: the
 PRE-CALL chain's posture over the request you sent, upgraded to `blocked` when a
 post-call chain withheld the response.
 

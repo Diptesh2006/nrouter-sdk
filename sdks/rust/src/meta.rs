@@ -40,8 +40,12 @@ pub struct ResponseMeta {
     /// served. `<scope> soft_budget <spend>/<ceiling>`, e.g.
     /// `org soft_budget 80.00/100.00`.
     pub budget_warning: Option<String>,
-    /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `pass`,
-    /// `partial` or `blocked`, matched exactly and case-sensitively.
+    /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `redacted`,
+    /// `pass`, `partial`, `blocked` or `unavailable`, matched exactly and
+    /// case-sensitively. `redacted` means an enforcing chain REWROTE part of
+    /// the prompt before the provider saw it and the request then served;
+    /// `partial` means only that some content went uninspected, never that
+    /// anything was rewritten.
     ///
     /// `None` means the gateway made NO guardrail claim about this response —
     /// never "no guardrail applied", which is the explicit `none`. Posture only

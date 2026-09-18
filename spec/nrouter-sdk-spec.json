@@ -95,6 +95,7 @@
       "values": [
         "none",
         "monitor",
+        "redacted",
         "pass",
         "partial",
         "blocked",
@@ -104,8 +105,9 @@
       "value_semantics": {
         "none": "No guardrail applied to this request. A legitimate state for a tenant who configured nothing, and the alarm for one who did.",
         "monitor": "A chain applied and nothing in it could have refused (warn/log trial modes only). It observed; it did not protect. Reporting this as `pass` would claim an enforcement that never existed.",
+        "redacted": "An enforcing chain REWROTE part of the prompt before it reached the provider — PII or keyword redaction — and the request was then served (HTTP 200). The model did not see what you sent, so a response that quotes the prompt back quotes the rewritten one. Distinct from `pass` on purpose: `pass` means an enforcing chain found nothing to act on, and reporting a rewrite as `pass` hides the one case where request and prompt differ. WHAT was rewritten is deliberately withheld — see design_note.",
         "pass": "An enforcing chain inspected the whole request and allowed it.",
-        "partial": "An enforcing chain ran but did not inspect the whole request. WHICH part went uninspected is deliberately withheld — see design_note. It is the ORDINARY answer on the two audio upload wires, `/v1/audio/transcriptions` and `/v1/audio/translations`, not an anomaly there: a client that alarms on `partial` will alarm on every speech-to-text request it makes.",
+        "partial": "An enforcing chain ran but did not inspect the whole request. It means ONLY that some content went uninspected — never that something was acted on or rewritten, which is `redacted`. WHICH part went uninspected is deliberately withheld — see design_note. It is the ORDINARY answer on the two audio upload wires, `/v1/audio/transcriptions` and `/v1/audio/translations`, not an anomaly there: a client that alarms on `partial` will alarm on every speech-to-text request it makes.",
         "blocked": "An enforcing chain refused the request. The one response that proves a control ran, so it is never silent about it.",
         "unavailable": "An enforcing chain could not run, so the request was refused WITHOUT being judged (HTTP 503, `error.type`/`error.code` \"service_unavailable\"). Distinct from `blocked` on purpose: the content was never assessed, so the correct client behaviour is to RETRY, not to rewrite the prompt. A 503 that reported `blocked` sent callers to change content that nothing had objected to. This header is what separates a guardrail-capacity 503 from any other one."
       },

@@ -75,6 +75,8 @@ public data class NRouterResponseMeta(
     val routing: String? = null,
     /** Provider calls made for this request (>= 1). */
     val attempts: Long? = null,
+    /** The top intent category evaluated by the preflight chain, if intent routing was requested. */
+    val intent: String? = null,
     /** How this response was funded. */
     val fundingSource: String? = null,
     /** When the current usage allowance resets. */
@@ -128,6 +130,7 @@ public data class NRouterResponseMeta(
             "x-nr-compression",
             "x-nr-routing",
             "x-nr-attempts",
+            "x-nr-intent",
             "x-nr-funding-source",
             "x-nr-allowance-reset",
         )
@@ -165,6 +168,7 @@ public data class NRouterResponseMeta(
                 compression = lookup("x-nr-compression"),
                 routing = lookup("x-nr-routing"),
                 attempts = num("x-nr-attempts"),
+                intent = lookup("x-nr-intent"),
                 fundingSource = lookup("x-nr-funding-source"),
                 allowanceReset = num("x-nr-allowance-reset"),
             )

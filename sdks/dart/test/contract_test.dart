@@ -44,6 +44,7 @@ void main() {
         'x-nr-compression',
         'x-nr-routing',
         'x-nr-attempts',
+        'x-nr-intent',
         'x-nr-budget-warning',
         'x-nr-guardrails',
         'x-nr-funding-source',

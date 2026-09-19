@@ -270,6 +270,7 @@ func TestEveryDeclaredHeaderIsRead(t *testing.T) {
 		"x-nr-compression":        "applied",
 		"x-nr-routing":            "fallback:1",
 		"x-nr-attempts":           "2",
+		"x-nr-intent":             "chitchat",
 	}
 	if len(headers) != len(HeaderNames) {
 		t.Fatalf("this test covers %d headers, HeaderNames declares %d", len(headers), len(HeaderNames))
@@ -314,8 +315,8 @@ func TestEveryDeclaredHeaderIsRead(t *testing.T) {
 	if m.FundingSource != "allowance" || m.AllowanceReset == nil || *m.AllowanceReset != 86400 {
 		t.Fatalf("funding headers not parsed: %+v", m)
 	}
-	if m.Compression != "applied" || m.Routing != "fallback:1" {
-		t.Fatalf("compression/routing headers not parsed: %+v", m)
+	if m.Compression != "applied" || m.Routing != "fallback:1" || m.Intent != "chitchat" {
+		t.Fatalf("compression/routing/intent headers not parsed: %+v", m)
 	}
 	if !m.IsPriced() {
 		t.Fatal("an exact cost should report IsPriced")

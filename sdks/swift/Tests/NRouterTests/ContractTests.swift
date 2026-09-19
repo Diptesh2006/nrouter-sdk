@@ -26,7 +26,7 @@ final class ContractTests: XCTestCase {
             "x-nr-input-tokens", "x-nr-output-tokens", "x-nr-total-tokens",
             "x-nr-cache-read-tokens", "x-nr-cache-write-tokens", "x-nr-limit-source",
             "x-nr-auth-reason", "x-nr-response-cache", "x-nr-response-cache-age",
-            "x-nr-compression", "x-nr-routing", "x-nr-attempts",
+            "x-nr-compression", "x-nr-routing", "x-nr-attempts", "x-nr-intent",
             "x-nr-budget-warning", "x-nr-guardrails", "x-nr-funding-source", "x-nr-allowance-reset",
         ]
         XCTAssertEqual(NRouterResponseMeta.headerNames.count, expected.count)

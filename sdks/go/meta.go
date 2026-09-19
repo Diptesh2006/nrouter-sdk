@@ -113,6 +113,9 @@ type ResponseMeta struct {
 	// Attempts is provider calls made for this request, retries and failovers
 	// alike (>= 1). Nil on cache hits and refusals.
 	Attempts *uint64
+
+	// Intent is the top evaluated intent category if intent routing was requested.
+	Intent string
 }
 
 // HeaderNames lists every response header this SDK reads, exactly as the
@@ -141,6 +144,7 @@ var HeaderNames = []string{
 	"x-nr-compression",
 	"x-nr-routing",
 	"x-nr-attempts",
+	"x-nr-intent",
 }
 
 // MetaFromLookup builds ResponseMeta from any lowercase-name header lookup.
@@ -188,6 +192,7 @@ func MetaFromLookup(get func(string) string) ResponseMeta {
 		Compression:      get("x-nr-compression"),
 		Routing:          get("x-nr-routing"),
 		Attempts:         num("x-nr-attempts"),
+		Intent:           get("x-nr-intent"),
 	}
 	if raw := get("x-nr-request-cost"); raw != "" {
 		if v, err := strconv.ParseFloat(raw, 64); err == nil && isBillableAmount(v) {

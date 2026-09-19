@@ -64,6 +64,7 @@ export const EMPTY_META: ResponseMeta = Object.freeze({
   compression: null,
   routing: null,
   attempts: null,
+  intent: null,
   fundingSource: null,
   allowanceReset: null,
 });
@@ -188,6 +189,7 @@ export function metaFromLookup(get: (name: string) => string | null | undefined)
     compression: text(get('x-nr-compression')),
     routing: text(get('x-nr-routing')),
     attempts: count(get('x-nr-attempts')),
+    intent: text(get('x-nr-intent')),
     fundingSource: text(get('x-nr-funding-source')),
     allowanceReset: count(get('x-nr-allowance-reset')),
   };

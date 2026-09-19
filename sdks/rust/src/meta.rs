@@ -64,6 +64,8 @@ pub struct ResponseMeta {
     pub routing: Option<String>,
     /// Provider calls made for this request, retries and failovers alike.
     pub attempts: Option<u64>,
+    /// The top intent category evaluated by the preflight chain, if intent routing was requested.
+    pub intent: Option<String>,
     /// How this response was funded.
     pub funding_source: Option<String>,
     /// When the current usage allowance resets.
@@ -71,7 +73,7 @@ pub struct ResponseMeta {
 }
 
 /// Every header this SDK reads, exactly as the spec names them.
-pub const HEADER_NAMES: [&str; 22] = [
+pub const HEADER_NAMES: [&str; 23] = [
     "x-nr-request-id",
     "x-nr-latency-ms",
     "x-nr-trace-id",
@@ -92,6 +94,7 @@ pub const HEADER_NAMES: [&str; 22] = [
     "x-nr-compression",
     "x-nr-routing",
     "x-nr-attempts",
+    "x-nr-intent",
     "x-nr-funding-source",
     "x-nr-allowance-reset",
 ];
@@ -130,6 +133,7 @@ impl ResponseMeta {
             compression: get("x-nr-compression"),
             routing: get("x-nr-routing"),
             attempts: num("x-nr-attempts"),
+            intent: get("x-nr-intent"),
             funding_source: get("x-nr-funding-source"),
             allowance_reset: num("x-nr-allowance-reset"),
         }

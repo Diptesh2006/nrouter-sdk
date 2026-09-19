@@ -159,6 +159,11 @@
       "description": "Provider calls made for this request, retries and failovers alike. Absent on cache hits and refusals",
       "always": false
     },
+    "x-nr-intent": {
+      "type": "string",
+      "description": "The top intent category evaluated by the preflight chain, if intent routing was requested",
+      "always": false
+    },
     "x-nr-funding-source": {
       "type": "string",
       "description": "Which balance paid for this request: the plan's usage allowance or credits",

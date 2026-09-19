@@ -70,6 +70,7 @@ const FIXTURE: Record<string, string> = {
   'x-nr-compression': 'applied',
   'x-nr-routing': 'direct',
   'x-nr-attempts': '2',
+  'x-nr-intent': 'chitchat',
   'x-nr-budget-warning': 'org soft_budget 80.00/100.00',
   // Posture only — one of the five tokens, matched case-sensitively.
   'x-nr-guardrails': 'pass',
@@ -124,6 +125,7 @@ test('every one of the declared headers is actually read', () => {
   assert.equal(parsed.compression, 'applied');
   assert.equal(parsed.routing, 'direct');
   assert.equal(parsed.attempts, 2);
+  assert.equal(parsed.intent, 'chitchat');
   assert.equal(parsed.budgetWarning, 'org soft_budget 80.00/100.00');
   assert.equal(parsed.guardrails, 'pass');
   assert.equal(isPriced(parsed), true);

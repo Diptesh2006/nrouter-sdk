@@ -63,6 +63,8 @@ public struct NRouterResponseMeta: Equatable, Sendable {
     public var routing: String?
     /// Provider calls made for this request (>= 1). Absent on cache hits and refusals.
     public var attempts: Int?
+    /// The top intent category evaluated by the preflight chain, if intent routing was requested.
+    public var intent: String?
     /// How this response was funded.
     public var fundingSource: String?
     /// When the current usage allowance resets.
@@ -90,6 +92,7 @@ public struct NRouterResponseMeta: Equatable, Sendable {
         "x-nr-compression",
         "x-nr-routing",
         "x-nr-attempts",
+        "x-nr-intent",
         "x-nr-funding-source",
         "x-nr-allowance-reset",
     ]
@@ -125,6 +128,7 @@ public struct NRouterResponseMeta: Equatable, Sendable {
         compression = lookup("x-nr-compression")
         routing = lookup("x-nr-routing")
         attempts = int("x-nr-attempts")
+        intent = lookup("x-nr-intent")
         fundingSource = lookup("x-nr-funding-source")
         allowanceReset = int("x-nr-allowance-reset")
     }

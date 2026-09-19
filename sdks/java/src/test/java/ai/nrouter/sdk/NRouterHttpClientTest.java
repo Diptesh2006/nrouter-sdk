@@ -133,6 +133,7 @@ class NRouterHttpClientTest {
                 "x-nr-compression",
                 "x-nr-routing",
                 "x-nr-attempts",
+                "x-nr-intent",
                 "x-nr-funding-source",
                 "x-nr-allowance-reset");
         assertEquals(expected.size(), NRouterResponseMeta.HEADER_NAMES.size());

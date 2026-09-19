@@ -94,7 +94,9 @@ impl NRouterError {
             Some("invalid_request") => Self::Request(body),
             Some("guardrail_blocked") => Self::GuardrailBlocked(body),
             Some("invalid_api_key") => Self::Authentication(body),
-            Some("insufficient_credits") | Some("plan_allowance_exhausted") | Some("plan_required") => Self::Credit(body),
+            Some("insufficient_credits")
+            | Some("plan_allowance_exhausted")
+            | Some("plan_required") => Self::Credit(body),
             Some("model_not_found") => Self::NotFound(body),
             Some("rate_limit_exceeded") | Some("tpm_limit_exceeded") => Self::RateLimit(body),
             Some("credit_check_failed") | Some("service_unavailable") => Self::Service(body),

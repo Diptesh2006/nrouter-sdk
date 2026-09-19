@@ -28,6 +28,7 @@ class NRouterResponseMeta {
     this.compression,
     this.routing,
     this.attempts,
+    this.intent,
     this.fundingSource,
     this.allowanceReset,
   });
@@ -103,6 +104,9 @@ class NRouterResponseMeta {
   /// Provider calls made for this request, retries and failovers alike. Absent on cache hits and refusals.
   final int? attempts;
 
+  /// The top intent category evaluated by the preflight chain, if intent routing was requested.
+  final String? intent;
+
   /// How this response was funded.
   final String? fundingSource;
   /// When the current usage allowance resets.
@@ -130,6 +134,7 @@ class NRouterResponseMeta {
     'x-nr-compression',
     'x-nr-routing',
     'x-nr-attempts',
+    'x-nr-intent',
     'x-nr-funding-source',
     'x-nr-allowance-reset',
   ];
@@ -167,6 +172,7 @@ class NRouterResponseMeta {
       compression: get('x-nr-compression'),
       routing: get('x-nr-routing'),
       attempts: asInt('x-nr-attempts'),
+      intent: get('x-nr-intent'),
       fundingSource: get('x-nr-funding-source'),
       allowanceReset: asInt('x-nr-allowance-reset'),
     );

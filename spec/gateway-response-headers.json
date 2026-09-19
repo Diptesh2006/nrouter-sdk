@@ -22,6 +22,7 @@
     "x-nr-compression",
     "x-nr-routing",
     "x-nr-attempts",
+    "x-nr-intent",
     "x-nr-response-cache",
     "x-nr-response-cache-age"
   ]

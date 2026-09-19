@@ -59,6 +59,7 @@ class nRouterResponseMeta:
             absent on cache hits and refusals.
         attempts: Provider calls made for this request (>= 1), absent on cache
             hits and refusals.
+        intent: Top evaluated intent category if intent routing was requested.
     """
 
     request_id: str | None = None
@@ -81,6 +82,7 @@ class nRouterResponseMeta:
     compression: str | None = None
     routing: str | None = None
     attempts: int | None = None
+    intent: str | None = None
     funding_source: str | None = None
     allowance_reset: int | None = None
 
@@ -113,6 +115,7 @@ class nRouterResponseMeta:
         "x-nr-compression",
         "x-nr-routing",
         "x-nr-attempts",
+        "x-nr-intent",
         "x-nr-funding-source",
         "x-nr-allowance-reset",
     )
@@ -173,6 +176,7 @@ class nRouterResponseMeta:
             compression=norm.get("x-nr-compression"),
             routing=norm.get("x-nr-routing"),
             attempts=optional_int("x-nr-attempts"),
+            intent=norm.get("x-nr-intent"),
             funding_source=norm.get("x-nr-funding-source"),
             allowance_reset=optional_int("x-nr-allowance-reset"),
         )

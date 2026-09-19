@@ -388,6 +388,7 @@ class ClientContractTests(unittest.TestCase):
                 # header carries no policy name, id, detector family or
                 # rule count by design (gateway §4f gate 9).
                 "x-nr-guardrails": "pass",
+                "x-nr-intent": "chitchat",
             }
         )
         self.assertEqual(metadata.request_id, "req_contract")
@@ -404,6 +405,7 @@ class ClientContractTests(unittest.TestCase):
         self.assertEqual(metadata.response_cache_age, 3)
         self.assertEqual(metadata.budget_warning, "org soft_budget 80.00/100.00")
         self.assertEqual(metadata.guardrails, "pass")
+        self.assertEqual(metadata.intent, "chitchat")
 
     def test_unpriced_response_omits_amount_without_claiming_zero(self) -> None:
         metadata = nRouterResponseMeta.from_headers(

@@ -98,6 +98,8 @@ export interface ResponseMeta {
   routing: string | null;
   /** Provider calls made for this request (>= 1). Absent on cache hits and refusals. */
   attempts: number | null;
+  /** Top evaluated intent category if intent routing was requested. */
+  intent: string | null;
   /** Which balance paid for this request: allowance or credits. */
   fundingSource: string | null;
   /** Seconds until the tightest usage-allowance window resets. */
@@ -130,6 +132,7 @@ export const HEADER_NAMES = [
   'x-nr-compression',
   'x-nr-routing',
   'x-nr-attempts',
+  'x-nr-intent',
   'x-nr-funding-source',
   'x-nr-allowance-reset',
 ] as const;

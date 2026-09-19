@@ -69,6 +69,7 @@ nrouter_meta <- function(headers = list()) {
       compression        = get_chr("x-nr-compression"),
       routing            = get_chr("x-nr-routing"),
       attempts           = get_int("x-nr-attempts"),
+      intent             = get_chr("x-nr-intent"),
       funding_source     = get_chr("x-nr-funding-source"),
       allowance_reset    = get_int("x-nr-allowance-reset"),
       retry_after        = nrouter_parse_retry_after(get_chr("retry-after"))
@@ -104,6 +105,7 @@ nrouter_header_names <- function() {
     "x-nr-compression",
     "x-nr-routing",
     "x-nr-attempts",
+    "x-nr-intent",
     "x-nr-funding-source",
     "x-nr-allowance-reset"
   )

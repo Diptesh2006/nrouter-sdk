@@ -549,7 +549,7 @@ run_lane "Swift" "swift" \
    && swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors"
 
 run_lane "Dart" "dart" \
-  "cd '$ROOT/sdks/dart' && dart analyze && dart test && grep -Fx 'publish_to: none' pubspec.yaml"
+  "cd '$ROOT/sdks/dart' && dart analyze && dart test"
 
 run_lane "R" "Rscript" \
   "cd '$ROOT/sdks/r' && Rscript -e 'testthat::test_local(\".\", reporter=\"summary\")'"

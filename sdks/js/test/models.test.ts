@@ -15,6 +15,14 @@ const {
   MODELS,
   MODEL_META_LLAMA_3_3_70B_INSTRUCT,
   MODEL_TYPESAFE_JEV,
+  MODEL_GOOGLE_GEMINI_2_0_FLASH,
+  MODEL_GOOGLE_GEMINI_2_0_FLASH_LITE,
+  MODEL_GOOGLE_GEMINI_1_5_PRO_002,
+  MODEL_GOOGLE_GEMINI_1_5_FLASH_002,
+  MODEL_GEMINI_2_0_FLASH,
+  MODEL_GEMINI_2_0_FLASH_LITE,
+  MODEL_GEMINI_1_5_PRO_002,
+  MODEL_GEMINI_1_5_FLASH_002,
 } = require('../dist/models');
 
 /** A RawRequester double that records the path and answers with a canned body. */
@@ -175,3 +183,25 @@ test('model ID constants define Meta and TypeSafe canonical identifiers', () => 
   assert.equal(MODELS.TYPESAFE_JEV, 'typesafe/jev');
   assert.equal(MODELS.TYPESAFE_JEV_SYSTEM_ONE, 'typesafe/jev');
 });
+
+test('model ID constants define Google Gemini canonical identifiers and aliases', () => {
+  assert.equal(MODEL_GOOGLE_GEMINI_2_0_FLASH, 'google/gemini-2.0-flash');
+  assert.equal(MODEL_GOOGLE_GEMINI_2_0_FLASH_LITE, 'google/gemini-2.0-flash-lite');
+  assert.equal(MODEL_GOOGLE_GEMINI_1_5_PRO_002, 'google/gemini-1.5-pro-002');
+  assert.equal(MODEL_GOOGLE_GEMINI_1_5_FLASH_002, 'google/gemini-1.5-flash-002');
+
+  assert.equal(MODEL_GEMINI_2_0_FLASH, 'google/gemini-2.0-flash');
+  assert.equal(MODEL_GEMINI_2_0_FLASH_LITE, 'google/gemini-2.0-flash-lite');
+  assert.equal(MODEL_GEMINI_1_5_PRO_002, 'google/gemini-1.5-pro-002');
+  assert.equal(MODEL_GEMINI_1_5_FLASH_002, 'google/gemini-1.5-flash-002');
+
+  assert.equal(MODELS.GOOGLE_GEMINI_2_0_FLASH, 'google/gemini-2.0-flash');
+  assert.equal(MODELS.GOOGLE_GEMINI_2_0_FLASH_LITE, 'google/gemini-2.0-flash-lite');
+  assert.equal(MODELS.GOOGLE_GEMINI_1_5_PRO_002, 'google/gemini-1.5-pro-002');
+  assert.equal(MODELS.GOOGLE_GEMINI_1_5_FLASH_002, 'google/gemini-1.5-flash-002');
+  assert.equal(MODELS.GEMINI_2_0_FLASH, 'google/gemini-2.0-flash');
+  assert.equal(MODELS.GEMINI_2_0_FLASH_LITE, 'google/gemini-2.0-flash-lite');
+  assert.equal(MODELS.GEMINI_1_5_PRO_002, 'google/gemini-1.5-pro-002');
+  assert.equal(MODELS.GEMINI_1_5_FLASH_002, 'google/gemini-1.5-flash-002');
+});
+

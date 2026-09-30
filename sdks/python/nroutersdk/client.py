@@ -7,7 +7,7 @@ import os
 import re
 import time
 import ipaddress
-from typing import TYPE_CHECKING, Any, Mapping, cast
+from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 from urllib.parse import quote, urlparse
 
 if TYPE_CHECKING:

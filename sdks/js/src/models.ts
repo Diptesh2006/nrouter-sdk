@@ -43,6 +43,39 @@ export type NRouterCapabilities = {
 };
 
 /**
+ * Canonical model ID constants for Meta Llama, TypeSafe AI, and frontier providers.
+ */
+export const MODEL_META_LLAMA_3_3_70B_INSTRUCT = 'meta/llama-3.3-70b-instruct';
+export const MODEL_META_LLAMA_3_1_70B_INSTRUCT = 'meta/llama-3.1-70b-instruct';
+export const MODEL_META_LLAMA_3_1_8B_INSTRUCT = 'meta/llama-3.1-8b-instruct';
+export const MODEL_META_LLAMA_3_2_11B_VISION = 'meta/llama-3.2-11b-vision-instruct';
+export const MODEL_META_LLAMA_3_2_90B_VISION = 'meta/llama-3.2-90b-vision-instruct';
+export const MODEL_META_LLAMA_3_2_3B_INSTRUCT = 'meta/llama-3.2-3b-instruct';
+export const MODEL_META_LLAMA_3_2_1B_INSTRUCT = 'meta/llama-3.2-1b-instruct';
+
+export const MODEL_TYPESAFE_JEV = 'typesafe/jev';
+export const MODEL_TYPESAFE_JEV_SYSTEM_ONE = 'typesafe/jev';
+
+export const MODELS = {
+  META_LLAMA_3_3_70B_INSTRUCT: MODEL_META_LLAMA_3_3_70B_INSTRUCT,
+  META_LLAMA_3_1_70B_INSTRUCT: MODEL_META_LLAMA_3_1_70B_INSTRUCT,
+  META_LLAMA_3_1_8B_INSTRUCT: MODEL_META_LLAMA_3_1_8B_INSTRUCT,
+  META_LLAMA_3_2_11B_VISION: MODEL_META_LLAMA_3_2_11B_VISION,
+  META_LLAMA_3_2_90B_VISION: MODEL_META_LLAMA_3_2_90B_VISION,
+  META_LLAMA_3_2_3B_INSTRUCT: MODEL_META_LLAMA_3_2_3B_INSTRUCT,
+  META_LLAMA_3_2_1B_INSTRUCT: MODEL_META_LLAMA_3_2_1B_INSTRUCT,
+  TYPESAFE_JEV: MODEL_TYPESAFE_JEV,
+  TYPESAFE_JEV_SYSTEM_ONE: MODEL_TYPESAFE_JEV_SYSTEM_ONE,
+  GPT_5_4_MINI: 'gpt-5.4-mini',
+  GPT_4O: 'gpt-4o',
+  GPT_4O_MINI: 'gpt-4o-mini',
+  CLAUDE_SONNET_4_5: 'claude-sonnet-4-5-20250929',
+  CLAUDE_OPUS_4_8: 'claude-opus-4-8',
+} as const;
+
+export type WellKnownModel = (typeof MODELS)[keyof typeof MODELS];
+
+/**
  * The slice of the inherited OpenAI client this helper needs: its own request
  * pipeline. Going through it is what keeps the caller's `fetch` override,
  * `timeout`, `maxRetries`, `fetchOptions`, `defaultHeaders` and `defaultQuery`

@@ -10,7 +10,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { NRouterModels } = require('../dist/models');
+const {
+  NRouterModels,
+  MODELS,
+  MODEL_META_LLAMA_3_3_70B_INSTRUCT,
+  MODEL_TYPESAFE_JEV,
+} = require('../dist/models');
 
 /** A RawRequester double that records the path and answers with a canned body. */
 function fakeClient(bodyByPath: Record<string, unknown> | ((path: string) => unknown)) {
@@ -161,4 +166,12 @@ test('capabilities() degrades gracefully on non-object body', async () => {
   assert.equal(caps.gateway, 'nrouter');
   assert.deepEqual(caps.providers, []);
   assert.deepEqual(caps.models, []);
+});
+
+test('model ID constants define Meta and TypeSafe canonical identifiers', () => {
+  assert.equal(MODEL_META_LLAMA_3_3_70B_INSTRUCT, 'meta/llama-3.3-70b-instruct');
+  assert.equal(MODEL_TYPESAFE_JEV, 'typesafe/jev');
+  assert.equal(MODELS.META_LLAMA_3_3_70B_INSTRUCT, 'meta/llama-3.3-70b-instruct');
+  assert.equal(MODELS.TYPESAFE_JEV, 'typesafe/jev');
+  assert.equal(MODELS.TYPESAFE_JEV_SYSTEM_ONE, 'typesafe/jev');
 });

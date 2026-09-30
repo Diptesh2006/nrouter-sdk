@@ -135,7 +135,24 @@ export {
 // Body construction, exported for the same reason.
 export { buildChatBody, buildExtraBody, buildFeatureBody, buildMessages } from './options';
 
-export { NRouterModels, type NRouterModel, type NRouterModelList, type NRouterCapabilities, type RawRequester } from './models';
+export {
+  NRouterModels,
+  MODELS,
+  MODEL_META_LLAMA_3_3_70B_INSTRUCT,
+  MODEL_META_LLAMA_3_1_70B_INSTRUCT,
+  MODEL_META_LLAMA_3_1_8B_INSTRUCT,
+  MODEL_META_LLAMA_3_2_11B_VISION,
+  MODEL_META_LLAMA_3_2_90B_VISION,
+  MODEL_META_LLAMA_3_2_3B_INSTRUCT,
+  MODEL_META_LLAMA_3_2_1B_INSTRUCT,
+  MODEL_TYPESAFE_JEV,
+  MODEL_TYPESAFE_JEV_SYSTEM_ONE,
+  type NRouterModel,
+  type NRouterModelList,
+  type NRouterCapabilities,
+  type RawRequester,
+  type WellKnownModel,
+} from './models';
 
 // The Anthropic Messages wire. Exported for the same reason `buildChatBody` is:
 // a caller assembling its own request needs to know which wire a model is

@@ -9,39 +9,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-1. **Ten Client SDKs:** Coordinated version **`3.1.2`** speaking one gateway wire contract (`api.nrouter.ai/v1/*`).
-2. **Customer Support Agent:** Public zero-DB `@nrouter_ai/support-agent` (`agents/customer-support-agent/`) for customer triage and support automation.
-
-### The Ten SDKs Matrix
-
-| SDK | Distribution | Package | Version |
-|---|---|---|---|
-| `sdks/js` | npm | `@nrouter_ai/sdk` | 3.1.2 |
-| `sdks/python` | PyPI | `nrouter-sdk` | 3.1.2 |
-| `sdks/java` | Maven Central | `ai.nrouter:nrouter-sdk` | 3.1.2 |
-| `sdks/kotlin` | Maven Central | `ai.nrouter:nrouter-sdk-kotlin` | 3.1.2 |
-| `sdks/android` | Maven Central | `ai.nrouter:nrouter-sdk-android` | 3.1.2 |
-| `sdks/go` | Go Modules | `github.com/nRouterGateway/nrouter-sdk/sdks/go/v3` | 3.1.2 |
-| `sdks/rust` | crates.io | `nrouter` | 3.1.2 |
-| `sdks/swift` | Swift Package Manager | `github.com/nRouterGateway/nrouter-sdk` | 3.1.2 |
-| `sdks/dart` | pub.dev | `nrouter` | 3.1.2 |
-| `sdks/r` | R-universe / CRAN | `nrouter` | 3.1.2 |
+1. **Ten client SDKs** under `sdks/` (js, python, java, kotlin, android, go, rust, swift, dart, r), all speaking one gateway wire contract (`api.nrouter.ai/v1/*`). Package names and versions live in each SDK's manifest — read them there, never from prose; the SDKs are not all on the same version.
+2. **Agents** under `agents/`; `agents/customer-support-agent/` is the public zero-DB `@nrouter_ai/support-agent`.
 
 ## The One Rule: Canonical Specification (Rule #14)
 
-**`spec/nrouter-sdk-spec.json` is the source of truth, derived from the gateway** — never the other way around. Base URL, `NROUTER_API_KEY`, the `sk-nrouter-` prefix, every `x-nr-*` header, and error formats. When an SDK and the spec disagree, the SDK is wrong.
+**`spec/nrouter-sdk-spec.json` is the source of truth, derived from the gateway** — never the other way around: base URL, `NROUTER_API_KEY`, every `x-nr-*` header, the error envelope and error codes. When an SDK and the spec disagree, the SDK is wrong.
 
-### Parity & Conformance Gates
+## Commands
+
 ```bash
-python3 scripts/check_sdk_parity.py --self-test       # verify parity gate bites
-python3 scripts/check_sdk_parity.py                   # check playbooks, manifests, READMEs
-python3 conformance/check_conformance.py --self-test # verify conformance gate bites
-python3 conformance/check_conformance.py             # all ten agree on spec
+python3 scripts/check_sdk_parity.py [--self-test]        # playbooks, manifests, READMEs agree
+python3 conformance/check_conformance.py [--self-test]   # all ten agree with the spec
+scripts/test-all.sh                                      # every SDK's own tests, one lane each
+(cd sdks/js && npm ci && npm test)                       # one SDK; each sdks/<lang>/README.md has its command
 ```
 
 ## Traps & Invariants
 
-- **Error Format:** a refusal body is `{"error": {"type": "...", "message": "..."}}`, plus an **optional** `"code"` the gateway adds only where it can name a spec `errors` key — a guardrail refusal at either end (`guardrail_blocked`) and a guardrail-capacity 503 (`service_unavailable`). Model `code` as optional or a strict decoder breaks on a 401/404/429. Classify on `code`, then `type`, then status; never on `message` — except as the documented compatibility fallback for pre-spec gateways, which sent a pre-call block as `gateway_error` with no `code`.
+- **Error format:** a refusal body is `{"error": {"type": "...", "message": "..."}}` plus an **optional** `"code"`, present only where the gateway can name a spec `errors` key. Model `code` as optional; classify on `code`, then `type`, then status, never on `message`. The exact code list is the spec's `error_envelope`.
 - **Pricing:** `x-nr-request-cost` is absent when unpriced; rendering it as `0` falsely reports a free request (violates Rule #28).
 - **Credentials:** Never print or serialize API keys in debug/logging output (all SDKs redact).
 - **Publishing:** Managed from `nrouter-infra-cicd` (`/deploy-nrouter-sdk`, skill `deploy-nrouter-sdk`). In-repo notes in `PUBLISHING.md`.

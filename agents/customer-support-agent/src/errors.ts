@@ -1,4 +1,3 @@
-// LANE L2 owns this file.
 import type { SafeError, SupportAgentErrorCode } from './types.js';
 import {
   nRouterAuthenticationError,
@@ -58,6 +57,32 @@ export function mapErrorClass(Cls: unknown): SupportAgentErrorCode {
     return 'rate_limited';
   }
   return 'upstream_error';
+}
+
+/**
+ * Whether a RAW gateway error allows trying the next configured model. Decided
+ * before `toSafeError`, which drops the HTTP status.
+ *
+ * Only an availability refusal qualifies: a 404 that names `model_not_found`
+ * (or, when the gateway sent no code, one the SDK classified as a missing
+ * model), or a 503 that is `service_unavailable` or carries no code. Auth,
+ * credit, budget, rate-limit and guardrail refusals and aborts never do: a
+ * fallback must not change who pays or how. Reads plain properties rather than
+ * classes so it holds across a duplicated SDK copy.
+ */
+export function isModelFallbackEligible(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  if (isAbortError(err)) return false;
+  const { status, code, kind } = err as { status?: unknown; code?: unknown; kind?: unknown };
+  if (kind === 'guardrail_blocked') return false;
+  const noCode = code === null || code === undefined;
+  if (status === 404) {
+    return code === 'model_not_found' || (noCode && kind === 'not_found');
+  }
+  if (status === 503) {
+    return noCode || code === 'service_unavailable';
+  }
+  return false;
 }
 
 /** Map any thrown value (SDK error classes, AbortError, unknown) to a redacted SafeError. */

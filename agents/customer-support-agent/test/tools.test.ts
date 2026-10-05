@@ -62,7 +62,7 @@ describe('runToolPhase', () => {
 
     const cfg = {
       client: fakeClient,
-      model: 'test-model',
+      models: ['test-model'],
       tools: [goodTool, badTool],
       maxToolSteps: 2,
     } as any;
@@ -103,7 +103,7 @@ describe('runToolPhase', () => {
 
     const cfg = {
       client: fakeClient,
-      model: 'test-model',
+      models: ['test-model'],
       tools: [tool],
       maxToolSteps: 3,
     } as any;
@@ -113,5 +113,28 @@ describe('runToolPhase', () => {
     // Should stop after 3 steps due to maxToolSteps
     expect(fakeClient.nr.request).toHaveBeenCalledTimes(3);
     expect(result.ranTools).toBe(true);
+  });
+
+  it('calls the primary model by default and the given model when one is passed', async () => {
+    const fakeClient = { nr: { request: vi.fn() } } as any;
+    fakeClient.nr.request.mockResolvedValue({
+      status: 200,
+      headers: { get: () => null },
+      text: JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'answer' } }] }),
+      contentType: 'application/json'
+    });
+    const tool: AgentTool = {
+      definition: { type: 'function', function: { name: 'my_tool' } },
+      execute: vi.fn().mockResolvedValue('ok'),
+    };
+    const cfg = { client: fakeClient, models: ['primary-model', 'backup-model'], tools: [tool], maxToolSteps: 2 } as any;
+
+    await runToolPhase(cfg, [{ role: 'user', content: 'hi' }], vi.fn());
+    expect(JSON.stringify(fakeClient.nr.request.mock.calls[0])).toContain('primary-model');
+    expect(JSON.stringify(fakeClient.nr.request.mock.calls[0])).not.toContain('backup-model');
+
+    await runToolPhase(cfg, [{ role: 'user', content: 'hi' }], vi.fn(), undefined, 'backup-model');
+    expect(JSON.stringify(fakeClient.nr.request.mock.calls[1])).toContain('backup-model');
+    expect(JSON.stringify(fakeClient.nr.request.mock.calls[1])).not.toContain('primary-model');
   });
 });

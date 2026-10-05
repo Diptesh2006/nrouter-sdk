@@ -1,4 +1,3 @@
-// LANE L6 owns this file.
 import type { ResolvedConfig, ScoredChunk } from './types.js';
 import { embed } from './client.js';
 

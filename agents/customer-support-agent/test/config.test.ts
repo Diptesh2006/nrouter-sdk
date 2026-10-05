@@ -26,7 +26,7 @@ describe('resolveConfig', () => {
 
   it('resolves valid config with defaults', () => {
     const resolved = resolveConfig(validBaseConfig);
-    expect(resolved.model).toBe('claude-haiku');
+    expect(resolved.models).toEqual(['claude-haiku']);
     expect(resolved.agentName).toBe('Support');
     expect(resolved.limits).toEqual(DEFAULT_LIMITS);
     expect(resolved.confidence).toEqual(DEFAULT_CONFIDENCE);
@@ -135,6 +135,123 @@ describe('resolveConfig', () => {
 
   it('validates maskPii is a boolean when provided', () => {
     expect(() => resolveConfig({ ...validBaseConfig, maskPii: 'yes' as any })).toThrowError(SupportAgentError);
+  });
+
+  describe('model list', () => {
+    it('resolves a single model id to a one-entry list', () => {
+      expect(resolveConfig(validBaseConfig).models).toEqual(['claude-haiku']);
+    });
+
+    it('keeps list order and removes duplicates', () => {
+      const resolved = resolveConfig({ ...validBaseConfig, model: ['a', 'b', 'a'] });
+      expect(resolved.models).toEqual(['a', 'b']);
+    });
+
+    it('rejects an empty list, blank entries and non-strings', () => {
+      expect(() => resolveConfig({ ...validBaseConfig, model: [] })).toThrowError(/model/);
+      expect(() => resolveConfig({ ...validBaseConfig, model: ['a', ''] })).toThrowError(/model/);
+      expect(() => resolveConfig({ ...validBaseConfig, model: ['a', '   '] })).toThrowError(/model/);
+      expect(() => resolveConfig({ ...validBaseConfig, model: ['a', 7 as any] })).toThrowError(/model/);
+      expect(() => resolveConfig({ ...validBaseConfig, model: 7 as any })).toThrowError(/model/);
+    });
+
+    it('rejects more than three distinct models', () => {
+      expect(resolveConfig({ ...validBaseConfig, model: ['a', 'b', 'c'] }).models).toHaveLength(3);
+      expect(resolveConfig({ ...validBaseConfig, model: ['a', 'b', 'c', 'a'] }).models).toHaveLength(3);
+      expect(() => resolveConfig({ ...validBaseConfig, model: ['a', 'b', 'c', 'd'] })).toThrowError(/model/);
+    });
+  });
+
+  describe('defaultHeaders', () => {
+    it('passes headers through to the created client and sets none by default', () => {
+      const withHeaders = resolveConfig({ ...validBaseConfig, defaultHeaders: { 'x-team': 'support' } });
+      expect((withHeaders.client as any).nrouterOptions.defaultHeaders).toEqual({ 'x-team': 'support' });
+
+      const without = resolveConfig(validBaseConfig);
+      expect((without.client as any).nrouterOptions.defaultHeaders).toBeUndefined();
+    });
+
+    it('rejects a non-object or non-string header values without echoing them', () => {
+      expect(() => resolveConfig({ ...validBaseConfig, defaultHeaders: 'x' as any })).toThrowError(/defaultHeaders/);
+      expect(() => resolveConfig({ ...validBaseConfig, defaultHeaders: ['x'] as any })).toThrowError(/defaultHeaders/);
+      let message = '';
+      try {
+        resolveConfig({ ...validBaseConfig, defaultHeaders: { 'x-secret': 12345678 as any } });
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message).toMatch(/defaultHeaders/);
+      expect(message).not.toContain('12345678');
+    });
+  });
+
+  describe('booking', () => {
+    it('is null by default', () => {
+      expect(resolveConfig(validBaseConfig).booking).toBeNull();
+    });
+
+    it('resolves the url and the default label', () => {
+      const resolved = resolveConfig({ ...validBaseConfig, booking: { url: 'https://example.com/book' } });
+      expect(resolved.booking).toEqual({ url: 'https://example.com/book', label: 'Book a meeting' });
+    });
+
+    it('keeps a custom label', () => {
+      const resolved = resolveConfig({ ...validBaseConfig, booking: { url: 'https://example.com/book', label: 'Talk to us' } });
+      expect(resolved.booking).toEqual({ url: 'https://example.com/book', label: 'Talk to us' });
+    });
+
+    it('rejects a url that is not https, naming the field and never the value', () => {
+      for (const url of ['http://example.com/book', 'javascript:alert(1)', 'not a url', '', '//example.com']) {
+        let message = '';
+        try {
+          resolveConfig({ ...validBaseConfig, booking: { url } });
+        } catch (err) {
+          expect(err).toBeInstanceOf(SupportAgentError);
+          expect((err as SupportAgentError).code).toBe('invalid_config');
+          message = (err as Error).message;
+        }
+        expect(message).toMatch(/booking\.url/);
+        if (url) expect(message).not.toContain(url);
+      }
+      expect(() => resolveConfig({ ...validBaseConfig, booking: { url: 42 as any } })).toThrowError(/booking\.url/);
+      expect(() => resolveConfig({ ...validBaseConfig, booking: 'https://example.com' as any })).toThrowError(/booking/);
+    });
+
+    it('caps the url at 2048 characters', () => {
+      const base = 'https://example.com/';
+      const ok = base + 'a'.repeat(2048 - base.length);
+      expect(resolveConfig({ ...validBaseConfig, booking: { url: ok } }).booking?.url).toBe(ok);
+      expect(() => resolveConfig({ ...validBaseConfig, booking: { url: ok + 'a' } })).toThrowError(/booking\.url/);
+    });
+
+    it('caps the label at 60 characters and rejects an empty or non-string label', () => {
+      const url = 'https://example.com/book';
+      expect(resolveConfig({ ...validBaseConfig, booking: { url, label: 'a'.repeat(60) } }).booking?.label).toHaveLength(60);
+      expect(() => resolveConfig({ ...validBaseConfig, booking: { url, label: 'a'.repeat(61) } })).toThrowError(/booking\.label/);
+      expect(() => resolveConfig({ ...validBaseConfig, booking: { url, label: '  ' } })).toThrowError(/booking\.label/);
+      expect(() => resolveConfig({ ...validBaseConfig, booking: { url, label: 5 as any } })).toThrowError(/booking\.label/);
+    });
+  });
+
+  describe('suggestions', () => {
+    it('is off by default and when false', () => {
+      expect(resolveConfig(validBaseConfig).suggestions).toBeNull();
+      expect(resolveConfig({ ...validBaseConfig, suggestions: false }).suggestions).toBeNull();
+    });
+
+    it('defaults max to 3', () => {
+      expect(resolveConfig({ ...validBaseConfig, suggestions: true }).suggestions).toEqual({ max: 3 });
+      expect(resolveConfig({ ...validBaseConfig, suggestions: {} }).suggestions).toEqual({ max: 3 });
+    });
+
+    it('accepts max from 1 to 5 and rejects anything else', () => {
+      expect(resolveConfig({ ...validBaseConfig, suggestions: { max: 1 } }).suggestions).toEqual({ max: 1 });
+      expect(resolveConfig({ ...validBaseConfig, suggestions: { max: 5 } }).suggestions).toEqual({ max: 5 });
+      expect(() => resolveConfig({ ...validBaseConfig, suggestions: { max: 0 } })).toThrowError(/suggestions\.max/);
+      expect(() => resolveConfig({ ...validBaseConfig, suggestions: { max: 6 } })).toThrowError(/suggestions\.max/);
+      expect(() => resolveConfig({ ...validBaseConfig, suggestions: { max: 2.5 } })).toThrowError(/suggestions\.max/);
+      expect(() => resolveConfig({ ...validBaseConfig, suggestions: 'yes' as any })).toThrowError(/suggestions/);
+    });
   });
 });
 

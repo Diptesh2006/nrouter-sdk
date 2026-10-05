@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createSupportAgent } from '../src/agent.js';
 import type { nRouter } from '@nrouter_ai/sdk';
-import { nRouterGuardrailBlockedError } from '@nrouter_ai/sdk';
+import { nRouterGuardrailBlockedError, classifyError } from '@nrouter_ai/sdk';
 import { SupportAgentError } from '../src/errors.js';
 
 vi.mock('../src/retrieval.js', () => ({ retrieve: vi.fn().mockResolvedValue([]) }));
@@ -342,6 +342,353 @@ describe('SupportAgent', () => {
       { type: 'text', text: 'my email is [email]' },
       { type: 'image_url', image_url: { url: 'https://example.com/img.png' } }
     ]);
+  });
+});
+
+describe('SupportAgent: model fallback, booking action and suggestions', () => {
+  const fakeIndex = { version: 1 as const, embeddingModel: 't', dimensions: 2, createdAt: '2026', chunks: [] };
+  const fakeClient = { nr: {}, embeddings: {} } as unknown as nRouter;
+  const user = (content: string) => ({ messages: [{ role: 'user', content }] });
+  const tool = { definition: { type: 'function', function: { name: 't1' } }, execute: vi.fn() } as any;
+
+  function answer(...tokens: string[]) {
+    return {
+      cost: { costUsd: 0.01, status: 'exact' as const },
+      chunks: (async function* () { for (const t of tokens) yield t; })()
+    };
+  }
+
+  async function collect(agent: ReturnType<typeof createSupportAgent>, req: unknown): Promise<any[]> {
+    const events = [];
+    for await (const ev of agent.chat(req)) events.push(ev);
+    return events;
+  }
+
+  // Earlier tests leave implementations behind; pin every collaborator here.
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { retrieve } = await import('../src/retrieval.js');
+    vi.mocked(retrieve).mockResolvedValue([]);
+    const { scoreConfidence } = await import('../src/confidence.js');
+    vi.mocked(scoreConfidence).mockReturnValue({ level: 'high', score: 0.9 });
+    const { buildCitations } = await import('../src/prompt.js');
+    vi.mocked(buildCitations).mockReturnValue([]);
+    const { latestQuestion } = await import('../src/gaps.js');
+    vi.mocked(latestQuestion).mockReturnValue('Q');
+    const { runToolPhase } = await import('../src/tools.js');
+    vi.mocked(runToolPhase).mockImplementation(async (c, m) => ({ messages: m, ranTools: false }));
+    const { streamChat } = await import('../src/client.js');
+    vi.mocked(streamChat).mockImplementation(async () => answer('ok'));
+  });
+
+  it.each([
+    ['503', () => classifyError(null, 'unavailable', 503)],
+    ['404 model_not_found', () => classifyError('model_not_found', 'no such model', 404)],
+  ])('falls back to the next model on %s before any token', async (_name, makeErr) => {
+    const { streamChat } = await import('../src/client.js');
+    const seen: string[] = [];
+    vi.mocked(streamChat).mockImplementation(async (_client, opts) => {
+      seen.push(opts.model);
+      if (opts.model === 'a') throw makeErr();
+      return answer('from-b');
+    });
+
+    const agent = createSupportAgent({ client: fakeClient, model: ['a', 'b'], knowledge: fakeIndex });
+    const events = await collect(agent, user('hi'));
+
+    expect(seen).toEqual(['a', 'b']);
+    expect(events.map(e => e.type)).toEqual(['confidence', 'token', 'cost', 'done']);
+    expect(events[1]).toEqual({ type: 'token', text: 'from-b' });
+    expect(JSON.stringify(events)).not.toContain('"b"');
+  });
+
+  it.each([
+    ['401', () => classifyError(null, 'bad key', 401), 'auth_failed'],
+    ['403', () => classifyError(null, 'forbidden', 403), 'upstream_error'],
+    ['402 credit', () => classifyError(null, 'insufficient credits', 402), 'insufficient_credit'],
+    ['402 budget', () => classifyError(null, 'budget exceeded', 402), 'insufficient_credit'],
+    ['429', () => classifyError(null, 'slow down', 429), 'rate_limited'],
+    ['guardrail block', () => classifyError(null, 'request blocked by a guardrail', 400), 'guardrail_blocked'],
+    ['abort', () => Object.assign(new Error('aborted'), { name: 'AbortError' }), 'aborted'],
+  ])('never falls back on %s', async (_name, makeErr, code) => {
+    const { streamChat } = await import('../src/client.js');
+    vi.mocked(streamChat).mockImplementation(async () => { throw makeErr(); });
+
+    const agent = createSupportAgent({ client: fakeClient, model: ['a', 'b'], knowledge: fakeIndex });
+    const events = await collect(agent, user('hi'));
+
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(events.map(e => e.type)).toEqual(['confidence', 'error', 'done']);
+    expect(events[1].code).toBe(code);
+  });
+
+  it('never falls back once a token has been emitted', async () => {
+    const { streamChat } = await import('../src/client.js');
+    vi.mocked(streamChat).mockImplementation(async () => ({
+      cost: { costUsd: null, status: 'unpriced' as const },
+      chunks: (async function* () {
+        yield 'partial';
+        throw classifyError(null, 'unavailable', 503);
+      })()
+    }));
+
+    const agent = createSupportAgent({ client: fakeClient, model: ['a', 'b'], knowledge: fakeIndex });
+    const events = await collect(agent, user('hi'));
+
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(events.map(e => e.type)).toEqual(['confidence', 'token', 'error', 'done']);
+  });
+
+  it('never falls back once a host tool has run', async () => {
+    const { runToolPhase } = await import('../src/tools.js');
+    vi.mocked(runToolPhase).mockImplementation(async (_c, _m, emit) => {
+      emit({ tool: 't1', title: 't1', status: 'running' });
+      throw classifyError(null, 'unavailable', 503);
+    });
+
+    const agent = createSupportAgent({ client: fakeClient, model: ['a', 'b'], knowledge: fakeIndex, tools: [tool] });
+    const events = await collect(agent, user('hi'));
+
+    expect(runToolPhase).toHaveBeenCalledTimes(1);
+    expect(events.map(e => e.type)).toEqual(['confidence', 'error', 'done']);
+  });
+
+  it('runs the tool phase on the fallback model when the primary is refused before any tool ran', async () => {
+    const { runToolPhase } = await import('../src/tools.js');
+    const seen: unknown[] = [];
+    vi.mocked(runToolPhase).mockImplementation(async (_c, m, _emit, _signal, model) => {
+      seen.push(model);
+      if (model === 'a') throw classifyError(null, 'unavailable', 503);
+      return { messages: m, ranTools: false, text: 'tool answer', cost: { costUsd: 0.1, status: 'exact' } };
+    });
+
+    const agent = createSupportAgent({ client: fakeClient, model: ['a', 'b'], knowledge: fakeIndex, tools: [tool] });
+    const events = await collect(agent, user('hi'));
+
+    expect(seen).toEqual(['a', 'b']);
+    expect(events.map(e => e.type)).toEqual(['confidence', 'token', 'cost', 'done']);
+  });
+
+  it('is bounded by the model list', async () => {
+    const { streamChat } = await import('../src/client.js');
+    const seen: string[] = [];
+    vi.mocked(streamChat).mockImplementation(async (_client, opts) => {
+      seen.push(opts.model);
+      throw classifyError(null, 'unavailable', 503);
+    });
+
+    const agent = createSupportAgent({ client: fakeClient, model: ['a', 'b', 'c'], knowledge: fakeIndex });
+    const events = await collect(agent, user('hi'));
+
+    expect(seen).toEqual(['a', 'b', 'c']);
+    expect(events.map(e => e.type)).toEqual(['confidence', 'error', 'done']);
+    expect(events[1].code).toBe('upstream_error');
+  });
+
+  it('a single model never retries', async () => {
+    const { streamChat } = await import('../src/client.js');
+    vi.mocked(streamChat).mockImplementation(async () => { throw classifyError(null, 'unavailable', 503); });
+
+    const agent = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex });
+    await collect(agent, user('hi'));
+
+    expect(streamChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('the guardrail retry stays on the model already fallen back to', async () => {
+    const { streamChat } = await import('../src/client.js');
+    const { scoreConfidence } = await import('../src/confidence.js');
+    vi.mocked(scoreConfidence).mockReturnValue({ level: 'low', score: 0.1 });
+    const seen: string[] = [];
+    vi.mocked(streamChat).mockImplementation(async (_client, opts) => {
+      seen.push(opts.model);
+      if (seen.length === 1) throw classifyError(null, 'unavailable', 503);
+      if (seen.length === 2) throw new nRouterGuardrailBlockedError('blocked', {} as any);
+      return answer('retry_ok');
+    });
+
+    const agent = createSupportAgent({
+      client: fakeClient, model: ['a', 'b'], knowledge: fakeIndex,
+      webSearch: { label: 'B', search: vi.fn() }
+    });
+    const events = await collect(agent, user('hi'));
+
+    expect(seen).toEqual(['a', 'b', 'b']);
+    expect(events.find(e => e.type === 'token')).toEqual({ type: 'token', text: 'retry_ok' });
+    expect(events.map(e => e.type)).not.toContain('error');
+  });
+
+  it('the guardrail retry does not replay an answer that already started streaming', async () => {
+    const { streamChat } = await import('../src/client.js');
+    const { scoreConfidence } = await import('../src/confidence.js');
+    vi.mocked(scoreConfidence).mockReturnValue({ level: 'low', score: 0.1 });
+    vi.mocked(streamChat).mockImplementation(async () => ({
+      cost: { costUsd: null, status: 'unpriced' as const },
+      chunks: (async function* () {
+        yield 'partial';
+        throw new nRouterGuardrailBlockedError('blocked', {} as any);
+      })()
+    }));
+
+    const agent = createSupportAgent({
+      client: fakeClient, model: 'a', knowledge: fakeIndex,
+      webSearch: { label: 'B', search: vi.fn() }
+    });
+    const events = await collect(agent, user('hi'));
+
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(events.filter(e => e.type === 'token')).toHaveLength(1);
+    expect(events.slice(-2).map(e => e.type)).toEqual(['error', 'done']);
+    expect(events.at(-2).code).toBe('guardrail_blocked');
+  });
+
+  it('the guardrail retry does not run a host tool a second time', async () => {
+    const { runToolPhase } = await import('../src/tools.js');
+    const { scoreConfidence } = await import('../src/confidence.js');
+    vi.mocked(scoreConfidence).mockReturnValue({ level: 'low', score: 0.1 });
+    vi.mocked(runToolPhase).mockImplementation(async (_c, _m, emit) => {
+      emit({ tool: 't1', title: 'T1', status: 'done' });
+      throw new nRouterGuardrailBlockedError('blocked', {} as any);
+    });
+
+    const agent = createSupportAgent({
+      client: fakeClient, model: 'a', knowledge: fakeIndex, tools: [tool],
+      webSearch: { label: 'B', search: vi.fn() }
+    });
+    const events = await collect(agent, user('hi'));
+
+    expect(runToolPhase).toHaveBeenCalledTimes(1);
+    expect(events.slice(-2).map(e => e.type)).toEqual(['error', 'done']);
+    expect(events.at(-2).code).toBe('guardrail_blocked');
+  });
+
+  const chunks = [
+    { id: '1', title: 'Routing', url: 'https://example.com/routing', content: 'c', similarity: 0.9 },
+    { id: '2', title: 'Pricing', url: 'https://example.com/pricing', content: 'c', similarity: 0.8 },
+    { id: '3', title: 'API keys', url: 'https://example.com/keys', content: 'c', similarity: 0.7 },
+  ];
+  const booking = { url: 'https://example.com/book' };
+
+  it('emits suggestions then the booking action after the tokens and before cost', async () => {
+    const { retrieve } = await import('../src/retrieval.js');
+    vi.mocked(retrieve).mockResolvedValue(chunks);
+    const { latestQuestion } = await import('../src/gaps.js');
+    vi.mocked(latestQuestion).mockReturnValue('Can I book a demo?');
+
+    const agent = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex, booking, suggestions: true });
+    const events = await collect(agent, user('Can I book a demo?'));
+
+    expect(events.map(e => e.type)).toEqual(['confidence', 'token', 'suggestions', 'action', 'cost', 'done']);
+    expect(events[2]).toEqual({ type: 'suggestions', questions: ['Tell me about Pricing', 'Tell me about API keys'] });
+    expect(events[3]).toEqual({ type: 'action', action: 'book_meeting', url: 'https://example.com/book', label: 'Book a meeting' });
+  });
+
+  it('makes no extra model call for either event', async () => {
+    const { retrieve } = await import('../src/retrieval.js');
+    vi.mocked(retrieve).mockResolvedValue(chunks);
+    const { latestQuestion } = await import('../src/gaps.js');
+    vi.mocked(latestQuestion).mockReturnValue('contact sales');
+    const { streamChat } = await import('../src/client.js');
+    const { runToolPhase } = await import('../src/tools.js');
+
+    const agent = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex, booking, suggestions: true });
+    await collect(agent, user('contact sales'));
+
+    expect(streamChat).toHaveBeenCalledTimes(1);
+    expect(runToolPhase).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers booking on low confidence even without booking intent', async () => {
+    const { scoreConfidence } = await import('../src/confidence.js');
+    vi.mocked(scoreConfidence).mockReturnValue({ level: 'low', score: 0.1 });
+
+    const agent = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex, booking: { ...booking, label: 'Talk to us' } });
+    const events = await collect(agent, user('something obscure'));
+
+    expect(events.find(e => e.type === 'action')).toEqual({
+      type: 'action', action: 'book_meeting', url: 'https://example.com/book', label: 'Talk to us'
+    });
+  });
+
+  it('does not offer booking without intent at medium or high confidence', async () => {
+    const { latestQuestion } = await import('../src/gaps.js');
+    vi.mocked(latestQuestion).mockReturnValue('is the demo key rate limited?');
+    const { scoreConfidence } = await import('../src/confidence.js');
+    const agent = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex, booking });
+
+    for (const level of ['high', 'medium'] as const) {
+      vi.mocked(scoreConfidence).mockReturnValue({ level, score: 0.5 });
+      const events = await collect(agent, user('is the demo key rate limited?'));
+      expect(events.map(e => e.type)).not.toContain('action');
+    }
+  });
+
+  it('emits neither event when not configured', async () => {
+    const { retrieve } = await import('../src/retrieval.js');
+    vi.mocked(retrieve).mockResolvedValue(chunks);
+    const { latestQuestion } = await import('../src/gaps.js');
+    vi.mocked(latestQuestion).mockReturnValue('book a demo');
+
+    const agent = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex });
+    const events = await collect(agent, user('book a demo'));
+
+    expect(events.map(e => e.type)).toEqual(['confidence', 'token', 'cost', 'done']);
+  });
+
+  it('omits suggestions when there is no related topic', async () => {
+    const { retrieve } = await import('../src/retrieval.js');
+    vi.mocked(retrieve).mockResolvedValue(chunks.slice(0, 1));
+
+    const agent = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex, suggestions: true });
+    const events = await collect(agent, user('hi'));
+
+    expect(events.map(e => e.type)).not.toContain('suggestions');
+  });
+
+  it('caps suggestions at the configured max', async () => {
+    const { retrieve } = await import('../src/retrieval.js');
+    vi.mocked(retrieve).mockResolvedValue(chunks);
+
+    const agent = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex, suggestions: { max: 1 } });
+    const events = await collect(agent, user('hi'));
+
+    expect(events.find(e => e.type === 'suggestions')).toEqual({ type: 'suggestions', questions: ['Tell me about Pricing'] });
+  });
+
+  it('masks personal data in suggestions unless masking is turned off', async () => {
+    const { retrieve } = await import('../src/retrieval.js');
+    vi.mocked(retrieve).mockResolvedValue([
+      chunks[0]!,
+      { id: '9', title: 'Escalations to jane@example.com', url: 'https://example.com/e', content: 'c', similarity: 0.5 },
+    ]);
+
+    const masked = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex, suggestions: true });
+    const maskedEvents = await collect(masked, user('hi'));
+    expect(maskedEvents.find(e => e.type === 'suggestions')).toEqual({
+      type: 'suggestions', questions: ['Tell me about Escalations to [email]']
+    });
+
+    const raw = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex, suggestions: true, maskPii: false });
+    const rawEvents = await collect(raw, user('hi'));
+    expect(rawEvents.find(e => e.type === 'suggestions')).toEqual({
+      type: 'suggestions', questions: ['Tell me about Escalations to jane@example.com']
+    });
+  });
+
+  it('emits neither event on an errored response', async () => {
+    const { retrieve } = await import('../src/retrieval.js');
+    vi.mocked(retrieve).mockResolvedValue(chunks);
+    const { latestQuestion } = await import('../src/gaps.js');
+    vi.mocked(latestQuestion).mockReturnValue('book a demo');
+    const { scoreConfidence } = await import('../src/confidence.js');
+    vi.mocked(scoreConfidence).mockReturnValue({ level: 'low', score: 0.1 });
+    const { streamChat } = await import('../src/client.js');
+    vi.mocked(streamChat).mockImplementation(async () => { throw classifyError(null, 'slow down', 429); });
+
+    const agent = createSupportAgent({ client: fakeClient, model: 'a', knowledge: fakeIndex, booking, suggestions: true });
+    const events = await collect(agent, user('book a demo'));
+
+    expect(events.map(e => e.type)).toEqual(['confidence', 'error', 'done']);
   });
 });
 

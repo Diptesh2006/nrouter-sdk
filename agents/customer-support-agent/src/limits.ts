@@ -1,4 +1,3 @@
-// LANE L1 owns this file.
 import type { ChatRequest, PayloadLimits, ChatTurn, TrustedContext } from './types.js';
 import { SupportAgentError } from './errors.js';
 

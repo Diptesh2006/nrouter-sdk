@@ -1,4 +1,3 @@
-// LANE L7 owns this file.
 import type { Citation, EndUserIdentity, ScoredChunk, WebSource } from './types.js';
 
 export interface PromptInput {

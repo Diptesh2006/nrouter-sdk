@@ -1,4 +1,3 @@
-// LANE L1 owns this file. Contract: see lane brief.
 import type { PayloadLimits, ConfidenceThresholds, ResolvedConfig, SupportAgentConfig, KnowledgeStore, KnowledgeIndex } from './types.js';
 import { SupportAgentError } from './errors.js';
 import { createClient } from './client.js';
@@ -11,22 +10,94 @@ export const DEFAULT_MAX_TOKENS = 1024;
 export const DEFAULT_MAX_TOOL_STEPS = 4;
 export const DEFAULT_AGENT_NAME = 'Support';
 
+export const MAX_MODELS = 3;
+export const DEFAULT_BOOKING_LABEL = 'Book a meeting';
+export const MAX_BOOKING_URL_CHARS = 2048;
+export const MAX_BOOKING_LABEL_CHARS = 60;
+export const DEFAULT_SUGGESTIONS_MAX = 3;
+export const MAX_SUGGESTIONS = 5;
+
 function isKnowledgeIndex(k: KnowledgeStore | KnowledgeIndex): k is KnowledgeIndex {
   return 'version' in k && 'chunks' in k && k.version === 1;
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** One id or an ordered list → a non-empty, de-duplicated list of at most MAX_MODELS. */
+function resolveModels(model: unknown): string[] {
+  const list = Array.isArray(model) ? model : [model];
+  if (list.length === 0 || list.some((m) => typeof m !== 'string' || m.trim() === '')) {
+    throw new SupportAgentError('invalid_config', 'model is required and must be a non-empty string or a list of them');
+  }
+  const models = [...new Set(list as string[])];
+  if (models.length > MAX_MODELS) {
+    throw new SupportAgentError('invalid_config', `model must list at most ${MAX_MODELS} distinct models`);
+  }
+  return models;
+}
+
+function resolveDefaultHeaders(headers: unknown): Record<string, string> | undefined {
+  if (headers === undefined) return undefined;
+  if (!isPlainObject(headers) || Object.entries(headers).some(([k, v]) => k.trim() === '' || typeof v !== 'string')) {
+    throw new SupportAgentError('invalid_config', 'defaultHeaders must be an object of string header values');
+  }
+  return headers as Record<string, string>;
+}
+
+function resolveBooking(booking: unknown): ResolvedConfig['booking'] {
+  if (booking === undefined) return null;
+  if (!isPlainObject(booking)) {
+    throw new SupportAgentError('invalid_config', 'booking must be an object with a url');
+  }
+  const { url, label } = booking;
+  let protocol = '';
+  if (typeof url === 'string' && url.length <= MAX_BOOKING_URL_CHARS) {
+    try {
+      protocol = new URL(url).protocol;
+    } catch {
+      protocol = '';
+    }
+  }
+  if (protocol !== 'https:') {
+    throw new SupportAgentError('invalid_config', `booking.url must be an https URL of at most ${MAX_BOOKING_URL_CHARS} characters`);
+  }
+  if (label === undefined) {
+    return { url: url as string, label: DEFAULT_BOOKING_LABEL };
+  }
+  if (typeof label !== 'string' || label.trim() === '' || label.length > MAX_BOOKING_LABEL_CHARS) {
+    throw new SupportAgentError('invalid_config', `booking.label must be a non-empty string of at most ${MAX_BOOKING_LABEL_CHARS} characters`);
+  }
+  return { url: url as string, label };
+}
+
+function resolveSuggestions(suggestions: unknown): ResolvedConfig['suggestions'] {
+  if (suggestions === undefined || suggestions === false) return null;
+  if (suggestions === true) return { max: DEFAULT_SUGGESTIONS_MAX };
+  if (!isPlainObject(suggestions)) {
+    throw new SupportAgentError('invalid_config', 'suggestions must be a boolean or an object');
+  }
+  const max = suggestions.max === undefined ? DEFAULT_SUGGESTIONS_MAX : suggestions.max;
+  if (typeof max !== 'number' || !Number.isInteger(max) || max < 1 || max > MAX_SUGGESTIONS) {
+    throw new SupportAgentError('invalid_config', `suggestions.max must be an integer from 1 to ${MAX_SUGGESTIONS}`);
+  }
+  return { max };
+}
+
 /** Apply defaults and validate. Throws SupportAgentError('invalid_config') naming the field, never a value. */
 export function resolveConfig(config: SupportAgentConfig): ResolvedConfig {
-  if (!config.model || typeof config.model !== 'string') {
-    throw new SupportAgentError('invalid_config', 'model is required and must be a non-empty string');
-  }
+  const models = resolveModels(config.model);
+  const defaultHeaders = resolveDefaultHeaders(config.defaultHeaders);
+  const booking = resolveBooking(config.booking);
+  const suggestions = resolveSuggestions(config.suggestions);
 
   let client = config.client;
   if (!client) {
     if (!config.apiKey || typeof config.apiKey !== 'string' || !config.apiKey.startsWith('sk-nrouter-')) {
       throw new SupportAgentError('invalid_config', 'apiKey is required and must start with sk-nrouter-');
     }
-    client = createClient(config.apiKey, config.baseURL);
+    client = createClient(config.apiKey, config.baseURL, defaultHeaders);
   }
 
   if (!config.knowledge) {
@@ -85,7 +156,9 @@ export function resolveConfig(config: SupportAgentConfig): ResolvedConfig {
 
   return {
     client,
-    model: config.model,
+    models,
+    booking,
+    suggestions,
     store,
     agentName: config.agentName ?? DEFAULT_AGENT_NAME,
     instructions: config.instructions ?? '',

@@ -1,4 +1,3 @@
-// LANE L9 owns this file.
 import type { SupportAgentHooks } from './types.js';
 
 type HookName = Exclude<keyof SupportAgentHooks, 'onError'>;

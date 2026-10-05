@@ -199,8 +199,14 @@ export interface SupportAgentConfig {
   baseURL?: string;
   /** Injected SDK client — tests and hosts that already hold one. */
   client?: nRouter;
-  /** Chat model id, e.g. "claude-haiku-4-5-20251001". */
-  model: string;
+  /** One model id, or an ordered list. The first is the primary; later entries are fallbacks. */
+  model: string | string[];
+  /** Extra headers sent on every gateway call. No default. Ignored when `client` is supplied. */
+  defaultHeaders?: Record<string, string>;
+  /** Offer a booking link. The URL comes only from here; the model never sees or produces it. */
+  booking?: { url: string; label?: string };
+  /** Emit related follow-up questions after an answer. Default off. */
+  suggestions?: boolean | { max?: number };
   knowledge: KnowledgeStore | KnowledgeIndex;
   agentName?: string;
   /** Extra operator instructions appended to the built-in system prompt. */
@@ -227,7 +233,10 @@ export interface SupportAgentConfig {
 /** Config after defaults are applied and validation passed. */
 export interface ResolvedConfig {
   client: nRouter;
-  model: string;
+  /** Non-empty, de-duplicated, at most three. `models[0]` is the primary. */
+  models: string[];
+  booking: { url: string; label: string } | null;
+  suggestions: { max: number } | null;
   store: KnowledgeStore;
   agentName: string;
   instructions: string;
@@ -291,6 +300,8 @@ export type AgentEvent =
   | { type: 'confidence'; level: ConfidenceLevel; score: number; webSearched: boolean }
   | { type: 'citations'; citations: Citation[] }
   | { type: 'token'; text: string }
+  | { type: 'suggestions'; questions: string[] }
+  | { type: 'action'; action: 'book_meeting'; url: string; label: string }
   | { type: 'cost'; costUsd: number | null; status: 'exact' | 'unpriced'; requestId?: string }
   | { type: 'error'; code: SupportAgentErrorCode; message: string }
   | { type: 'done' };

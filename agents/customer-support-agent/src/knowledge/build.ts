@@ -1,4 +1,3 @@
-// LANE L4 owns this file.
 import type { BuildIndexOptions, KnowledgeIndex, KnowledgeChunk } from '../types.js';
 import { chunkDocs } from './chunk.js';
 import { validateIndex } from './validate.js';

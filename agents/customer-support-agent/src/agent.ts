@@ -1,6 +1,5 @@
-// LANE L10 owns this file.
 import { createMemory } from '@nrouter_ai/sdk';
-import type { SupportAgent, SupportAgentConfig, ChatRequest, AgentEvent, ChatTurn, FeedbackInput } from './types.js';
+import type { SupportAgent, SupportAgentConfig, ChatRequest, AgentEvent, ChatTurn, CostEvent, FeedbackInput } from './types.js';
 import { resolveConfig } from './config.js';
 import { validateChatRequest, validateTrustedContext } from './limits.js';
 import { latestQuestion, normalizeQuestion } from './gaps.js';
@@ -12,10 +11,12 @@ import { sanitizePageContext } from './page-context.js';
 import { runToolPhase } from './tools.js';
 import { streamChat } from './client.js';
 import { callHook } from './hooks.js';
-import { toSafeError } from './errors.js';
+import { toSafeError, isModelFallbackEligible } from './errors.js';
 import { toSSE } from './sse.js';
 import { validateFeedback } from './feedback.js';
 import { maskPii, maskMessageContent } from './pii.js';
+import { matchesBookingIntent } from './booking.js';
+import { buildSuggestions } from './suggestions.js';
 
 export function createSupportAgent(config: SupportAgentConfig): SupportAgent {
   const cfg = resolveConfig(config);
@@ -68,9 +69,14 @@ export function createSupportAgent(config: SupportAgentConfig): SupportAgent {
       }
       
       let fullResponse = '';
-      let costEvent;
+      let costEvent: CostEvent | undefined;
+      // A second attempt (next model, or the guardrail retry) is only safe while
+      // the visitor has seen no token and no host tool has run.
+      let tokensEmitted = false;
+      let hostToolRan = false;
+      let modelIndex = 0;
       
-      async function executePhase(sysPrompt: string) {
+      async function executePhase(sysPrompt: string, model: string) {
          let msgs = [{ role: 'system' as const, content: sysPrompt }, ...history];
          if (cfg.maskPii) {
            msgs = msgs.map(m => ({
@@ -80,9 +86,10 @@ export function createSupportAgent(config: SupportAgentConfig): SupportAgent {
          }
          const phaseEvents: AgentEvent[] = [];
          const tResult = await runToolPhase(cfg, msgs as unknown as import('@nrouter_ai/sdk').ChatMessage[], (ev) => {
+            hostToolRan = true;
             phaseEvents.push({ type: 'tool_call', tool: ev.tool, title: ev.title, status: ev.status });
             if (cfg.hooks.onToolCall) callHook(cfg.hooks, 'onToolCall', ev);
-         }, validatedReq.signal);
+         }, validatedReq.signal, model);
          
          if (cfg.tools && cfg.tools.length > 0) {
            return {
@@ -97,7 +104,7 @@ export function createSupportAgent(config: SupportAgentConfig): SupportAgent {
          }
          
          const sResult = await streamChat(cfg.client, {
-            model: cfg.model,
+            model,
             messages: tResult.messages,
             maxTokens: cfg.maxTokens,
             signal: validatedReq.signal,
@@ -107,17 +114,38 @@ export function createSupportAgent(config: SupportAgentConfig): SupportAgent {
          return { phaseEvents, sResult };
       }
 
-      try {
-         const { phaseEvents, sResult } = await executePhase(system);
-         for (const ev of phaseEvents) yield ev;
-         for await (const chunk of sResult.chunks) {
-            fullResponse += chunk;
-            yield { type: 'token', text: chunk };
+      // One answer attempt. An availability refusal moves to the next configured
+      // model; `modelIndex` is shared, so the request makes at most
+      // models.length - 1 fallbacks in total, the guardrail retry included.
+      async function* answer(sysPrompt: string): AsyncGenerator<AgentEvent> {
+         for (;;) {
+            try {
+               const { phaseEvents, sResult } = await executePhase(sysPrompt, cfg.models[modelIndex]!);
+               for (const ev of phaseEvents) yield ev;
+               for await (const chunk of sResult.chunks) {
+                  fullResponse += chunk;
+                  tokensEmitted = true;
+                  yield { type: 'token', text: chunk };
+               }
+               costEvent = sResult.cost;
+               return;
+            } catch (err) {
+               // Decided on the raw error: toSafeError drops the HTTP status.
+               const canFallBack = modelIndex < cfg.models.length - 1
+                  && !tokensEmitted
+                  && !hostToolRan
+                  && isModelFallbackEligible(err);
+               if (!canFallBack) throw err;
+               modelIndex++;
+            }
          }
-         costEvent = sResult.cost;
+      }
+
+      try {
+         yield* answer(system);
       } catch (err: any) {
          const safeErr = toSafeError(err, config.apiKey ? [config.apiKey] : undefined);
-         if (safeErr.code === 'guardrail_blocked' && webSearched) {
+         if (safeErr.code === 'guardrail_blocked' && webSearched && !tokensEmitted && !hostToolRan) {
             const systemRetry = buildSystemPrompt({
               agentName: cfg.agentName,
               instructions: cfg.instructions,
@@ -127,13 +155,7 @@ export function createSupportAgent(config: SupportAgentConfig): SupportAgent {
               webSources: undefined
             });
             try {
-               const { phaseEvents, sResult } = await executePhase(systemRetry);
-               for (const ev of phaseEvents) yield ev;
-               for await (const chunk of sResult.chunks) {
-                  fullResponse += chunk;
-                  yield { type: 'token', text: chunk };
-               }
-               costEvent = sResult.cost;
+               yield* answer(systemRetry);
             } catch (retryErr: any) {
                const safeRetryErr = toSafeError(retryErr, config.apiKey ? [config.apiKey] : undefined);
                yield { type: 'error', code: safeRetryErr.code, message: safeRetryErr.message };
@@ -145,6 +167,17 @@ export function createSupportAgent(config: SupportAgentConfig): SupportAgent {
             yield { type: 'done' };
             return;
          }
+      }
+
+      // Both are deterministic: no model call, and the model never sees the booking URL.
+      if (cfg.suggestions) {
+         // Titles come from the knowledge index, so they are masked like any other outbound text.
+         const built = buildSuggestions(chunks, cfg.suggestions.max);
+         const questions = cfg.maskPii ? built.map(maskPii) : built;
+         if (questions.length > 0) yield { type: 'suggestions', questions };
+      }
+      if (cfg.booking && (conf.level === 'low' || matchesBookingIntent(question))) {
+         yield { type: 'action', action: 'book_meeting', url: cfg.booking.url, label: cfg.booking.label };
       }
 
       if (costEvent) {

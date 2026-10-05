@@ -1,4 +1,4 @@
-// LANE L5 owns this file. Pure TypeScript + global fetch; no node: imports.
+// Pure TypeScript + global fetch; no node: imports.
 import type { SourceDoc } from '../types.js';
 
 export function isBlockedHost(host: string): boolean {
@@ -128,7 +128,7 @@ export async function fetchSeedPages(urls: string[], opts?: FetchSeedOptions): P
   
   const docs: SourceDoc[] = [];
 
-  for (let url of urls) {
+  for (const url of urls) {
     if (!isSafeUrl(url)) continue;
     
     const c = new AbortController();

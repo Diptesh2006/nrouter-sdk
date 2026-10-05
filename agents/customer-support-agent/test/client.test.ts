@@ -10,6 +10,14 @@ describe('client', () => {
       expect(client).toBeInstanceOf(nRouter);
     });
 
+    it('sends no extra headers unless the caller supplies them', () => {
+      const plain = createClient('sk-nrouter-test');
+      expect((plain as any).nrouterOptions.defaultHeaders).toBeUndefined();
+
+      const tagged = createClient('sk-nrouter-test', undefined, { 'x-team': 'support' });
+      expect((tagged as any).nrouterOptions.defaultHeaders).toEqual({ 'x-team': 'support' });
+    });
+
     it('throws invalid_config on empty key', () => {
       expect(() => createClient('')).toThrow(SupportAgentError);
       expect(() => createClient('   ')).toThrow(SupportAgentError);

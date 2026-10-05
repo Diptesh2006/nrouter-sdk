@@ -1,15 +1,20 @@
-// LANE L2 owns this file. The ONLY module that talks to the gateway, and only through the SDK.
+// The ONLY module that talks to the gateway, and only through the SDK.
 import { nRouter, isPriced } from '@nrouter_ai/sdk';
 import type { ChatMessage, ResponseMeta } from '@nrouter_ai/sdk';
 import type { CostEvent } from './types.js';
 import { SupportAgentError } from './errors.js';
 import { maskPii, maskMessageContent } from './pii.js';
 
-export function createClient(apiKey: string, baseURL?: string): nRouter {
+/** `defaultHeaders` are sent on every gateway call; none are added unless the caller supplies them. */
+export function createClient(
+  apiKey: string,
+  baseURL?: string,
+  defaultHeaders?: Record<string, string>,
+): nRouter {
   if (!apiKey || apiKey.trim() === '') {
     throw new SupportAgentError('invalid_config', 'API key must not be empty');
   }
-  return new nRouter({ apiKey, baseURL });
+  return new nRouter({ apiKey, baseURL, ...(defaultHeaders ? { defaultHeaders } : {}) });
 }
 
 /** Embed texts via the SDK. Returns one vector per input, in order. */

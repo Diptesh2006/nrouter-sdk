@@ -1,4 +1,3 @@
-// LANE L6 owns this file.
 import type { ConfidenceLevel, ConfidenceThresholds, ScoredChunk } from './types.js';
 
 /** Clamp + round a raw similarity to a clean 0..1, 3-dp number. */

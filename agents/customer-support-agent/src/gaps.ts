@@ -1,4 +1,3 @@
-// LANE L6 owns this file.
 import type { ChatTurn } from './types.js';
 
 const MAX_Q = 500;

@@ -45,7 +45,10 @@ export async function POST(req: Request) {
 | Option | Description |
 |---|---|
 | `apiKey` | nRouter virtual key (`sk-nrouter-...`) |
-| `model` | The chat model ID |
+| `model` | The chat model ID, or an ordered list of up to three: the first is the primary, later entries are fallbacks (see [Model Fallback](#model-fallback)) |
+| `defaultHeaders` | Optional extra headers sent on every gateway call. None are added by default. Ignored when you pass your own `client` |
+| `booking` | Optional `{ url, label? }`. Offers a booking link through the `action` event. `url` must be `https:` and at most 2048 characters; `label` is at most 60 characters and defaults to `Book a meeting` |
+| `suggestions` | Optional `true` or `{ max }` (1 to 5, default 3). Emits related follow-up questions through the `suggestions` event. Off by default |
 | `knowledge` | `KnowledgeStore` or `KnowledgeIndex` JSON |
 | `webSearch` | Optional web search provider |
 | `memoryStore` | Optional `(sessionId) => MemoryStore` from `@nrouter_ai/sdk`. When set and the host passes `ctx.sessionId`, the stored history is authoritative: only the latest user turn from the request is appended, and earlier turns in the request body are ignored |
@@ -60,7 +63,19 @@ Returns an `AsyncIterable<AgentEvent>` for custom handling. `req` is the untrust
 Returns a `ReadableStream<Uint8Array>` formatted as Server-Sent Events, directly usable in HTTP responses. Parameters are the same as `chat`.
 
 ## Events & Wire Format
-The agent streams events as Server-Sent Events (`text/event-stream`). Events include `tool_call`, `confidence`, `citations`, `token`, `cost`, `error`, and `done`.
+The agent streams events as Server-Sent Events (`text/event-stream`). Events include `tool_call`, `confidence`, `citations`, `token`, `suggestions`, `action`, `cost`, `error`, and `done`.
+
+Each frame is `data: <json>\n\n`. Within one response the order is `token`… → `suggestions` → `action` → `cost` → `[DONE]`; `suggestions` and `action` are optional and neither is sent on an errored response.
+
+| Event | SSE JSON | When |
+|---|---|---|
+| `suggestions` | `{"nrouter_event":"suggestions","questions":["…"]}` | `suggestions` is configured and the answer completed. Questions are built from the titles of the other retrieved documents |
+| `action` | `{"nrouter_event":"action","action":"book_meeting","url":"…","label":"…"}` | `booking` is configured and either the visitor's latest message asks for a meeting, a demo, sales or commercial terms, or confidence is `low` |
+
+Both are deterministic and make no extra model call. The booking URL comes only from your config: the model never sees or produces it. Suggestion text is derived from document titles, so treat it as untrusted and render it as plain text.
+
+## Model Fallback
+Pass `model: ['primary', 'backup']` to name fallbacks. The agent moves to the next entry only when the gateway refuses the call as unavailable (HTTP 404 `model_not_found`, or HTTP 503) before any token has been streamed and before any of your `tools` has run. It never falls back on an authentication, credit, budget, rate-limit or guardrail refusal, or on an abort, so a fallback cannot change who pays or how. At most `model.length - 1` fallbacks happen per request, and no event says which model answered.
 
 ## Hooks
 Configure `hooks` to intercept feedback, gaps (low confidence questions), tool calls, and cost events.

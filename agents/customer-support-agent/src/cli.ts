@@ -1,4 +1,3 @@
-// LANE L5 owns this file.
 import { nRouter } from '@nrouter_ai/sdk';
 import { buildKnowledgeIndex } from './knowledge/build.js';
 import { fetchSeedPages } from './knowledge/fetch.js';
@@ -23,7 +22,7 @@ export async function runCliWith(argv: string[], env: Record<string, string | un
 
   let docsDir = '';
   let outPath = '';
-  let seedUrls: string[] = [];
+  const seedUrls: string[] = [];
   let model: string | undefined;
   let dimensions: number | undefined;
   let baseUrl: string | undefined;

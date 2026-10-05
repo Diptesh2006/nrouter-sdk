@@ -1,4 +1,3 @@
-// LANE L4 owns this file.
 import type { KnowledgeIndex, KnowledgeStore, SearchOptions, ScoredChunk } from '../types.js';
 import { SupportAgentError } from '../errors.js';
 import { validateIndex } from './validate.js';

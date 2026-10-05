@@ -1,4 +1,3 @@
-// LANE L3 owns this file.
 import type { KnowledgeIndex } from '../types.js';
 import { SupportAgentError } from '../errors.js';
 

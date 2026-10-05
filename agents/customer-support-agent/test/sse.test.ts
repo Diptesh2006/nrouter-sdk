@@ -48,6 +48,16 @@ describe('encodeEvent', () => {
     expect(encodeEvent(ev)).toBe('data: {"nrouter_event":"error","code":"internal_error","message":"failed"}\n\n');
   });
 
+  it('encodes a book_meeting action', () => {
+    const ev: AgentEvent = { type: 'action', action: 'book_meeting', url: 'https://example.com/book', label: 'Book a meeting' };
+    expect(encodeEvent(ev)).toBe('data: {"nrouter_event":"action","action":"book_meeting","url":"https://example.com/book","label":"Book a meeting"}\n\n');
+  });
+
+  it('encodes suggestions', () => {
+    const ev: AgentEvent = { type: 'suggestions', questions: ['Tell me about Pricing', 'How do keys work?'] };
+    expect(encodeEvent(ev)).toBe('data: {"nrouter_event":"suggestions","questions":["Tell me about Pricing","How do keys work?"]}\n\n');
+  });
+
   it('encodes done', () => {
     const ev: AgentEvent = { type: 'done' };
     expect(encodeEvent(ev)).toBe('data: [DONE]\n\n');

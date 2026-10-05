@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { SupportAgentError, redact, toSafeError, mapErrorClass } from '../src/errors.js';
+import { SupportAgentError, redact, toSafeError, mapErrorClass, isModelFallbackEligible } from '../src/errors.js';
 import {
+  classifyError,
+  nRouterNotFoundError,
   nRouterAuthenticationError,
   nRouterCreditError,
   nRouterBudgetExceededError,
@@ -183,6 +185,65 @@ describe('errors', () => {
       expect(mapErrorClass(StubBudgetError)).toBe('insufficient_credit');
       expect(mapErrorClass(StubRateLimitError)).toBe('rate_limited');
       expect(mapErrorClass(StubUpstreamError)).toBe('upstream_error');
+    });
+  });
+
+  describe('isModelFallbackEligible', () => {
+    it('accepts a 404 that names model_not_found', () => {
+      expect(isModelFallbackEligible(classifyError('model_not_found', 'no such model', 404))).toBe(true);
+      expect(isModelFallbackEligible({ status: 404, code: 'model_not_found', message: 'x' })).toBe(true);
+    });
+
+    it('accepts a code-less 404 the SDK classified as a missing model', () => {
+      const err = classifyError(null, 'model "m" not found', 404);
+      expect(err).toBeInstanceOf(nRouterNotFoundError);
+      expect(isModelFallbackEligible(err)).toBe(true);
+      expect(isModelFallbackEligible({ status: 404, code: null, kind: 'not_found' })).toBe(true);
+    });
+
+    it('accepts a 503, with or without the service_unavailable code', () => {
+      expect(isModelFallbackEligible(classifyError('service_unavailable', 'down', 503))).toBe(true);
+      expect(isModelFallbackEligible(classifyError(null, 'down', 503))).toBe(true);
+      expect(isModelFallbackEligible({ status: 503 })).toBe(true);
+    });
+
+    it('rejects a 404 that is not about a model', () => {
+      expect(isModelFallbackEligible(classifyError(null, 'job not found', 404))).toBe(false);
+      expect(isModelFallbackEligible({ status: 404, message: 'model not found' })).toBe(false);
+      expect(isModelFallbackEligible({ status: 404, code: 'something_else', kind: 'not_found' })).toBe(false);
+    });
+
+    it('rejects a 503 that is a failed credit check or carries an unknown code', () => {
+      expect(isModelFallbackEligible(classifyError('credit_check_failed', 'x', 503))).toBe(false);
+      expect(isModelFallbackEligible({ status: 503, code: 'mystery' })).toBe(false);
+    });
+
+    it('rejects auth, credit, budget, rate-limit and guardrail refusals', () => {
+      expect(isModelFallbackEligible(classifyError(null, 'bad key', 401))).toBe(false);
+      expect(isModelFallbackEligible(classifyError(null, 'forbidden', 403))).toBe(false);
+      expect(isModelFallbackEligible(classifyError(null, 'insufficient credits', 402))).toBe(false);
+      expect(isModelFallbackEligible(classifyError(null, 'budget exceeded', 402))).toBe(false);
+      expect(isModelFallbackEligible(classifyError(null, 'slow down', 429))).toBe(false);
+      expect(isModelFallbackEligible(classifyError(null, 'request blocked by a guardrail', 400))).toBe(false);
+      expect(isModelFallbackEligible(new nRouterGuardrailBlockedError('blocked', { status: 503 }))).toBe(false);
+    });
+
+    it('rejects other upstream statuses, transport failures and aborts', () => {
+      expect(isModelFallbackEligible(classifyError(null, 'bad gateway', 502))).toBe(false);
+      expect(isModelFallbackEligible(classifyError(null, 'timeout', 504))).toBe(false);
+      expect(isModelFallbackEligible(classifyError(null, 'boom', 500))).toBe(false);
+      expect(isModelFallbackEligible(new nRouterError('network down'))).toBe(false);
+      expect(isModelFallbackEligible(new FakeAbortError('aborted'))).toBe(false);
+      const abortedWithStatus = Object.assign(new FakeAbortError('aborted'), { status: 503 });
+      expect(isModelFallbackEligible(abortedWithStatus)).toBe(false);
+    });
+
+    it('rejects non-errors and package errors', () => {
+      expect(isModelFallbackEligible(undefined)).toBe(false);
+      expect(isModelFallbackEligible(null)).toBe(false);
+      expect(isModelFallbackEligible('503')).toBe(false);
+      expect(isModelFallbackEligible({ status: '503' })).toBe(false);
+      expect(isModelFallbackEligible(new SupportAgentError('upstream_error', 'x'))).toBe(false);
     });
   });
 });

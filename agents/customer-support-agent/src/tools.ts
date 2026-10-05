@@ -9,12 +9,16 @@ export interface ToolPhaseResult {
   cost?: CostEvent;
 }
 
-/** Run the SDK's bounded runTools over cfg.tools. No tools configured → messages unchanged. */
+/**
+ * Run the SDK's bounded runTools over cfg.tools. No tools configured → messages unchanged.
+ * `model` selects which configured model answers; it defaults to the primary.
+ */
 export async function runToolPhase(
   cfg: ResolvedConfig,
   messages: ChatMessage[],
   emit: (ev: ToolCallEvent) => void,
   signal?: AbortSignal,
+  model?: string,
 ): Promise<ToolPhaseResult> {
   if (!cfg.tools || cfg.tools.length === 0) {
     return { messages, ranTools: false };
@@ -39,7 +43,7 @@ export async function runToolPhase(
   }));
 
   const result = await runTools(cfg.client.nr, {
-    model: cfg.model,
+    model: model ?? cfg.models[0]!,
     messages,
     tools: wrappedTools,
     maxSteps: cfg.maxToolSteps,

@@ -1,6 +1,6 @@
 {
   "name": "@nrouter_ai/support-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A streaming customer-support agent built on @nrouter_ai/sdk: retrieval over your own docs, tools, confidence and citations. One API key, no database.",
   "license": "MIT",
   "type": "module",

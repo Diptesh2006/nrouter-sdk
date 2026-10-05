@@ -1,7 +1,6 @@
-// LANE L9 owns this file.
 import type { AgentEvent } from './types.js';
 
-/** One event → one `data: …\n\n` frame in the widget wire format (spec §5). */
+/** One event → one `data: …\n\n` frame in the widget wire format. */
 export function encodeEvent(ev: AgentEvent): string {
   switch (ev.type) {
     case 'tool_call':
@@ -26,6 +25,18 @@ export function encodeEvent(ev: AgentEvent): string {
     case 'token':
       return `data: ${JSON.stringify({
         choices: [{ delta: { content: ev.text } }]
+      })}\n\n`;
+    case 'suggestions':
+      return `data: ${JSON.stringify({
+        nrouter_event: 'suggestions',
+        questions: ev.questions
+      })}\n\n`;
+    case 'action':
+      return `data: ${JSON.stringify({
+        nrouter_event: 'action',
+        action: ev.action,
+        url: ev.url,
+        label: ev.label
       })}\n\n`;
     case 'cost':
       if (ev.status === 'exact') {

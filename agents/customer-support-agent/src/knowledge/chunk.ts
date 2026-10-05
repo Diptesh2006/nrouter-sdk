@@ -1,4 +1,4 @@
-// LANE L3 owns this file. Pure TypeScript: no node: imports (core must run on edge runtimes).
+// Pure TypeScript: no node: imports (core must run on edge runtimes).
 import type { KnowledgeChunk, SourceDoc } from '../types.js';
 
 export interface ChunkOptions {

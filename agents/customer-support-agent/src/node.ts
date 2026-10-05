@@ -1,4 +1,4 @@
-// LANE L5 owns this file. Node-only entry: "@nrouter_ai/support-agent/node".
+// Node-only entry: "@nrouter_ai/support-agent/node".
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { KnowledgeIndex, SourceDoc } from './types.js';
@@ -54,7 +54,7 @@ export async function readDocsDir(dir: string, baseUrl?: string): Promise<Source
         const relNoExt = rel.replace(/\.[^.]+$/, '');
         const relUnix = relNoExt.split(path.sep).join('/');
         
-        let url = baseUrl ? (baseUrl.endsWith('/') ? baseUrl + relUnix : baseUrl + '/' + relUnix) : 'file://' + relUnix;
+        const url = baseUrl ? (baseUrl.endsWith('/') ? baseUrl + relUnix : baseUrl + '/' + relUnix) : 'file://' + relUnix;
         
         docs.push({
           title: title || entry.name,

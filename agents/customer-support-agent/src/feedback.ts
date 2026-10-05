@@ -1,4 +1,3 @@
-// LANE L9 owns this file.
 import type { FeedbackInput } from './types.js';
 import { SupportAgentError } from './errors.js';
 

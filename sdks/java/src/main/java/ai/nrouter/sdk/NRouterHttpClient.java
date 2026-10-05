@@ -48,7 +48,7 @@ public final class NRouterHttpClient {
     private static final Set<String> ERROR_CODES = Set.of(
             "invalid_request", "guardrail_blocked", "invalid_api_key", "insufficient_credits",
             "model_not_found", "rate_limit_exceeded", "tpm_limit_exceeded",
-            "credit_check_failed", "service_unavailable");
+            "credit_check_failed", "service_unavailable", "plan_allowance_exhausted", "plan_required");
     private static final Pattern KEY = Pattern.compile("sk-nrouter-[A-Za-z0-9._-]+");
 
     /**
@@ -111,14 +111,16 @@ public final class NRouterHttpClient {
     private final Duration bodyIdleTimeout;
     private final String traceId;
     private final String sessionId;
+    private final String tags;
+    private final Boolean compress;
     private final ObjectMapper json = new ObjectMapper();
 
     NRouterHttpClient(String apiKey, String baseUrl) {
-        this(apiKey, baseUrl, defaultHttpClient(), DEFAULT_REQUEST_TIMEOUT, DEFAULT_BODY_IDLE_TIMEOUT, null, null);
+        this(apiKey, baseUrl, defaultHttpClient(), DEFAULT_REQUEST_TIMEOUT, DEFAULT_BODY_IDLE_TIMEOUT, null, null, null, null);
     }
 
     NRouterHttpClient(String apiKey, String baseUrl, HttpClient http, Duration requestTimeout) {
-        this(apiKey, baseUrl, http, requestTimeout, DEFAULT_BODY_IDLE_TIMEOUT, null, null);
+        this(apiKey, baseUrl, http, requestTimeout, DEFAULT_BODY_IDLE_TIMEOUT, null, null, null, null);
     }
 
     NRouterHttpClient(
@@ -127,7 +129,7 @@ public final class NRouterHttpClient {
             HttpClient http,
             Duration requestTimeout,
             Duration bodyIdleTimeout) {
-        this(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, null, null);
+        this(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, null, null, null, null);
     }
 
     NRouterHttpClient(
@@ -138,6 +140,19 @@ public final class NRouterHttpClient {
             Duration bodyIdleTimeout,
             String traceId,
             String sessionId) {
+        this(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, traceId, sessionId, null, null);
+    }
+
+    NRouterHttpClient(
+            String apiKey,
+            String baseUrl,
+            HttpClient http,
+            Duration requestTimeout,
+            Duration bodyIdleTimeout,
+            String traceId,
+            String sessionId,
+            String tags,
+            Boolean compress) {
         if (http == null) {
             throw new IllegalArgumentException("httpClient must not be null");
         }
@@ -155,6 +170,9 @@ public final class NRouterHttpClient {
         }
         if (sessionId != null && (sessionId.contains("\r") || sessionId.contains("\n"))) {
             throw new IllegalArgumentException("sessionId must not contain CRLF characters");
+        }
+        if (tags != null && (tags.contains("\r") || tags.contains("\n"))) {
+            throw new IllegalArgumentException("tags must not contain CRLF characters");
         }
         java.net.URI parsedUri;
         try {
@@ -189,6 +207,8 @@ public final class NRouterHttpClient {
         this.bodyIdleTimeout = bodyIdleTimeout;
         this.traceId = traceId;
         this.sessionId = sessionId;
+        this.tags = tags;
+        this.compress = compress;
     }
 
     /**
@@ -229,18 +249,42 @@ public final class NRouterHttpClient {
         return sessionId;
     }
 
+    /** The configured tags string propagated as {@code x-nr-tags}, or null if none. */
+    public String tags() {
+        return tags;
+    }
+
+    /** The configured compression flag propagated as {@code x-nr-compress}, or null if none. */
+    public Boolean compress() {
+        return compress;
+    }
+
     /**
      * Returns a copy of this client configured with the specified trace identifier.
      */
     public NRouterHttpClient withTraceId(String traceId) {
-        return new NRouterHttpClient(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, traceId, sessionId);
+        return new NRouterHttpClient(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, traceId, sessionId, tags, compress);
     }
 
     /**
      * Returns a copy of this client configured with the specified session identifier.
      */
     public NRouterHttpClient withSessionId(String sessionId) {
-        return new NRouterHttpClient(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, traceId, sessionId);
+        return new NRouterHttpClient(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, traceId, sessionId, tags, compress);
+    }
+
+    /**
+     * Returns a copy of this client configured with the specified tags.
+     */
+    public NRouterHttpClient withTags(String tags) {
+        return new NRouterHttpClient(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, traceId, sessionId, tags, compress);
+    }
+
+    /**
+     * Returns a copy of this client configured with the specified compression flag.
+     */
+    public NRouterHttpClient withCompress(Boolean compress) {
+        return new NRouterHttpClient(apiKey, baseUrl, http, requestTimeout, bodyIdleTimeout, traceId, sessionId, tags, compress);
     }
 
     public NRouterHttpResponse chatCompletions(Map<String, ?> body) { return post("/chat/completions", body); }
@@ -776,6 +820,12 @@ public final class NRouterHttpClient {
         }
         if (sessionId != null && !sessionId.isEmpty()) {
             builder.header("x-nr-session-id", sessionId);
+        }
+        if (tags != null && !tags.isEmpty()) {
+            builder.header("x-nr-tags", tags);
+        }
+        if (compress != null && compress) {
+            builder.header("x-nr-compress", "true");
         }
         return builder;
     }

@@ -24,6 +24,10 @@ public final class NRouterResponseMeta {
             "x-nr-auth-reason",
             "x-nr-response-cache",
             "x-nr-response-cache-age",
+            "x-nr-compression",
+            "x-nr-routing",
+            "x-nr-attempts",
+            "x-nr-intent",
             "x-nr-funding-source",
             "x-nr-allowance-reset");
 
@@ -44,6 +48,10 @@ public final class NRouterResponseMeta {
     private final String authReason;
     private final String responseCache;
     private final Long responseCacheAge;
+    private final String compression;
+    private final String routing;
+    private final Long attempts;
+    private final String intent;
     private final String fundingSource;
     private final Long allowanceReset;
 
@@ -68,6 +76,10 @@ public final class NRouterResponseMeta {
         authReason = value(headers, "x-nr-auth-reason");
         responseCache = value(headers, "x-nr-response-cache");
         responseCacheAge = integer(headers, "x-nr-response-cache-age");
+        compression = value(headers, "x-nr-compression");
+        routing = value(headers, "x-nr-routing");
+        attempts = integer(headers, "x-nr-attempts");
+        intent = value(headers, "x-nr-intent");
         fundingSource = value(headers, "x-nr-funding-source");
         allowanceReset = integer(headers, "x-nr-allowance-reset");
     }
@@ -117,8 +129,13 @@ public final class NRouterResponseMeta {
     public String budgetWarning() { return budgetWarning; }
     /**
      * Posture of the PRE-CALL guardrail chain: {@code none}, {@code monitor},
-     * {@code pass}, {@code partial} or {@code blocked}, matched exactly and
-     * case-sensitively.
+     * {@code redacted}, {@code pass}, {@code partial}, {@code blocked} or
+     * {@code unavailable}, matched exactly and case-sensitively.
+     *
+     * <p>{@code redacted} means an enforcing chain REWROTE part of the prompt
+     * (PII or keyword redaction) before the provider saw it, and the request
+     * then served; {@code partial} means only that some content went
+     * uninspected, never that anything was rewritten.
      *
      * <p>{@code null} means the gateway made NO guardrail claim about this
      * response, never "no guardrail applied" — that is the explicit
@@ -130,6 +147,10 @@ public final class NRouterResponseMeta {
     public String authReason() { return authReason; }
     public String responseCache() { return responseCache; }
     public Long responseCacheAge() { return responseCacheAge; }
+    public String compression() { return compression; }
+    public String routing() { return routing; }
+    public Long attempts() { return attempts; }
+    public String intent() { return intent; }
     public String fundingSource() { return fundingSource; }
     public Long allowanceReset() { return allowanceReset; }
     public boolean isPriced() { return cost != null && "exact".equals(costStatus); }

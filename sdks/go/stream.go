@@ -301,6 +301,9 @@ func streamError(event string, raw map[string]any, fallback string, status int, 
 			code = value
 		}
 	}
+	if code == "" && status == 400 && (meta.Guardrails == "blocked" || strings.Contains(strings.ToLower(message), "guardrail")) {
+		code = "guardrail_blocked"
+	}
 	if message == "" {
 		message = fmt.Sprintf("gateway sent an unreadable %s stream event", event)
 	}
@@ -312,6 +315,8 @@ func streamError(event string, raw map[string]any, fallback string, status int, 
 		RequestID:   meta.RequestID,
 		LimitSource: meta.LimitSource,
 		AuthReason:  meta.AuthReason,
+		Guardrails:  meta.Guardrails,
+		Meta:        &meta,
 	}
 }
 
@@ -320,7 +325,8 @@ func knownErrorCode(code string) bool {
 	case "invalid_request", "guardrail_blocked", "invalid_api_key", "insufficient_credits",
 		"plan_allowance_exhausted", "plan_required",
 		"model_not_found", "rate_limit_exceeded", "tpm_limit_exceeded",
-		"credit_check_failed", "service_unavailable":
+		"credit_check_failed", "service_unavailable",
+		"input_too_large", "max_output_tokens_too_large", "fallback_not_allowed", "guardrail_not_found":
 		return true
 	default:
 		return false

@@ -40,8 +40,12 @@ pub struct ResponseMeta {
     /// served. `<scope> soft_budget <spend>/<ceiling>`, e.g.
     /// `org soft_budget 80.00/100.00`.
     pub budget_warning: Option<String>,
-    /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `pass`,
-    /// `partial` or `blocked`, matched exactly and case-sensitively.
+    /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `redacted`,
+    /// `pass`, `partial`, `blocked` or `unavailable`, matched exactly and
+    /// case-sensitively. `redacted` means an enforcing chain REWROTE part of
+    /// the prompt before the provider saw it and the request then served;
+    /// `partial` means only that some content went uninspected, never that
+    /// anything was rewritten.
     ///
     /// `None` means the gateway made NO guardrail claim about this response —
     /// never "no guardrail applied", which is the explicit `none`. Posture only
@@ -54,6 +58,14 @@ pub struct ResponseMeta {
     pub response_cache: Option<String>,
     /// Age in seconds of a response-cache hit.
     pub response_cache_age: Option<u64>,
+    /// Prompt compression outcome: `applied`, `not_requested`, `off`, or `skipped`.
+    pub compression: Option<String>,
+    /// Which chain entry answered: `direct` or `fallback:<n>`.
+    pub routing: Option<String>,
+    /// Provider calls made for this request, retries and failovers alike.
+    pub attempts: Option<u64>,
+    /// The top intent category evaluated by the preflight chain, if intent routing was requested.
+    pub intent: Option<String>,
     /// How this response was funded.
     pub funding_source: Option<String>,
     /// When the current usage allowance resets.
@@ -61,7 +73,7 @@ pub struct ResponseMeta {
 }
 
 /// Every header this SDK reads, exactly as the spec names them.
-pub const HEADER_NAMES: [&str; 19] = [
+pub const HEADER_NAMES: [&str; 23] = [
     "x-nr-request-id",
     "x-nr-latency-ms",
     "x-nr-trace-id",
@@ -79,6 +91,10 @@ pub const HEADER_NAMES: [&str; 19] = [
     "x-nr-auth-reason",
     "x-nr-response-cache",
     "x-nr-response-cache-age",
+    "x-nr-compression",
+    "x-nr-routing",
+    "x-nr-attempts",
+    "x-nr-intent",
     "x-nr-funding-source",
     "x-nr-allowance-reset",
 ];
@@ -114,6 +130,10 @@ impl ResponseMeta {
             auth_reason: get("x-nr-auth-reason"),
             response_cache: get("x-nr-response-cache"),
             response_cache_age: num("x-nr-response-cache-age"),
+            compression: get("x-nr-compression"),
+            routing: get("x-nr-routing"),
+            attempts: num("x-nr-attempts"),
+            intent: get("x-nr-intent"),
             funding_source: get("x-nr-funding-source"),
             allowance_reset: num("x-nr-allowance-reset"),
         }
@@ -142,6 +162,11 @@ impl ResponseMeta {
     /// True when the response was a cache miss.
     pub fn is_cache_miss(&self) -> bool {
         self.response_cache.as_deref() == Some("miss")
+    }
+
+    /// Returns the age of a cached response in seconds, or 0 if not cached or absent.
+    pub fn cache_age_seconds(&self) -> u64 {
+        self.response_cache_age.unwrap_or(0)
     }
 
     /// Parses structured budget warning information if present.

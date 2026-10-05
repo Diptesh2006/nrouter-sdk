@@ -70,6 +70,19 @@ it deliberately does NOT catch are stated once in the router (`../SKILL.md`, "Sh
 conformance gate"). The short version for a test author: it proves a spec constant is *referenced*,
 never that it is used *correctly*, so it never stands in for a test in the SDK's own suite.
 
+## The curl proof harness — the live oracle, and it is not part of the suite
+
+`scripts/curl_health_checks/` asks the gateway in raw `curl`. How to run it, its flags, where the
+key comes from and why `--route` matters are in the router (`../SKILL.md`, "Shared facts → The curl
+proof harness"). Two things a test author must hold:
+
+1. **It is NEVER wired into a default test command.** It needs a key and a network, so it lives
+   under the same discipline as the `NROUTER_LIVE` probe: run it deliberately, never in CI's default
+   path, never in a pre-commit hook. Its `--self-test` is the offline half and needs nothing.
+2. **`NOT-CONFIGURED` and `NOT-EVALUATED` are not passes.** A run carrying either is PARTIAL for that
+   property. Reading a yellow row as green is the exact failure the four-result vocabulary exists to
+   prevent — the same reason a live probe uses a native skip primitive instead of an early `return`.
+
 ## Fakes: ecosystem-native and in-process, never a shared library
 
 There is no cross-language fixture layer, on purpose — each SDK uses what its ecosystem already
@@ -97,7 +110,15 @@ seam), plus a contract test asserting method, path and headers, plus the conform
 SDKs that map it. Conformance sees only that the code exists somewhere.
 
 **A header change** — assert the header is SENT or PARSED into the right field. Conformance only
-proves the string appears.
+proves the string appears. For a header with a value enum — `x-nr-guardrails` above all — assert the
+tokens are matched EXACTLY and case-sensitively, and that an unrecognised token stays unknown rather
+than being rounded to the nearest one.
+
+**A new `nrouter_*` body field** — assert the typed option actually reaches the serialized body under
+its spec name (an option that builds nothing is unreachable, and conformance only proves the name
+appears in the builder), and assert the refusal it can earn maps to the right class —
+`nrouter_fallbacks` and `nrouter_guardrails` are the two most recently added, each with its own 400
+(router, "Three wire surfaces").
 
 **A timeout, retry or cancellation change** — a behavioural test with a fake that actually delays,
 aborts or fails. **A client-side retry double-bills a customer** (router, "Shared facts → The client

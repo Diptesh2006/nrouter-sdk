@@ -84,6 +84,12 @@ public sealed class NRouterError(
             return this is RateLimit || this is Service || this is Transport
         }
 
+    public val requestId: String? get() = body?.requestId
+    public val limitSource: String? get() = body?.limitSource
+    public val authReason: String? get() = body?.authReason
+    public val guardrails: String? get() = body?.guardrails
+    public val meta: NRouterResponseMeta? get() = body?.meta
+
     public companion object {
         /**
          * Classify a gateway refusal.
@@ -111,7 +117,7 @@ public sealed class NRouterError(
             "rate_limit_exceeded", "tpm_limit_exceeded" -> RateLimit(body)
             "credit_check_failed", "service_unavailable" -> Service(body)
             null -> when (body.status) {
-                400 -> if (body.message.contains("guardrail", ignoreCase = true)) {
+                400 -> if (body.guardrails == "blocked" || body.type == "guardrail_blocked" || body.message.contains("guardrail", ignoreCase = true)) {
                     GuardrailBlocked(body)
                 } else {
                     Request(body)
@@ -219,6 +225,10 @@ public data class NRouterErrorBody(
     val authReason: String? = null,
     /** On a 429: duration in whole seconds to wait before retrying. */
     val retryAfter: Long? = null,
+    /** Posture of the guardrail chain when reported by the gateway. */
+    val guardrails: String? = null,
+    /** Parsed response metadata when available. */
+    val meta: NRouterResponseMeta? = null,
 ) {
     internal fun describe(): String = if (code != null) "${redactKeys(message)} ($code)" else redactKeys(message)
 }

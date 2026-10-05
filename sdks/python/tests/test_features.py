@@ -14,7 +14,11 @@ from nroutersdk import (
     system_variable_conflicts,
     with_variables,
 )
-from nroutersdk._errors import nRouterRequestError
+from nroutersdk._errors import (
+    is_retryable,
+    nRouterConfigurationError,
+    nRouterRequestError,
+)
 from nroutersdk._options import build_extra_body, vet_extra
 
 
@@ -48,15 +52,138 @@ def test_empty_prompt_id_is_refused():
         prompt_template("  ")
 
 
-def test_guardrail_ids_are_refused_and_cache_true_is_omitted():
-    with pytest.raises(nRouterRequestError, match="guardrail_ids"):
-        build_extra_body(guardrail_ids=["gr_1"])
+def test_cache_true_is_omitted_and_false_is_sent():
     assert build_extra_body(cache=True) == {}
     assert build_extra_body(cache=False) == {"nrouter_cache": False}
 
 
+def test_guardrails_map_onto_the_gateway_field_instead_of_being_refused():
+    """`guardrail_ids` USED to raise, and that refusal was correct when it was
+    written: no gateway read a per-request guardrail field, so sending one
+    reached the provider as an unrecognized argument.
+
+    The gateway now reads `nrouter_guardrails` (74b6970). Keeping the refusal
+    would make the SDK the reason a shipped feature is unreachable — the exact
+    inversion of what the refusal existed to prevent.
+    """
+    assert build_extra_body(guardrails=["pii-strict", "gr_1"]) == {
+        "nrouter_guardrails": ["pii-strict", "gr_1"]
+    }
+    # Empty expresses no selection, so it is OMITTED rather than sent as `[]`.
+    # An empty list on the wire is a caller asking for something; omission is
+    # the caller asking for nothing, and only the second is true here.
+    assert build_extra_body(guardrails=[]) == {}
+    assert build_extra_body() == {}
+
+
+def test_more_than_eight_guardrails_is_refused_locally():
+    # The spec publishes the ceiling; refusing here costs nothing and refusing
+    # at the gateway costs a round trip that names no option.
+    with pytest.raises(nRouterConfigurationError, match="guardrails"):
+        build_extra_body(guardrails=[f"g{n}" for n in range(9)])
+
+
+def test_fallbacks_map_onto_the_gateway_field():
+    assert build_extra_body(fallbacks=["gpt-4o-mini", "claude-haiku"]) == {
+        "nrouter_fallbacks": ["gpt-4o-mini", "claude-haiku"]
+    }
+    assert build_extra_body(fallbacks=[]) == {}
+
+
+def test_more_than_four_fallbacks_is_refused_locally():
+    with pytest.raises(nRouterConfigurationError, match="fallbacks"):
+        build_extra_body(fallbacks=["a", "b", "c", "d", "e"])
+
+
+def test_a_local_refusal_is_the_configuration_class_the_other_sdks_raise():
+    """`_configuration_error` said CONFIGURATION and built a REQUEST error.
+
+    JS raises `nRouterConfigurationError` (kind `configuration`) and Go returns
+    `KindConfiguration` with `Status: 0` for these exact ceiling and
+    empty-entry refusals. Python named the helper `_configuration_error`,
+    documented it as "permanent, never retried", and then constructed
+    `nRouterRequestError` — the class the gateway's own `invalid_request` 400s
+    arrive as. A caller branching on the class could not tell a refusal that
+    never left the process from one the gateway billed a round trip for.
+
+    THE RELATION, stated rather than assumed: the configuration class IS a
+    subclass of `nRouterRequestError`, deliberately. This is a published
+    package (PyPI `nrouter-sdk`), and every `except nRouterRequestError:`
+    already wrapped around these builders must keep catching. A sibling class
+    would have been a silent break dressed as a fix. What the subclass does NOT
+    inherit is the part that was untrue: it carries no HTTP status, because
+    nothing was ever sent.
+    """
+    with pytest.raises(nRouterConfigurationError) as excinfo:
+        build_extra_body(fallbacks=["a", "b", "c", "d", "e"])
+    err = excinfo.value
+
+    assert err.code == "configuration"
+    # A local refusal never received a status. 400 would be a number the
+    # gateway never sent, on an error the gateway never saw.
+    assert err.status_code is None
+    # The property the kind exists for: permanent, so an `if is_retryable(e)`
+    # loop cannot spin on it without ever making a request.
+    assert is_retryable(err) is False
+
+    assert issubclass(nRouterConfigurationError, nRouterRequestError)
+    # And it is reachable by a customer, not just by this test's private import
+    # — a class no one can `except` is not a classification.
+    import nroutersdk
+
+    assert nroutersdk.nRouterConfigurationError is nRouterConfigurationError
+    assert "nRouterConfigurationError" in nroutersdk.__all__
+
+
+def test_every_spec_extra_body_field_is_reachable_from_the_builder():
+    """The builder's OUTPUT is the spec's field set, in both directions.
+
+    Asserting `EXTRA_BODY_FIELDS == spec` only compares two constants. A field
+    declared in the tuple but never wired into `build_extra_body` — or wired
+    behind a branch nothing can reach — passes that comparison while the
+    feature stays unreachable from Python, and the Go
+    (`TestExtraBodyFieldsCoversEveryEmittableField`) and JS ("the emittable
+    fields and the SPEC agree in BOTH directions") equivalents go red. The
+    constant is the claim; the builder's output is the evidence.
+
+    So: build with EVERY option populated, and compare the emitted keys to the
+    spec both ways. Emitting a key the spec does not carry is a dead option the
+    gateway forwards to the provider verbatim; failing to emit one the spec
+    carries is a shipped feature no Python caller can reach without
+    hand-rolling `extra_body`.
+    """
+    import json
+    from pathlib import Path
+
+    from nroutersdk import _options
+
+    spec_path = (
+        Path(__file__).resolve().parents[3] / "spec" / "nrouter-sdk-spec.json"
+    )
+    spec_fields = set(json.loads(spec_path.read_text())["extra_body_fields"])
+
+    emitted = build_extra_body(
+        prompt_template_id="tpl",
+        prompt_variables={"k": "v"},
+        fallbacks=["gpt-4o-mini"],
+        guardrails=["pii-strict"],
+        # `cache=True` is the gateway default and is deliberately OMITTED, so
+        # only `False` can put `nrouter_cache` on the wire. Populating this
+        # with `True` would make the "every field is emittable" half of this
+        # test pass by omission.
+        cache=False,
+    )
+
+    assert set(emitted) == spec_fields
+    # The constant must still agree with both — it is what the rest of the SDK
+    # reads to know the closed set.
+    assert set(_options.EXTRA_BODY_FIELDS) == spec_fields
+
+
 def test_extra_body_tenancy_fields_are_refused():
-    with pytest.raises(nRouterRequestError, match="tenancy"):
+    # Same helper, same kind: `vet_extra` refuses before egress too, and Go
+    # builds both of these with the one `configErr`.
+    with pytest.raises(nRouterConfigurationError, match="tenancy"):
         vet_extra({"organization_id": "spoof"})
 
 

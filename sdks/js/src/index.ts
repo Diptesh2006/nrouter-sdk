@@ -59,6 +59,7 @@ export {
   parseBudgetWarning,
   isCacheHit,
   isCacheMiss,
+  cacheAgeSeconds,
   // Cost across the many calls of ONE run. `ResponseMeta` is per-call, and the
   // hand-rolled accumulator is `sum += cost ?? 0`, which reports an unpriced
   // step as free (Rule #28).
@@ -134,7 +135,32 @@ export {
 // Body construction, exported for the same reason.
 export { buildChatBody, buildExtraBody, buildFeatureBody, buildMessages } from './options';
 
-export { NRouterModels, type NRouterModel, type NRouterModelList, type NRouterCapabilities, type RawRequester } from './models';
+export {
+  NRouterModels,
+  MODELS,
+  MODEL_META_LLAMA_3_3_70B_INSTRUCT,
+  MODEL_META_LLAMA_3_1_70B_INSTRUCT,
+  MODEL_META_LLAMA_3_1_8B_INSTRUCT,
+  MODEL_META_LLAMA_3_2_11B_VISION,
+  MODEL_META_LLAMA_3_2_90B_VISION,
+  MODEL_META_LLAMA_3_2_3B_INSTRUCT,
+  MODEL_META_LLAMA_3_2_1B_INSTRUCT,
+  MODEL_TYPESAFE_JEV,
+  MODEL_TYPESAFE_JEV_SYSTEM_ONE,
+  MODEL_GOOGLE_GEMINI_2_0_FLASH,
+  MODEL_GOOGLE_GEMINI_2_0_FLASH_LITE,
+  MODEL_GOOGLE_GEMINI_1_5_PRO_002,
+  MODEL_GOOGLE_GEMINI_1_5_FLASH_002,
+  MODEL_GEMINI_2_0_FLASH,
+  MODEL_GEMINI_2_0_FLASH_LITE,
+  MODEL_GEMINI_1_5_PRO_002,
+  MODEL_GEMINI_1_5_FLASH_002,
+  type NRouterModel,
+  type NRouterModelList,
+  type NRouterCapabilities,
+  type RawRequester,
+  type WellKnownModel,
+} from './models';
 
 // The Anthropic Messages wire. Exported for the same reason `buildChatBody` is:
 // a caller assembling its own request needs to know which wire a model is

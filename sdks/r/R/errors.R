@@ -16,17 +16,21 @@ NULL
 
 # code -> the specific condition class it raises.
 NROUTER_ERROR_CLASSES <- c(
-  invalid_request      = "nrouter_request_error",
-  guardrail_blocked    = "nrouter_guardrail_blocked_error",
+  invalid_request          = "nrouter_request_error",
+  guardrail_blocked        = "nrouter_guardrail_blocked_error",
   invalid_api_key          = "nrouter_authentication_error",
   insufficient_credits     = "nrouter_credit_error",
   plan_allowance_exhausted = "nrouter_credit_error",
   plan_required            = "nrouter_credit_error",
   model_not_found          = "nrouter_not_found_error",
-  rate_limit_exceeded  = "nrouter_rate_limit_error",
-  tpm_limit_exceeded   = "nrouter_rate_limit_error",
-  credit_check_failed  = "nrouter_service_error",
-  service_unavailable  = "nrouter_service_error"
+  rate_limit_exceeded      = "nrouter_rate_limit_error",
+  tpm_limit_exceeded       = "nrouter_rate_limit_error",
+  credit_check_failed      = "nrouter_service_error",
+  service_unavailable      = "nrouter_service_error",
+  input_too_large          = "nrouter_request_error",
+  max_output_tokens_too_large = "nrouter_request_error",
+  fallback_not_allowed     = "nrouter_request_error",
+  guardrail_not_found      = "nrouter_request_error"
 )
 
 NROUTER_STATUS_CLASSES <- c(
@@ -61,19 +65,32 @@ NROUTER_RETRYABLE <- c(
 #' @param retry_after Value of \code{Retry-After} in seconds, or \code{NULL}.
 #' @param param Offending request parameter name, or \code{NULL}.
 #' @param type Error category type, or \code{NULL}.
+#' @param guardrails Value of \code{x-nr-guardrails}, or \code{NULL}.
+#' @param meta Full \code{nrouter_meta} object, or \code{NULL}.
 #' @return A condition object.
 #' @export
 nrouter_condition <- function(message, code = NULL, status = NULL,
                               request_id = NULL, limit_source = NULL,
                               auth_reason = NULL, retry_after = NULL,
-                              param = NULL, type = NULL) {
+                              param = NULL, type = NULL,
+                              guardrails = NULL, meta = NULL) {
+  if (!is.null(meta)) {
+    if (is.null(guardrails)) guardrails <- meta$guardrails
+    if (is.null(request_id)) request_id <- meta$request_id
+    if (is.null(limit_source)) limit_source <- meta$limit_source
+    if (is.null(auth_reason)) auth_reason <- meta$auth_reason
+    if (is.null(retry_after)) retry_after <- meta$retry_after
+  }
   if (is.null(code) && identical(as.character(status), "402") && !is.null(limit_source)) {
     if (limit_source == "plan_allowance_exhausted" || limit_source == "plan_required") {
       code <- limit_source
     }
   }
   specific <- NULL
-  if (!is.null(code) && nzchar(code)) {
+  if (identical(code, "invalid_request") &&
+      (identical(guardrails, "blocked") || identical(type, "guardrail_blocked"))) {
+    specific <- "nrouter_guardrail_blocked_error"
+  } else if (!is.null(code) && nzchar(code)) {
     specific <- unname(NROUTER_ERROR_CLASSES[code])
     # An unrecognised code stays generic. Forcing it into a neighbouring class
     # is how a caller gets told to retry something permanent.
@@ -85,7 +102,9 @@ nrouter_condition <- function(message, code = NULL, status = NULL,
     # calling every 400 a request error makes nrouter_guardrail_blocked_error
     # unreachable and tells a caller to fix a body that was never the problem.
     specific <- if (identical(as.character(status), "400") &&
-                    grepl("guardrail", message, ignore.case = TRUE)) {
+                    (identical(guardrails, "blocked") ||
+                     identical(type, "guardrail_blocked") ||
+                     grepl("guardrail", message, ignore.case = TRUE))) {
       "nrouter_guardrail_blocked_error"
     } else if (identical(as.character(status), "402") &&
                grepl("^\\s*budget", message, ignore.case = TRUE)) {
@@ -126,7 +145,9 @@ nrouter_condition <- function(message, code = NULL, status = NULL,
       request_id = request_id,
       limit_source = limit_source,
       auth_reason = auth_reason,
-      retry_after = retry_after
+      retry_after = retry_after,
+      guardrails = guardrails,
+      meta = meta
     )
   )
 }
@@ -293,6 +314,12 @@ nrouter_format_error <- function(cond) {
   }
   if (!is.null(cond$request_id) && nzchar(cond$request_id)) {
     parts <- c(parts, sprintf("req_id=%s", cond$request_id))
+  }
+  if (!is.null(cond$limit_source) && nzchar(cond$limit_source)) {
+    parts <- c(parts, sprintf("limit_source=%s", cond$limit_source))
+  }
+  if (!is.null(cond$guardrails) && nzchar(cond$guardrails)) {
+    parts <- c(parts, sprintf("guardrails=%s", cond$guardrails))
   }
   if (!is.null(cond$message) && nzchar(cond$message)) {
     parts <- c(parts, sprintf(": %s", nrouter_redact_keys(cond$message)))

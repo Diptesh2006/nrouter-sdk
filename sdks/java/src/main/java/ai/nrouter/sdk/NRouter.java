@@ -147,6 +147,21 @@ public final class NRouter {
             Duration requestTimeout,
             String traceId,
             String sessionId) {
+        return httpClient(apiKey, baseUrl, http, requestTimeout, traceId, sessionId, null, null);
+    }
+
+    /**
+     * Native Java 11 surface over custom transport, timeouts, tracing/session context, tags, and compression.
+     */
+    public static NRouterHttpClient httpClient(
+            String apiKey,
+            String baseUrl,
+            HttpClient http,
+            Duration requestTimeout,
+            String traceId,
+            String sessionId,
+            String tags,
+            Boolean compress) {
         return new NRouterHttpClient(
                 resolveApiKey(apiKey),
                 baseUrl != null ? baseUrl : DEFAULT_BASE_URL,
@@ -154,7 +169,9 @@ public final class NRouter {
                 requestTimeout != null ? requestTimeout : NRouterHttpClient.DEFAULT_REQUEST_TIMEOUT,
                 NRouterHttpClient.DEFAULT_BODY_IDLE_TIMEOUT,
                 traceId,
-                sessionId);
+                sessionId,
+                tags,
+                compress);
     }
 
     /** Extracts trace routing headers from response metadata. */

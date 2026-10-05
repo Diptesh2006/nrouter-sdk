@@ -55,6 +55,8 @@ export interface nRouterErrorOptions {
   param?: string | null;
   /** The error type/family when reported by the gateway. */
   type?: string | null;
+  /** The gateway's guardrail outcome (e.g. "blocked"). */
+  guardrails?: string | null;
   /**
    * The underlying failure when one exists — an `AbortError`, a DNS or TLS
    * error, a parse error. Kept for diagnosis and NEVER serialized: a fetch
@@ -119,6 +121,7 @@ export class nRouterError extends Error {
   readonly code: string | null;
   readonly param: string | null;
   readonly type: string | null;
+  readonly guardrails: string | null;
   status: number | null;
   requestId: string | null;
   limitSource: string | null;
@@ -161,6 +164,7 @@ export class nRouterError extends Error {
     this.requestId = options.requestId ?? meta?.requestId ?? null;
     this.limitSource = options.limitSource ?? meta?.limitSource ?? null;
     this.authReason = options.authReason ?? meta?.authReason ?? null;
+    this.guardrails = options.guardrails ?? meta?.guardrails ?? null;
     this.retryAfter = options.retryAfter ?? null;
     this.meta = meta;
     if (options.cause !== undefined) {
@@ -216,6 +220,7 @@ export class nRouterError extends Error {
       retryAfter: this.retryAfter,
       param: this.param,
       type: this.type,
+      guardrails: this.guardrails,
     };
   }
 }
@@ -327,9 +332,16 @@ export class nRouterConfigurationError extends nRouterError {
 }
 
 /**
- * The nine spec codes to their classes, verbatim from
- * spec/nrouter-sdk-spec.json. Exported as data so a test can assert the table
- * against the spec instead of re-typing it.
+ * Every spec code to its class, verbatim from spec/nrouter-sdk-spec.json.
+ * Exported as data so a test can assert the table against the spec instead of
+ * re-typing it.
+ *
+ * The last four are PRE-EGRESS refusals (2026-09-17): the gateway can name
+ * what the caller sent and refuse it before any provider call, so nothing was
+ * reserved and nothing was spent, and a retry of the identical body is refused
+ * identically. They classify as request errors, which is also where the
+ * codeless 400 dispatch would have put them — mapping them by name is what
+ * gives a caller `err.code` to branch on.
  */
 export const ERROR_CLASS_BY_CODE: Readonly<Record<string, typeof nRouterError>> = Object.freeze({
   invalid_request: nRouterRequestError,
@@ -343,6 +355,10 @@ export const ERROR_CLASS_BY_CODE: Readonly<Record<string, typeof nRouterError>> 
   service_unavailable: nRouterServiceError,
   plan_allowance_exhausted: nRouterCreditError,
   plan_required: nRouterCreditError,
+  input_too_large: nRouterRequestError,
+  max_output_tokens_too_large: nRouterRequestError,
+  fallback_not_allowed: nRouterRequestError,
+  guardrail_not_found: nRouterRequestError,
 });
 
 /** The HTTP status the spec pairs with each code. */
@@ -358,6 +374,10 @@ export const ERROR_STATUS_BY_CODE: Readonly<Record<string, number>> = Object.fre
   service_unavailable: 503,
   plan_allowance_exhausted: 402,
   plan_required: 402,
+  input_too_large: 400,
+  max_output_tokens_too_large: 400,
+  fallback_not_allowed: 400,
+  guardrail_not_found: 400,
 });
 
 /**
@@ -432,6 +452,12 @@ export function createError(message: string, options: nRouterErrorOptions = {}):
     const limitSource = options.limitSource ?? options.meta?.limitSource;
     if (limitSource === 'plan_allowance_exhausted' || limitSource === 'plan_required') {
       code = limitSource;
+    }
+  }
+  if (!code && options.status === 400) {
+    const guardrails = options.guardrails ?? options.meta?.guardrails;
+    if (guardrails === 'blocked' || options.type === 'guardrail_blocked') {
+      code = 'guardrail_blocked';
     }
   }
   const ErrorClass = classifyErrorClass(code, message, options.status);
@@ -738,10 +764,17 @@ export function classifyError(
   status?: number | null,
   options?: Partial<nRouterErrorOptions>,
 ): nRouterError {
-  const Cls = classifyErrorClass(code, message, status);
+  let resolvedCode = code ?? options?.code ?? null;
+  if (!resolvedCode && status === 400) {
+    const guardrails = options?.guardrails ?? options?.meta?.guardrails;
+    if (guardrails === 'blocked' || options?.type === 'guardrail_blocked') {
+      resolvedCode = 'guardrail_blocked';
+    }
+  }
+  const Cls = classifyErrorClass(resolvedCode, message, status);
   return new Cls(message ?? 'nRouter request failed', {
     ...options,
-    code: code ?? options?.code ?? null,
+    code: resolvedCode,
     status: status ?? options?.status ?? null,
   });
 }

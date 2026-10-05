@@ -65,8 +65,13 @@ type ResponseMeta struct {
 	BudgetWarning string
 
 	// Guardrails is the posture of the PRE-CALL guardrail chain: "none",
-	// "monitor", "pass", "partial" or "blocked". Compare it exactly and
-	// case-sensitively.
+	// "monitor", "redacted", "pass", "partial", "blocked" or "unavailable".
+	// Compare it exactly and case-sensitively.
+	//
+	// "redacted" means an enforcing chain REWROTE part of the prompt (PII or
+	// keyword redaction) before the provider saw it and the request then
+	// served; "partial" means only that some content went uninspected, never
+	// that anything was rewritten.
 	//
 	// Empty means the gateway made NO guardrail claim about this response — a
 	// /v1/models call, an auth refusal that never reached preflight — never "no
@@ -96,6 +101,21 @@ type ResponseMeta struct {
 
 	// AllowanceReset is when the current usage allowance resets.
 	AllowanceReset *uint64
+
+	// Compression is the prompt compression outcome: "applied", "not_requested",
+	// "off", or "skipped". Empty on cache hits and refusals.
+	Compression string
+
+	// Routing is which chain entry answered: "direct" for the first entry,
+	// "fallback:<n>" for the entry n fallbacks deep. Empty on cache hits and refusals.
+	Routing string
+
+	// Attempts is provider calls made for this request, retries and failovers
+	// alike (>= 1). Nil on cache hits and refusals.
+	Attempts *uint64
+
+	// Intent is the top evaluated intent category if intent routing was requested.
+	Intent string
 }
 
 // HeaderNames lists every response header this SDK reads, exactly as the
@@ -121,6 +141,10 @@ var HeaderNames = []string{
 	"x-nr-response-cache-age",
 	"x-nr-funding-source",
 	"x-nr-allowance-reset",
+	"x-nr-compression",
+	"x-nr-routing",
+	"x-nr-attempts",
+	"x-nr-intent",
 }
 
 // MetaFromLookup builds ResponseMeta from any lowercase-name header lookup.
@@ -165,6 +189,10 @@ func MetaFromLookup(get func(string) string) ResponseMeta {
 		ResponseCacheAge: num("x-nr-response-cache-age"),
 		FundingSource:    get("x-nr-funding-source"),
 		AllowanceReset:   num("x-nr-allowance-reset"),
+		Compression:      get("x-nr-compression"),
+		Routing:          get("x-nr-routing"),
+		Attempts:         num("x-nr-attempts"),
+		Intent:           get("x-nr-intent"),
 	}
 	if raw := get("x-nr-request-cost"); raw != "" {
 		if v, err := strconv.ParseFloat(raw, 64); err == nil && isBillableAmount(v) {

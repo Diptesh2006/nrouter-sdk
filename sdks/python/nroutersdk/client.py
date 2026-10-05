@@ -7,7 +7,7 @@ import os
 import re
 import time
 import ipaddress
-from typing import TYPE_CHECKING, Any, Mapping, cast
+from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 from urllib.parse import quote, urlparse
 
 if TYPE_CHECKING:
@@ -48,6 +48,7 @@ from nroutersdk._errors import (
 from nroutersdk._options import build_extra_body, vet_extra
 from nroutersdk._response import nRouterResponseMeta
 from nroutersdk._unsupported import UNSUPPORTED
+from nroutersdk.mcp import _AsyncMCP, _MCP
 from nroutersdk.sampling import build_sampling_params
 
 if TYPE_CHECKING:
@@ -248,6 +249,8 @@ def _prepare_default_headers(
     default_headers: Mapping[str, str] | None = None,
     trace_id: str | None = None,
     session_id: str | None = None,
+    tags: Mapping[str, str] | Sequence[str] | str | None = None,
+    compress: bool | str | None = None,
 ) -> dict[str, str]:
     if trace_id is not None and any(c in trace_id for c in "\r\n"):
         raise ValueError("trace_id must not contain CRLF characters")
@@ -259,6 +262,21 @@ def _prepare_default_headers(
         headers["x-nr-trace-id"] = trace_id
     if session_id:
         headers["x-nr-session-id"] = session_id
+    if tags:
+        if isinstance(tags, str):
+            tag_str = tags
+        elif isinstance(tags, Mapping):
+            tag_str = ",".join(f"{k}={v}" for k, v in tags.items())
+        else:
+            tag_str = ",".join(str(t) for t in tags)
+        if any(c in tag_str for c in "\r\n"):
+            raise ValueError("tags must not contain CRLF characters")
+        headers["x-nr-tags"] = tag_str
+    if compress is not None:
+        val = str(compress).lower() if isinstance(compress, bool) else str(compress).strip()
+        if any(c in val for c in "\r\n"):
+            raise ValueError("compress must not contain CRLF characters")
+        headers["x-nr-compress"] = val
     return headers
 
 
@@ -369,14 +387,25 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
     headers = err.response.headers
     request_id = headers.get("x-nr-request-id") or body.get("request_id")
     status = err.status_code
+    meta = nRouterResponseMeta.from_headers(headers)
+    guardrails = headers.get("x-nr-guardrails")
 
     # A code, when the gateway sends one, is the strongest signal and the only
     # thing separating `rate_limit_exceeded` from `tpm_limit_exceeded`. The main
     # error path sends none — see the note above — so this is a preference, not
     # the primary route, and it stays forward-compatible with a gateway that
     # starts sending codes on every path.
+    #
+    # The four pre-egress refusals added 2026-09-17 MUST be listed. An
+    # unrecognized code is deliberately NOT allowed to fall through to status
+    # classification below — it raises the base ``nRouterError`` instead — so an
+    # unmapped code here is a real misclassification, not merely a missing name.
     _BY_CODE = {
         "invalid_request": nRouterRequestError,
+        "input_too_large": nRouterRequestError,
+        "max_output_tokens_too_large": nRouterRequestError,
+        "fallback_not_allowed": nRouterRequestError,
+        "guardrail_not_found": nRouterRequestError,
         "guardrail_blocked": nRouterGuardrailBlockedError,
         "invalid_api_key": nRouterAuthenticationError,
         "insufficient_credits": nRouterCreditError,
@@ -393,13 +422,30 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
                 auth_reason=headers.get("x-nr-auth-reason"),
                 param=param,
                 type=error_type,
+                guardrails=guardrails,
+                meta=meta,
             ) from err
         if cls is nRouterServiceError:
             # `credit_check_failed` and `service_unavailable` share this class.
             # Without the code the exception reports the class default, so a
             # caller branching on the stable code gets the wrong one.
-            raise cls(message, request_id=request_id, code=gateway_code, param=param, type=error_type) from err
-        raise cls(message, request_id=request_id, param=param, type=error_type) from err
+            raise cls(
+                message,
+                request_id=request_id,
+                code=gateway_code,
+                param=param,
+                type=error_type,
+                guardrails=guardrails,
+                meta=meta,
+            ) from err
+        raise cls(
+            message,
+            request_id=request_id,
+            param=param,
+            type=error_type,
+            guardrails=guardrails,
+            meta=meta,
+        ) from err
     if gateway_code in ("rate_limit_exceeded", "tpm_limit_exceeded"):
         retry_after_hdr = headers.get("retry-after")
         raise nRouterRateLimitError(
@@ -410,6 +456,8 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             code=gateway_code,
             param=param,
             type=error_type,
+            guardrails=guardrails,
+            meta=meta,
         ) from err
     if gateway_code:
         # A code we do NOT know must not fall through to status classification.
@@ -418,13 +466,34 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
         # answer. Keep the base class and the code the gateway actually sent,
         # which is what the other SDKs' `Other` variant does.
         raise nRouterError(
-            message, request_id=request_id, code=gateway_code, status_code=status, param=param, type=error_type
+            message,
+            request_id=request_id,
+            code=gateway_code,
+            status_code=status,
+            param=param,
+            type=error_type,
+            guardrails=guardrails,
+            meta=meta,
         ) from err
 
     if status == 400:
-        if "guardrail" in message.lower():
-            raise nRouterGuardrailBlockedError(message, request_id=request_id, param=param, type=error_type) from err
-        raise nRouterRequestError(message, request_id=request_id, param=param, type=error_type) from err
+        if guardrails == "blocked" or error_type == "guardrail_blocked" or "guardrail" in message.lower():
+            raise nRouterGuardrailBlockedError(
+                message,
+                request_id=request_id,
+                param=param,
+                type=error_type,
+                guardrails=guardrails,
+                meta=meta,
+            ) from err
+        raise nRouterRequestError(
+            message,
+            request_id=request_id,
+            param=param,
+            type=error_type,
+            guardrails=guardrails,
+            meta=meta,
+        ) from err
 
     if status == 401:
         raise nRouterAuthenticationError(
@@ -433,6 +502,8 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             auth_reason=headers.get("x-nr-auth-reason"),
             param=param,
             type=error_type,
+            guardrails=guardrails,
+            meta=meta,
         ) from err
 
     if status == 402:
@@ -443,10 +514,32 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
         # both start their Display with "budget".
         limit_source = headers.get("x-nr-limit-source")
         if limit_source in ("plan_allowance_exhausted", "plan_required"):
-            raise nRouterCreditError(message, request_id=request_id, code=limit_source, param=param, type=error_type) from err
+            raise nRouterCreditError(
+                message,
+                request_id=request_id,
+                code=limit_source,
+                param=param,
+                type=error_type,
+                guardrails=guardrails,
+                meta=meta,
+            ) from err
         if message.lstrip().lower().startswith("budget"):
-            raise nRouterBudgetExceededError(message, request_id=request_id, param=param, type=error_type) from err
-        raise nRouterCreditError(message, request_id=request_id, param=param, type=error_type) from err
+            raise nRouterBudgetExceededError(
+                message,
+                request_id=request_id,
+                param=param,
+                type=error_type,
+                guardrails=guardrails,
+                meta=meta,
+            ) from err
+        raise nRouterCreditError(
+            message,
+            request_id=request_id,
+            param=param,
+            type=error_type,
+            guardrails=guardrails,
+            meta=meta,
+        ) from err
 
     if status == 404:
         # Scoped to MODELS. A 404 is also a missing video job, an unknown MCP
@@ -454,8 +547,23 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
         # wrong answer with a confident stable code on it. Anything we cannot
         # identify keeps the base class rather than a fabricated one.
         if "model" in message.lower():
-            raise nRouterNotFoundError(message, request_id=request_id, param=param, type=error_type) from err
-        raise nRouterError(message, request_id=request_id, status_code=404, param=param, type=error_type) from err
+            raise nRouterNotFoundError(
+                message,
+                request_id=request_id,
+                param=param,
+                type=error_type,
+                guardrails=guardrails,
+                meta=meta,
+            ) from err
+        raise nRouterError(
+            message,
+            request_id=request_id,
+            status_code=404,
+            param=param,
+            type=error_type,
+            guardrails=guardrails,
+            meta=meta,
+        ) from err
 
     if status == 429:
         retry_after = headers.get("retry-after")
@@ -471,6 +579,8 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             code=gateway_code,
             param=param,
             type=error_type,
+            guardrails=guardrails,
+            meta=meta,
         ) from err
 
     if status in (502, 504):
@@ -483,6 +593,8 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
                 status_code=status,
                 param=param,
                 type=error_type,
+                guardrails=guardrails,
+                meta=meta,
             ) from err
         raise nRouterServiceError(
             message,
@@ -490,6 +602,8 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             status_code=status,
             param=param,
             type=error_type,
+            guardrails=guardrails,
+            meta=meta,
         ) from err
 
     if status == 500 or status == 503:
@@ -499,6 +613,8 @@ def _maybe_raise_nrouter_error(err: APIStatusError) -> None:
             status_code=status,
             param=param,
             type=error_type,
+            guardrails=guardrails,
+            meta=meta,
         ) from err
 
 
@@ -883,7 +999,8 @@ class _nRouterChat:
         *,
         prompt_template_id: str | None = None,
         prompt_variables: dict[str, str] | None = None,
-        guardrail_ids: list[str] | None = None,
+        fallbacks: list[str] | None = None,
+        guardrails: list[str] | None = None,
         cache: bool | None = None,
         advanced_sampling: bool = False,
         temperature: float | None = None,
@@ -899,7 +1016,12 @@ class _nRouterChat:
             model: Model name.
             prompt_template_id: Override org default prompt template.
             prompt_variables: Jinja2 variables for the template.
-            guardrail_ids: Not supported per request; non-empty values raise.
+            fallbacks: Up to 4 model names tried in order when the primary
+                cannot be served. REPLACES the org fallback policy for this
+                call; ``model`` stays the primary.
+            guardrails: Up to 8 guardrail ids or names owned by this org.
+                ADD-ONLY — they run in addition to the guardrails already
+                assigned, and a request can never remove or relax one.
             cache: Set false to force provider egress.
             advanced_sampling: When true, send validated temperature/top_p.
             stream: Stream the response.
@@ -916,7 +1038,8 @@ class _nRouterChat:
             build_extra_body(
                 prompt_template_id=prompt_template_id,
                 prompt_variables=prompt_variables,
-                guardrail_ids=guardrail_ids,
+                fallbacks=fallbacks,
+                guardrails=guardrails,
                 cache=cache,
             )
         )
@@ -981,6 +1104,7 @@ class nRouter(_OpenAI):
     messages: _Messages
     videos: _Videos  # type: ignore[assignment]
     nrouter: _nRouterChat
+    mcp: _MCP
     last_response: nRouterResponseMeta | None
 
     def __init__(
@@ -990,6 +1114,8 @@ class nRouter(_OpenAI):
         *,
         trace_id: str | None = None,
         session_id: str | None = None,
+        tags: Mapping[str, str] | Sequence[str] | str | None = None,
+        compress: bool | str | None = None,
         **kwargs,
     ) -> None:
         """Initialize the nRouter client.
@@ -1001,6 +1127,8 @@ class nRouter(_OpenAI):
                 environment variable or 'https://api.nrouter.ai/v1'.
             trace_id: Optional distributed trace ID.
             session_id: Optional multi-turn session ID.
+            tags: Optional request tags mapping or string.
+            compress: Optional compression instruction.
             **kwargs: Extra arguments passed directly to OpenAI client constructor
                 (e.g. timeout, max_retries, http_client). `max_retries` defaults
                 to `DEFAULT_MAX_RETRIES` (0 — see the note there: a retry of a
@@ -1014,6 +1142,8 @@ class nRouter(_OpenAI):
             kwargs.pop("default_headers", None),
             trace_id=trace_id,
             session_id=session_id,
+            tags=tags,
+            compress=compress,
         )
 
         super().__init__(
@@ -1037,6 +1167,7 @@ class nRouter(_OpenAI):
         self.messages = _Messages(self)
         self.videos = _Videos(self)  # type: ignore[assignment]
         self.nrouter = _nRouterChat(self)
+        self.mcp = _MCP(self)
 
         # Response metadata — updated after every API call
         self.last_response = None
@@ -1179,6 +1310,7 @@ class AsyncnRouter(_AsyncOpenAI):
     messages: _AsyncMessages
     videos: _AsyncVideos  # type: ignore[assignment]
     nrouter: _nRouterChat
+    mcp: _AsyncMCP
     last_response: nRouterResponseMeta | None
 
     def __init__(
@@ -1188,6 +1320,8 @@ class AsyncnRouter(_AsyncOpenAI):
         *,
         trace_id: str | None = None,
         session_id: str | None = None,
+        tags: Mapping[str, str] | Sequence[str] | str | None = None,
+        compress: bool | str | None = None,
         **kwargs,
     ) -> None:
         """Initialize the AsyncnRouter client.
@@ -1199,6 +1333,8 @@ class AsyncnRouter(_AsyncOpenAI):
                 environment variable or 'https://api.nrouter.ai/v1'.
             trace_id: Optional distributed trace ID.
             session_id: Optional multi-turn session ID.
+            tags: Optional request tags mapping or string.
+            compress: Optional compression instruction.
             **kwargs: Extra arguments passed directly to AsyncOpenAI client constructor
                 (e.g. timeout, max_retries, http_client). `max_retries` defaults
                 to `DEFAULT_MAX_RETRIES` (0 — see the note there: a retry of a
@@ -1212,6 +1348,8 @@ class AsyncnRouter(_AsyncOpenAI):
             kwargs.pop("default_headers", None),
             trace_id=trace_id,
             session_id=session_id,
+            tags=tags,
+            compress=compress,
         )
 
         super().__init__(
@@ -1234,6 +1372,7 @@ class AsyncnRouter(_AsyncOpenAI):
         self.messages = _AsyncMessages(self)
         self.videos = _AsyncVideos(self)  # type: ignore[assignment]
         self.nrouter = _nRouterChat(self)
+        self.mcp = _AsyncMCP(self)
         self.last_response = None
 
         # Hook into httpx to capture response headers automatically

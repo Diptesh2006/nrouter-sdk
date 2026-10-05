@@ -94,6 +94,8 @@ pub struct Client {
     http: reqwest::Client,
     trace_id: Option<String>,
     session_id: Option<String>,
+    tags: Option<String>,
+    compress: Option<String>,
 }
 
 impl std::fmt::Debug for Client {
@@ -105,6 +107,8 @@ impl std::fmt::Debug for Client {
             .field("base_url", &self.base_url)
             .field("trace_id", &self.trace_id)
             .field("session_id", &self.session_id)
+            .field("tags", &self.tags)
+            .field("compress", &self.compress)
             .finish_non_exhaustive()
     }
 }
@@ -251,6 +255,8 @@ impl Client {
             http: Self::default_http_client()?,
             trace_id: None,
             session_id: None,
+            tags: None,
+            compress: None,
         })
     }
 
@@ -293,12 +299,44 @@ impl Client {
         Ok(self)
     }
 
+    /// Configure tags forwarded via x-nr-tags.
+    pub fn with_tags(mut self, tags: impl Into<String>) -> Result<Self, NRouterError> {
+        let t = tags.into();
+        if t.contains('\r') || t.contains('\n') {
+            return Err(NRouterError::Configuration(
+                "tags must not contain CRLF characters".into(),
+            ));
+        }
+        self.tags = Some(t);
+        Ok(self)
+    }
+
+    /// Configure compression instruction forwarded via x-nr-compress.
+    pub fn with_compress(mut self, compress: impl Into<String>) -> Result<Self, NRouterError> {
+        let c = compress.into();
+        if c.contains('\r') || c.contains('\n') {
+            return Err(NRouterError::Configuration(
+                "compress must not contain CRLF characters".into(),
+            ));
+        }
+        self.compress = Some(c);
+        Ok(self)
+    }
+
     pub fn trace_id(&self) -> Option<&str> {
         self.trace_id.as_deref()
     }
 
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
+    }
+
+    pub fn tags(&self) -> Option<&str> {
+        self.tags.as_deref()
+    }
+
+    pub fn compress(&self) -> Option<&str> {
+        self.compress.as_deref()
     }
 
     /// Override the underlying HTTP client — proxy, timeout, connection pool.
@@ -694,6 +732,12 @@ impl Client {
         if let Some(ref sid) = self.session_id {
             req = req.header("x-nr-session-id", sid);
         }
+        if let Some(ref tags) = self.tags {
+            req = req.header("x-nr-tags", tags);
+        }
+        if let Some(ref compress) = self.compress {
+            req = req.header("x-nr-compress", compress);
+        }
         req
     }
 
@@ -833,6 +877,8 @@ fn parse_sse_frame(frame: &[u8], meta: &ResponseMeta) -> Result<ParsedFrame, NRo
                 message: trimmed.to_string(),
                 status: Some(200),
                 request_id: meta.request_id.clone(),
+                guardrails: meta.guardrails.clone(),
+                meta: Some(meta.clone()),
                 ..ErrorBody::default()
             }))
         }
@@ -844,13 +890,17 @@ fn parse_sse_frame(frame: &[u8], meta: &ResponseMeta) -> Result<ParsedFrame, NRo
             .get("type")
             .and_then(Value::as_str)
             .filter(|code| is_known_error_code(code));
+        let mut code = explicit.or(type_code).map(str::to_string);
+        if code.is_none() && meta.guardrails.as_deref() == Some("blocked") {
+            code = Some("guardrail_blocked".to_string());
+        }
         return Err(NRouterError::from_code(ErrorBody {
             message: node
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or(trimmed)
                 .to_string(),
-            code: explicit.or(type_code).map(str::to_string),
+            code,
             param: node.get("param").and_then(Value::as_str).map(str::to_owned),
             error_type: node.get("type").and_then(Value::as_str).map(str::to_owned),
             status: Some(200),
@@ -858,6 +908,8 @@ fn parse_sse_frame(frame: &[u8], meta: &ResponseMeta) -> Result<ParsedFrame, NRo
             limit_source: meta.limit_source.clone(),
             auth_reason: meta.auth_reason.clone(),
             retry_after: None,
+            guardrails: meta.guardrails.clone(),
+            meta: Some(meta.clone()),
         }));
     }
     if matches!(
@@ -887,11 +939,17 @@ fn is_known_error_code(code: &str) -> bool {
             | "guardrail_blocked"
             | "invalid_api_key"
             | "insufficient_credits"
+            | "plan_allowance_exhausted"
+            | "plan_required"
             | "model_not_found"
             | "rate_limit_exceeded"
             | "tpm_limit_exceeded"
             | "credit_check_failed"
             | "service_unavailable"
+            | "input_too_large"
+            | "max_output_tokens_too_large"
+            | "fallback_not_allowed"
+            | "guardrail_not_found"
     )
 }
 
@@ -933,11 +991,19 @@ fn error_body(
 ) -> ErrorBody {
     let node = body.get("error").unwrap_or(body);
     let mut code = node.get("code").and_then(Value::as_str).map(str::to_owned);
+    let error_type = node.get("type").and_then(Value::as_str).map(str::to_owned);
     if code.is_none() && status == 402 {
         if let Some(ls) = &meta.limit_source {
             if ls == "plan_allowance_exhausted" || ls == "plan_required" {
                 code = Some(ls.clone());
             }
+        }
+    }
+    if code.is_none() && status == 400 {
+        if meta.guardrails.as_deref() == Some("blocked")
+            || error_type.as_deref() == Some("guardrail_blocked")
+        {
+            code = Some("guardrail_blocked".to_string());
         }
     }
     ErrorBody {
@@ -948,12 +1014,14 @@ fn error_body(
             .to_string(),
         code,
         param: node.get("param").and_then(Value::as_str).map(str::to_owned),
-        error_type: node.get("type").and_then(Value::as_str).map(str::to_owned),
+        error_type,
         status: Some(status),
         request_id: meta.request_id.clone(),
         limit_source: meta.limit_source.clone(),
         auth_reason: meta.auth_reason.clone(),
         retry_after,
+        guardrails: meta.guardrails.clone(),
+        meta: Some(meta.clone()),
     }
 }
 

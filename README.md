@@ -1,32 +1,56 @@
-# nRouter SDK & Examples
+# nRouter SDK & Code Examples
 
 [![npm](https://img.shields.io/npm/v/%40nrouter_ai%2Fsdk?logo=npm&label=%40nrouter_ai%2Fsdk)](https://www.npmjs.com/package/@nrouter_ai/sdk)
 [![PyPI](https://img.shields.io/pypi/v/nrouter-sdk?logo=pypi&logoColor=white&label=nrouter-sdk)](https://pypi.org/project/nrouter-sdk/)
-[![R-universe](https://nroutergateway.r-universe.dev/nrouter/badges/version)](https://nroutergateway.r-universe.dev/nrouter)
 [![Go Reference](https://pkg.go.dev/badge/github.com/nRouterGateway/nrouter-sdk/sdks/go/v3.svg)](https://pkg.go.dev/github.com/nRouterGateway/nrouter-sdk/sdks/go/v3)
+[![crates.io](https://img.shields.io/crates/v/nrouter.svg?logo=rust)](https://crates.io/crates/nrouter)
+[![R-universe](https://nroutergateway.r-universe.dev/nrouter/badges/version)](https://nroutergateway.r-universe.dev/nrouter)
 [![Socket](https://badge.socket.dev/npm/package/@nrouter_ai/sdk/latest)](https://socket.dev/npm/package/@nrouter_ai/sdk)
-[![npm publish](https://github.com/nRouterGateway/nrouter-sdk/actions/workflows/publish-npm.yml/badge.svg)](https://github.com/nRouterGateway/nrouter-sdk/actions/workflows/publish-npm.yml)
-[![PyPI publish](https://github.com/nRouterGateway/nrouter-sdk/actions/workflows/publish-pypi.yml/badge.svg)](https://github.com/nRouterGateway/nrouter-sdk/actions/workflows/publish-pypi.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-SDK and code examples for the [nRouter](https://nrouter.ai) LLM gateway.
+The official multi-language SDK library for [nRouter](https://nrouter.ai) — the high-performance, multi-tenant AI inference gateway. One virtual key (`sk-nrouter-*`), zero-markup list pricing, real-time guardrails, and drop-in wire compatibility for OpenAI and Anthropic SDKs across six provider clouds.
+
+[Documentation](https://nrouter.ai/docs) • [Model Catalog & Pricing](https://nrouter.ai/models) • [Dashboard](https://app.nrouter.ai) • [API Reference](https://api.nrouter.ai/docs)
+
+---
+
+## Architecture Overview
+
+```mermaid
+flowchart LR
+    App["Your App / AI Agent"] -->|"1 Virtual Key (sk-nrouter-*)"| SDK["nRouter SDK / OpenAI Client"]
+    SDK -->|"HTTPS / Streaming SSE\napi.nrouter.ai/v1/*"| GW["nRouter Gateway (Rust)"]
+    GW <-->|"mTLS 1.3 Inspection\n(Zero DB, Zero Egress)"| Cortex["nrouter-cortex"]
+    GW -->|"Smart Auto-Routing\n(11 Intent Tiers)"| Clouds["Upstream Clouds"]
+
+    subgraph Clouds ["Supported Model Providers"]
+        OAI["OpenAI (GPT-4o, o1, o3)"]
+        ANT["Anthropic (Claude 3.5 Sonnet / Haiku)"]
+        AWS["AWS Bedrock (Claude, Llama 3)"]
+        GCP["Google Vertex AI (Gemini 2.0 Flash)"]
+        AZ["Azure AI Foundry (Direct Models)"]
+        AL["Alibaba DashScope (Qwen 2.5)"]
+    end
+```
+
+---
 
 ## All Ten SDKs Supported
 
-All ten SDKs are officially maintained, tested against the identical gateway wire contract, and share the single coordinated release version **`3.1.2`** under [Rule #14](https://github.com/nRouterGateway/nrouter-sdk#the-one-rule-that-matters-here). Every package manifest, lockfile, documentation, and installation snippet is synchronized to `3.1.2`.
+All ten SDKs are officially maintained, tested against the identical gateway wire contract, and share coordinated releases under [Rule #14](https://github.com/nRouterGateway/nrouter-sdk#the-one-rule-that-matters-here). Every package manifest, lockfile, documentation, and installation snippet is synchronized.
 
-| SDK | Registry / Distribution | Registry URL | Package | Version |
-|---|---|---|---|---|
-| JavaScript / TypeScript | npm | [npmjs.com/package/@nrouter_ai/sdk](https://www.npmjs.com/package/@nrouter_ai/sdk) | `@nrouter_ai/sdk` | 3.1.2 |
-| Python | PyPI | [pypi.org/project/nrouter-sdk](https://pypi.org/project/nrouter-sdk/) | `nrouter-sdk` | 3.1.2 |
-| Java | Maven Central | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | `ai.nrouter:nrouter-sdk` | 3.1.2 |
-| Kotlin | Maven Central | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-kotlin) | `ai.nrouter:nrouter-sdk-kotlin` | 3.1.2 |
-| Android | Maven Central | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-android) | `ai.nrouter:nrouter-sdk-android` | 3.1.2 |
-| Go | Go Modules (`proxy.golang.org`) | [pkg.go.dev](https://pkg.go.dev/github.com/nRouterGateway/nrouter-sdk/sdks/go/v3) | `github.com/nRouterGateway/nrouter-sdk/sdks/go/v3` | 3.1.2 |
-| Rust | crates.io | [crates.io/crates/nrouter](https://crates.io/crates/nrouter) | `nrouter` | 3.1.2 |
-| Swift | Swift Package Manager | [github.com/nRouterGateway/nrouter-sdk](https://github.com/nRouterGateway/nrouter-sdk) | `nrouter-sdk` | 3.1.2 |
-| Dart / Flutter | pub.dev | [pub.dev/packages/nrouter](https://pub.dev/packages/nrouter) | `nrouter` | 3.1.2 |
-| R | R-universe / CRAN | [nroutergateway.r-universe.dev](https://nroutergateway.r-universe.dev/nrouter) | `nrouter` | 3.1.2 |
+| SDK | Registry / Distribution | Registry URL | Package |
+|---|---|---|---|
+| JavaScript / TypeScript | npm | [npmjs.com/package/@nrouter_ai/sdk](https://www.npmjs.com/package/@nrouter_ai/sdk) | `@nrouter_ai/sdk` |
+| Python | PyPI | [pypi.org/project/nrouter-sdk](https://pypi.org/project/nrouter-sdk/) | `nrouter-sdk` |
+| Java | Maven Central | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk) | `ai.nrouter:nrouter-sdk` |
+| Kotlin | Maven Central | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-kotlin) | `ai.nrouter:nrouter-sdk-kotlin` |
+| Android | Maven Central | [central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-android) | `ai.nrouter:nrouter-sdk-android` |
+| Go | Go Modules (`proxy.golang.org`) | [pkg.go.dev](https://pkg.go.dev/github.com/nRouterGateway/nrouter-sdk/sdks/go/v3) | `github.com/nRouterGateway/nrouter-sdk/sdks/go/v3` |
+| Rust | crates.io | [crates.io/crates/nrouter](https://crates.io/crates/nrouter) | `nrouter` |
+| Swift | Swift Package Manager | [github.com/nRouterGateway/nrouter-sdk](https://github.com/nRouterGateway/nrouter-sdk) | `nrouter-sdk` |
+| Dart / Flutter | pub.dev | [pub.dev/packages/nrouter](https://pub.dev/packages/nrouter) | `nrouter` |
+| R | R-universe / CRAN | [nroutergateway.r-universe.dev](https://nroutergateway.r-universe.dev/nrouter) | `nrouter` |
 
 All ten SDKs are held to the same public wire contract. The conformance gate
 accounts for all 150 route-ownership cells (15 routes × 10 SDKs): seven
@@ -585,7 +609,7 @@ not itself the register of which ones exist.
 | `x-nr-cache-write-tokens` | integer | Cache-write tokens; emitted only when nonzero |
 | `x-nr-limit-source` | string | `key`, `plan`, `team`, `user`, `budget`, `plan_window_h8`, `plan_window_day`, `plan_window_week`, `capacity`, `plan_allowance_exhausted`, or `plan_required` on 429 and 402 responses |
 | `x-nr-budget-warning` | string | A soft budget you configured was crossed by this request, which still served; `<scope> soft_budget <spend>/<ceiling>`, e.g. `org soft_budget 80.00/100.00` |
-| `x-nr-guardrails` | string | Pre-call guardrail posture; absent means the response makes no guardrail claim, never `none`, which is an explicit token |
+| `x-nr-guardrails` | string | Pre-call guardrail posture — `none`, `monitor`, `redacted`, `pass`, `partial`, `blocked` or `unavailable`; absent means the response makes no guardrail claim, never `none`, which is an explicit token |
 | `x-nr-auth-reason` | string | On a 401, the gateway's stable reason for refusing the key |
 | `x-nr-response-cache` | string | `hit` or `miss`; absent when the response cache did not participate |
 | `x-nr-response-cache-age` | integer | Age of a cache `hit` in seconds |

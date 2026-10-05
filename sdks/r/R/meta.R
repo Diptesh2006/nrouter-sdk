@@ -38,6 +38,10 @@ nrouter_meta <- function(headers = list()) {
     if (is.na(value)) NULL else value
   }
 
+  cost_val <- get_num("x-nr-request-cost")
+  cost_stat <- get_chr("x-nr-cost-status")
+  cache_age <- get_num("x-nr-response-cache-age")
+
   structure(
     class = "nrouter_meta",
     list(
@@ -49,8 +53,9 @@ nrouter_meta <- function(headers = list()) {
       # x-nr-session-id); the gateway overwrites the response value with its
       # own, so join on this rather than on what was sent.
       trace_id           = get_chr("x-nr-trace-id"),
-      cost               = get_num("x-nr-request-cost"),
-      cost_status        = get_chr("x-nr-cost-status"),
+      cost               = cost_val,
+      cost_status        = cost_stat,
+      is_priced          = !is.null(cost_val) && !identical(cost_stat, "unpriced"),
       model              = get_chr("x-nr-model"),
       input_tokens       = get_num("x-nr-input-tokens"),
       output_tokens      = get_num("x-nr-output-tokens"),
@@ -65,7 +70,12 @@ nrouter_meta <- function(headers = list()) {
       budget_warning     = get_chr("x-nr-budget-warning"),
       auth_reason        = get_chr("x-nr-auth-reason"),
       response_cache     = get_chr("x-nr-response-cache"),
-      response_cache_age = get_num("x-nr-response-cache-age"),
+      response_cache_age = cache_age,
+      cache_age_seconds  = if (!is.null(cache_age)) cache_age else 0,
+      compression        = get_chr("x-nr-compression"),
+      routing            = get_chr("x-nr-routing"),
+      attempts           = get_int("x-nr-attempts"),
+      intent             = get_chr("x-nr-intent"),
       funding_source     = get_chr("x-nr-funding-source"),
       allowance_reset    = get_int("x-nr-allowance-reset"),
       retry_after        = nrouter_parse_retry_after(get_chr("retry-after"))
@@ -98,13 +108,22 @@ nrouter_header_names <- function() {
     "x-nr-auth-reason",
     "x-nr-response-cache",
     "x-nr-response-cache-age",
+    "x-nr-compression",
+    "x-nr-routing",
+    "x-nr-attempts",
+    "x-nr-intent",
     "x-nr-funding-source",
     "x-nr-allowance-reset"
   )
 }
 
+#' Check if response is priced
+#'
+#' @param meta An \code{nrouter_meta} object.
+#' @return Logical TRUE if priced.
+#' @export
 nrouter_is_priced <- function(meta) {
-  identical(meta$cost_status, "exact") && !is.null(meta$cost)
+  !is.null(meta$cost) && !identical(meta$cost_status, "unpriced")
 }
 
 #' Parse structured budget warning from response metadata

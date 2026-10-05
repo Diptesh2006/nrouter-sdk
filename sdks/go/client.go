@@ -219,6 +219,8 @@ type Client struct {
 	bodyIdleTimeout time.Duration
 	traceID         string
 	sessionID       string
+	tags            string
+	compress        string
 }
 
 // Option configures a Client at construction.
@@ -237,6 +239,16 @@ func WithTraceID(traceID string) Option {
 // WithSessionID configures a multi-turn upstream session ID on outgoing requests.
 func WithSessionID(sessionID string) Option {
 	return func(c *Client) { c.sessionID = sessionID }
+}
+
+// WithTags configures request tags forwarded to the gateway via x-nr-tags.
+func WithTags(tags string) Option {
+	return func(c *Client) { c.tags = tags }
+}
+
+// WithCompress configures prompt compression instruction forwarded via x-nr-compress.
+func WithCompress(compress string) Option {
+	return func(c *Client) { c.compress = compress }
 }
 
 // WithHTTPClient overrides the transport — proxy, timeout, connection pool.
@@ -289,6 +301,12 @@ func New(apiKey string, opts ...Option) (*Client, error) {
 	}
 	if strings.ContainsAny(c.sessionID, "\r\n") {
 		return nil, configErr("sessionID must not contain CRLF characters")
+	}
+	if strings.ContainsAny(c.tags, "\r\n") {
+		return nil, configErr("tags must not contain CRLF characters")
+	}
+	if strings.ContainsAny(c.compress, "\r\n") {
+		return nil, configErr("compress must not contain CRLF characters")
 	}
 	parsedURL, err := url.Parse(c.baseURL)
 	if err != nil {
@@ -650,6 +668,12 @@ func (c *Client) request(ctx context.Context, method, path string, body io.Reade
 	if c.sessionID != "" {
 		req.Header.Set("x-nr-session-id", c.sessionID)
 	}
+	if c.tags != "" {
+		req.Header.Set("x-nr-tags", c.tags)
+	}
+	if c.compress != "" {
+		req.Header.Set("x-nr-compress", c.compress)
+	}
 	return req, nil
 }
 
@@ -813,12 +837,15 @@ func gatewayError(res *http.Response, meta ResponseMeta, raw []byte) *Error {
 	if message == "" {
 		message = "nRouter request failed"
 	}
+	param, _ := node["param"].(string)
+	errType, _ := node["type"].(string)
 	code, _ := node["code"].(string)
 	if code == "" && res.StatusCode == 402 && (meta.LimitSource == "plan_allowance_exhausted" || meta.LimitSource == "plan_required") {
 		code = meta.LimitSource
 	}
-	param, _ := node["param"].(string)
-	errType, _ := node["type"].(string)
+	if code == "" && res.StatusCode == 400 && (meta.Guardrails == "blocked" || errType == "guardrail_blocked") {
+		code = "guardrail_blocked"
+	}
 
 	err := &Error{
 		Kind:        classify(code, message, res.StatusCode),
@@ -830,6 +857,8 @@ func gatewayError(res *http.Response, meta ResponseMeta, raw []byte) *Error {
 		RequestID:   meta.RequestID,
 		LimitSource: meta.LimitSource,
 		AuthReason:  meta.AuthReason,
+		Guardrails:  meta.Guardrails,
+		Meta:        &meta,
 	}
 	err.RetryAfter = parseRetryAfter(res.Header.Get("Retry-After"), time.Now())
 	return err

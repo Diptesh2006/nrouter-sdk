@@ -234,6 +234,12 @@ nrouter_request_headers <- function(client, extra = list()) {
   if (!is.null(client$session_id) && nzchar(as.character(client$session_id))) {
     hdr[["x-nr-session-id"]] <- as.character(client$session_id)
   }
+  if (!is.null(client$tags) && nzchar(as.character(client$tags))) {
+    hdr[["x-nr-tags"]] <- as.character(client$tags)
+  }
+  if (!is.null(client$compress) && nzchar(as.character(client$compress))) {
+    hdr[["x-nr-compress"]] <- as.character(client$compress)
+  }
   if (length(extra) > 0) {
     for (nm in names(extra)) {
       hdr[[nm]] <- extra[[nm]]
@@ -242,6 +248,16 @@ nrouter_request_headers <- function(client, extra = list()) {
   hdr
 }
 
+#' @param api_key nRouter API key. Defaults to \code{NROUTER_API_KEY}.
+#' @param base_url Gateway base URL.
+#' @param timeout_seconds Whole-request ceiling for buffered calls.
+#' @param connect_timeout_seconds Connect-phase ceiling.
+#' @param stream_idle_seconds Stall ceiling for streaming and binary transfers.
+#' @param trace_id Optional distributed trace ID forwarding to gateway.
+#' @param session_id Optional multi-turn session ID forwarding to gateway.
+#' @param tags Optional request tags forwarding to gateway.
+#' @param compress Optional prompt compression strategy ('llmlingua2').
+#' @return An object of class \code{nrouter_client}.
 #' @export
 nrouter_client <- function(api_key = NULL, base_url = nrouter_default_base_url(),
                            timeout_seconds = nrouter_default_timeout_seconds(),
@@ -250,13 +266,21 @@ nrouter_client <- function(api_key = NULL, base_url = nrouter_default_base_url()
                            stream_idle_seconds =
                              nrouter_default_stream_idle_seconds(),
                            trace_id = NULL,
-                           session_id = NULL) {
+                           session_id = NULL,
+                           tags = NULL,
+                           compress = NULL) {
   valid_base <- nrouter_validate_gateway_base_url(base_url)
   if (!is.null(trace_id) && grepl("[\r\n]", as.character(trace_id))) {
     stop(nrouter_configuration_condition("trace_id must not contain CRLF characters"))
   }
   if (!is.null(session_id) && grepl("[\r\n]", as.character(session_id))) {
     stop(nrouter_configuration_condition("session_id must not contain CRLF characters"))
+  }
+  if (!is.null(tags) && grepl("[\r\n]", as.character(tags))) {
+    stop(nrouter_configuration_condition("tags must not contain CRLF characters"))
+  }
+  if (!is.null(compress) && grepl("[\r\n]", as.character(compress))) {
+    stop(nrouter_configuration_condition("compress must not contain CRLF characters"))
   }
   structure(
     class = "nrouter_client",
@@ -267,7 +291,9 @@ nrouter_client <- function(api_key = NULL, base_url = nrouter_default_base_url()
       connect_timeout_seconds = connect_timeout_seconds,
       stream_idle_seconds     = stream_idle_seconds,
       trace_id                = trace_id,
-      session_id              = session_id
+      session_id              = session_id,
+      tags                    = tags,
+      compress                = compress
     )
   )
 }
@@ -327,7 +353,9 @@ nrouter_error_from_payload <- function(status, payload, meta) {
     auth_reason  = meta$auth_reason,
     retry_after  = meta$retry_after,
     param        = param,
-    type         = type
+    type         = type,
+    guardrails   = meta$guardrails,
+    meta         = meta
   )
 }
 

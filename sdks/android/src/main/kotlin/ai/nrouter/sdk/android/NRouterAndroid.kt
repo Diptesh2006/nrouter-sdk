@@ -98,6 +98,8 @@ public object NRouterAndroid {
         bufferedCallTimeoutMillis: Long = NRouter.BUFFERED_CALL_TIMEOUT_MILLIS,
         traceId: String? = null,
         sessionId: String? = null,
+        tags: String? = null,
+        compress: String? = null,
     ): NRouter {
         val resolved = apiKey?.takeIf { it.isNotEmpty() } ?: manifestKey(context)
         if (resolved.isNullOrEmpty()) {
@@ -116,6 +118,8 @@ public object NRouterAndroid {
             traceId = traceId,
             sessionId = sessionId,
             clientPlatform = "android",
+            tags = tags,
+            compress = compress,
         )
     }
 

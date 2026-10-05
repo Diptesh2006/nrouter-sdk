@@ -1,3 +1,5 @@
+import 'meta.dart';
+
 /// Why the gateway refused a request.
 ///
 /// Subclasses map one-to-one to the `errors` block of
@@ -16,6 +18,21 @@ sealed class NRouterError implements Exception {
   /// On a 429: duration in whole seconds to wait before retrying.
   int? get retryAfter => body?.retryAfter;
 
+  /// Request ID from gateway.
+  String? get requestId => body?.requestId ?? body?.meta?.requestId;
+
+  /// On a 429: limit source header.
+  String? get limitSource => body?.limitSource ?? body?.meta?.limitSource;
+
+  /// On a 401: auth reason.
+  String? get authReason => body?.authReason ?? body?.meta?.authReason;
+
+  /// On a guardrail refusal: 'blocked'.
+  String? get guardrails => body?.guardrails ?? body?.meta?.guardrails;
+
+  /// Full response metadata if available.
+  NRouterResponseMeta? get meta => body?.meta;
+
   /// Classify a gateway refusal.
   ///
   /// Three signals, in order, because no single one is sufficient:
@@ -33,7 +50,9 @@ sealed class NRouterError implements Exception {
   factory NRouterError.fromCode(NRouterErrorBody body) {
     switch (body.code) {
       case 'invalid_request':
-        return NRouterRequestError(body);
+        return (body.guardrails == 'blocked' || body.type == 'guardrail_blocked')
+            ? NRouterGuardrailBlockedError(body)
+            : NRouterRequestError(body);
       case 'guardrail_blocked':
         return NRouterGuardrailBlockedError(body);
       case 'invalid_api_key':
@@ -53,7 +72,9 @@ sealed class NRouterError implements Exception {
       case null:
         switch (body.status) {
           case 400:
-            return body.message.toLowerCase().contains('guardrail')
+            return (body.guardrails == 'blocked' ||
+                    body.type == 'guardrail_blocked' ||
+                    body.message.toLowerCase().contains('guardrail'))
                 ? NRouterGuardrailBlockedError(body)
                 : NRouterRequestError(body);
           case 401:
@@ -192,6 +213,8 @@ class NRouterErrorBody {
     this.limitSource,
     this.authReason,
     this.retryAfter,
+    this.guardrails,
+    this.meta,
   });
 
   final String message;
@@ -211,6 +234,12 @@ class NRouterErrorBody {
 
   /// On a 429: duration in whole seconds to wait before retrying.
   final int? retryAfter;
+
+  /// On a guardrail refusal: 'blocked'.
+  final String? guardrails;
+
+  /// Full response metadata if available.
+  final NRouterResponseMeta? meta;
 }
 
 final _nrouterKeyRegex = RegExp(r'\bsk-nrouter-[A-Za-z0-9._-]{4,}');
@@ -286,6 +315,7 @@ String formatNRouterError(NRouterError error) {
     if (b.param != null) parts.add('param=${b.param}');
     if (b.requestId != null) parts.add('requestId=${b.requestId}');
     if (b.limitSource != null) parts.add('limitSource=${b.limitSource}');
+    if (b.guardrails != null) parts.add('guardrails=${b.guardrails}');
     if (b.retryAfter != null) parts.add('retryAfter=${b.retryAfter}s');
     parts.add(': ${redactKeys(b.message)}');
   } else {

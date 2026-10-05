@@ -1,6 +1,6 @@
 {
   "source": "derived from the gateway's emitted header set",
-  "source_commit": "pending-L4",
+  "source_commit": "2026-09-17",
   "headers": [
     "x-nr-request-id",
     "x-nr-latency-ms",
@@ -19,6 +19,10 @@
     "x-nr-auth-reason",
     "x-nr-funding-source",
     "x-nr-allowance-reset",
+    "x-nr-compression",
+    "x-nr-routing",
+    "x-nr-attempts",
+    "x-nr-intent",
     "x-nr-response-cache",
     "x-nr-response-cache-age"
   ]

@@ -59,6 +59,8 @@ public class NRouter @JvmOverloads constructor(
     traceId: String? = null,
     sessionId: String? = null,
     clientPlatform: String? = null,
+    tags: String? = null,
+    compress: String? = null,
 ) {
     private val apiKey: String = resolveApiKey(apiKey)
 
@@ -138,13 +140,35 @@ public class NRouter @JvmOverloads constructor(
     /** Client platform identifier propagated as x-nr-client-platform, or null. */
     public val clientPlatform: String? = clientPlatform
 
+    /** Configured tags propagated as x-nr-tags, or null. */
+    public val tags: String? = tags?.also {
+        if (it.contains('\r') || it.contains('\n')) {
+            throw IllegalArgumentException("tags must not contain CRLF characters")
+        }
+    }
+
+    /** Configured compression instruction propagated as x-nr-compress, or null. */
+    public val compress: String? = compress?.also {
+        if (it.contains('\r') || it.contains('\n')) {
+            throw IllegalArgumentException("compress must not contain CRLF characters")
+        }
+    }
+
     /** Returns a copy of this client with the specified trace identifier. */
     public fun withTraceId(traceId: String?): NRouter =
-        NRouter(apiKey, baseURL, httpClient, bufferedHttpClient.callTimeoutMillis.toLong(), traceId, sessionId, clientPlatform)
+        NRouter(apiKey, baseURL, httpClient, bufferedHttpClient.callTimeoutMillis.toLong(), traceId, sessionId, clientPlatform, tags, compress)
 
     /** Returns a copy of this client with the specified session identifier. */
     public fun withSessionId(sessionId: String?): NRouter =
-        NRouter(apiKey, baseURL, httpClient, bufferedHttpClient.callTimeoutMillis.toLong(), traceId, sessionId, clientPlatform)
+        NRouter(apiKey, baseURL, httpClient, bufferedHttpClient.callTimeoutMillis.toLong(), traceId, sessionId, clientPlatform, tags, compress)
+
+    /** Returns a copy of this client with the specified tags. */
+    public fun withTags(tags: String?): NRouter =
+        NRouter(apiKey, baseURL, httpClient, bufferedHttpClient.callTimeoutMillis.toLong(), traceId, sessionId, clientPlatform, tags, compress)
+
+    /** Returns a copy of this client with the specified compression instruction. */
+    public fun withCompress(compress: String?): NRouter =
+        NRouter(apiKey, baseURL, httpClient, bufferedHttpClient.callTimeoutMillis.toLong(), traceId, sessionId, clientPlatform, tags, compress)
 
     /**
      * Never the key. A plain `class` already has an identity `toString`, but
@@ -299,6 +323,12 @@ public class NRouter @JvmOverloads constructor(
         }
         if (!sessionId.isNullOrEmpty()) {
             reqBuilder.header("x-nr-session-id", sessionId)
+        }
+        if (!tags.isNullOrEmpty()) {
+            reqBuilder.header("x-nr-tags", tags)
+        }
+        if (!compress.isNullOrEmpty()) {
+            reqBuilder.header("x-nr-compress", compress)
         }
         val request = reqBuilder
             .post(streamed.toString().toRequestBody(JSON))
@@ -508,6 +538,12 @@ public class NRouter @JvmOverloads constructor(
         }
         if (!sessionId.isNullOrEmpty()) {
             reqBuilder.header("x-nr-session-id", sessionId)
+        }
+        if (!tags.isNullOrEmpty()) {
+            reqBuilder.header("x-nr-tags", tags)
+        }
+        if (!compress.isNullOrEmpty()) {
+            reqBuilder.header("x-nr-compress", compress)
         }
         val authed = reqBuilder.build()
 
@@ -821,18 +857,24 @@ public class NRouter @JvmOverloads constructor(
         ): NRouterErrorBody {
             val node = payload.optJSONObject("error") ?: payload
             var code = node.optString("code").ifEmpty { null }
+            val type = node.optString("type").ifEmpty { null }
             if (code == null && status == 402 && (meta.limitSource == "plan_allowance_exhausted" || meta.limitSource == "plan_required")) {
                 code = meta.limitSource
+            }
+            if (code == null && status == 400 && (meta.guardrails == "blocked" || type == "guardrail_blocked")) {
+                code = "guardrail_blocked"
             }
             return NRouterErrorBody(
                 message = node.optString("message").ifEmpty { "nRouter request failed" },
                 code = code,
                 param = node.optString("param").ifEmpty { null },
-                type = node.optString("type").ifEmpty { null },
+                type = type,
                 status = status,
                 requestId = meta.requestId,
                 limitSource = meta.limitSource,
                 authReason = meta.authReason,
+                guardrails = meta.guardrails,
+                meta = meta,
             )
         }
     }
@@ -865,6 +907,8 @@ private fun parseStreamFrame(
                         requestId = meta.requestId,
                         limitSource = meta.limitSource,
                         authReason = meta.authReason,
+                        guardrails = meta.guardrails,
+                        meta = meta,
                     )
                 )
             )
@@ -874,8 +918,11 @@ private fun parseStreamFrame(
     }
     if (event == "error" || raw.has("error")) {
         val node = raw.optJSONObject("error") ?: raw
-        val type = node.optString("code").ifEmpty {
+        var type = node.optString("code").ifEmpty {
             node.optString("type").takeIf(::isKnownStreamErrorCode).orEmpty()
+        }
+        if (type.isEmpty() && meta.guardrails == "blocked") {
+            type = "guardrail_blocked"
         }
         val body = NRouterErrorBody(
             message = node.optString("message").ifEmpty { trimmed },
@@ -886,6 +933,8 @@ private fun parseStreamFrame(
             requestId = meta.requestId,
             limitSource = meta.limitSource,
             authReason = meta.authReason,
+            guardrails = meta.guardrails,
+            meta = meta,
         )
         return ParsedStreamFrame.Error(NRouterError.fromCode(body))
     }
@@ -913,11 +962,17 @@ private fun isKnownStreamErrorCode(code: String): Boolean = code in setOf(
     "guardrail_blocked",
     "invalid_api_key",
     "insufficient_credits",
+    "plan_allowance_exhausted",
+    "plan_required",
     "model_not_found",
     "rate_limit_exceeded",
     "tpm_limit_exceeded",
     "credit_check_failed",
     "service_unavailable",
+    "input_too_large",
+    "max_output_tokens_too_large",
+    "fallback_not_allowed",
+    "guardrail_not_found",
 )
 
 // Android's platform org.json does not normalize Kotlin collections the same

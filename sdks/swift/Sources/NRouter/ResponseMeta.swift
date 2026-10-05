@@ -39,8 +39,12 @@ public struct NRouterResponseMeta: Equatable, Sendable {
     /// served. `<scope> soft_budget <spend>/<ceiling>`, e.g.
     /// `org soft_budget 80.00/100.00`.
     public var budgetWarning: String?
-    /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `pass`,
-    /// `partial` or `blocked`, matched exactly and case-sensitively.
+    /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `redacted`,
+    /// `pass`, `partial`, `blocked` or `unavailable`, matched exactly and
+    /// case-sensitively. `redacted` means an enforcing chain REWROTE part of
+    /// the prompt before the provider saw it and the request then served;
+    /// `partial` means only that some content went uninspected, never that
+    /// anything was rewritten.
     ///
     /// `nil` means the gateway made NO guardrail claim about this response —
     /// never "no guardrail applied", which is the explicit `none`. Posture only
@@ -53,6 +57,14 @@ public struct NRouterResponseMeta: Equatable, Sendable {
     public var responseCache: String?
     /// Age in seconds of a response-cache hit.
     public var responseCacheAge: Int?
+    /// Prompt compression outcome: applied | not_requested | off | skipped.
+    public var compression: String?
+    /// Which chain entry answered: direct | fallback:<n>. Absent on cache hits and refusals.
+    public var routing: String?
+    /// Provider calls made for this request (>= 1). Absent on cache hits and refusals.
+    public var attempts: Int?
+    /// The top intent category evaluated by the preflight chain, if intent routing was requested.
+    public var intent: String?
     /// How this response was funded.
     public var fundingSource: String?
     /// When the current usage allowance resets.
@@ -77,6 +89,10 @@ public struct NRouterResponseMeta: Equatable, Sendable {
         "x-nr-auth-reason",
         "x-nr-response-cache",
         "x-nr-response-cache-age",
+        "x-nr-compression",
+        "x-nr-routing",
+        "x-nr-attempts",
+        "x-nr-intent",
         "x-nr-funding-source",
         "x-nr-allowance-reset",
     ]
@@ -109,6 +125,10 @@ public struct NRouterResponseMeta: Equatable, Sendable {
         authReason = lookup("x-nr-auth-reason")
         responseCache = lookup("x-nr-response-cache")
         responseCacheAge = int("x-nr-response-cache-age")
+        compression = lookup("x-nr-compression")
+        routing = lookup("x-nr-routing")
+        attempts = int("x-nr-attempts")
+        intent = lookup("x-nr-intent")
         fundingSource = lookup("x-nr-funding-source")
         allowanceReset = int("x-nr-allowance-reset")
     }

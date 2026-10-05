@@ -57,8 +57,14 @@ export interface ResponseMeta {
   /** Set when this request crossed a soft budget you configured (it still served): `<scope> soft_budget <spend>/<ceiling>`, e.g. `org soft_budget 80.00/100.00`. */
   budgetWarning: string | null;
   /**
-   * Posture of the PRE-CALL guardrail chain: `none` | `monitor` | `pass` |
-   * `partial` | `blocked`. Match it exactly and case-sensitively.
+   * Posture of the PRE-CALL guardrail chain: `none` | `monitor` | `redacted` |
+   * `pass` | `partial` | `blocked` | `unavailable`. Match it exactly and
+   * case-sensitively.
+   *
+   * `redacted` means an enforcing chain REWROTE part of the prompt (PII or
+   * keyword redaction) before the provider saw it, and the request then
+   * served; `partial` means only that some content went uninspected, never
+   * that anything was rewritten.
    *
    * Null means the gateway made NO guardrail claim about this response (a
    * `/v1/models` call, an auth refusal that never reached preflight) — never
@@ -86,6 +92,14 @@ export interface ResponseMeta {
   responseCache: string | null;
   /** Whole seconds since a cached response was produced. Hits only. */
   responseCacheAge: number | null;
+  /** Prompt compression outcome: applied | not_requested | off | skipped. */
+  compression: string | null;
+  /** Which chain entry answered: direct | fallback:<n>. Absent on cache hits and refusals. */
+  routing: string | null;
+  /** Provider calls made for this request (>= 1). Absent on cache hits and refusals. */
+  attempts: number | null;
+  /** Top evaluated intent category if intent routing was requested. */
+  intent: string | null;
   /** Which balance paid for this request: allowance or credits. */
   fundingSource: string | null;
   /** Seconds until the tightest usage-allowance window resets. */
@@ -115,6 +129,10 @@ export const HEADER_NAMES = [
   'x-nr-auth-reason',
   'x-nr-response-cache',
   'x-nr-response-cache-age',
+  'x-nr-compression',
+  'x-nr-routing',
+  'x-nr-attempts',
+  'x-nr-intent',
   'x-nr-funding-source',
   'x-nr-allowance-reset',
 ] as const;
@@ -126,14 +144,21 @@ export type HeaderName = (typeof HEADER_NAMES)[number];
  * spec/nrouter-sdk-spec.json names them. This list is closed: the gateway
  * ignores anything else, so an invented field is a silently dead option.
  *
- * It was FOUR fields until 2026-08-28. `nrouter_guardrail_ids` was removed
- * because it was that silently dead option: `grep -rn nrouter_guardrail_ids`
- * over the whole nrouter-rust-gateway repo returns ZERO hits (against 608
- * `guardrail` references), and the gateway's OpenAPI advertises only the three
- * below. Guardrail selection is resolved per org/key/team from config, with no
- * per-request override — so the field was forwarded verbatim to the provider,
- * which rejected it. `guardrailIds` now throws in `buildExtraBody` rather than
- * producing a body field nothing reads.
+ * `nrouter_guardrail_ids` was removed on 2026-08-28 because it was exactly that
+ * silently dead option: `grep -rn nrouter_guardrail_ids` over the whole
+ * nrouter-rust-gateway repo returned ZERO hits (against 608 `guardrail`
+ * references), so the field was forwarded verbatim to the provider, which
+ * rejected it.
+ *
+ * `nrouter_fallbacks` and `nrouter_guardrails` (2026-09-17) are NOT that field
+ * coming back under new names. The gateway READS both, and each is a different
+ * shape from the one that was removed:
+ *
+ *   * `nrouter_fallbacks` REPLACES the org's fallback policy for that one call.
+ *     It is not merged with it, and the primary stays whatever `model` names.
+ *   * `nrouter_guardrails` is ADD-ONLY. It cannot remove, relax or replace a
+ *     guardrail the org assigned, nor the platform moderation floor — which is
+ *     what keeps a per-request field out of the safety decision.
  */
 export interface NRouterExtraBody {
   /** Override the org default prompt template (UUID). */
@@ -142,6 +167,17 @@ export interface NRouterExtraBody {
   nrouter_prompt_variables?: Record<string, string>;
   /** Tenant-isolated response cache for buffered text. Default true; false forces provider egress. */
   nrouter_cache?: boolean;
+  /**
+   * Up to 4 model names tried in order when the primary cannot be served.
+   * REPLACES the org fallback policy for this one call; `model` stays primary.
+   */
+  nrouter_fallbacks?: string[];
+  /**
+   * Up to 8 guardrail ids or names owned by this org. ADD-ONLY: they run in
+   * addition to the guardrails already assigned and to the platform moderation
+   * floor, and a request can never remove or relax one.
+   */
+  nrouter_guardrails?: string[];
 }
 
 /**
@@ -155,19 +191,42 @@ export interface NRouterFeatureOptions {
   promptTemplateId?: string;
   promptVariables?: Record<string, string>;
   /**
-   * @deprecated NOT SUPPORTED — a non-empty value THROWS a configuration error.
+   * Up to 4 model names tried in order when the primary cannot be served.
    *
-   * The gateway runs no per-request guardrail override (measured 2026-08-28:
-   * zero references in nrouter-rust-gateway), so this never scoped anything;
-   * it was forwarded to the provider and rejected there. Guardrails are
-   * assigned per key, team or organization in the nRouter dashboard and apply
-   * automatically. Kept as a REFUSAL rather than deleted: this is a published
-   * package, and a type-only removal is silent to plain-JS callers and to any
-   * TS caller spreading a widened options object.
+   * REPLACES the organization's fallback policy for this one call — it is not
+   * merged with it — and `model` stays the primary. A target this key cannot
+   * route, and any Smart Router alias, `nrouter/auto`, allowance or
+   * capacity-pool model, is refused with 400 `fallback_not_allowed`.
+   *
+   * An empty array is OMITTED, not sent: `fallbacks: state.selected` with an
+   * empty default means no selection, not an empty chain.
    */
-  guardrailIds?: string[];
+  fallbacks?: string[];
+  /**
+   * Up to 8 guardrail ids or names owned by this organization.
+   *
+   * ADD-ONLY. These run IN ADDITION to the guardrails already assigned to the
+   * key, team or organization, and to the platform moderation floor; a request
+   * can never remove, relax or replace one. An id or name the org does not own
+   * is refused with 400 `guardrail_not_found` rather than ignored — a silently
+   * dropped guardrail is a request the caller believes was inspected and was
+   * not.
+   *
+   * Replaces the removed `guardrailIds`, which the gateway never read.
+   */
+  guardrails?: string[];
   /** Set false to force provider egress. Omitted when true; true is the gateway default. */
   cache?: boolean;
+  /**
+   * Request tags sent via `x-nr-tags` for cost tracking and filtering.
+   * Can be an object (key=val pairs), an array of tag strings, or a comma-separated string.
+   */
+  tags?: Record<string, string> | string[] | string;
+  /**
+   * Prompt compression instruction sent via `x-nr-compress`.
+   * Can be a boolean or compression strategy string (e.g. "auto", "summarize").
+   */
+  compress?: boolean | string;
 }
 
 export interface NRouterCallOptions extends NRouterFeatureOptions {
@@ -191,24 +250,6 @@ export interface NRouterCallOptions extends NRouterFeatureOptions {
   modelProvider?: string | null;
   /** Canonical model id behind an alias, if applicable (e.g. for sampling deprecation checks). */
   canonicalModel?: string | null;
-
-  /** Prompt template + its Jinja2 variables. */
-  promptTemplateId?: string;
-  promptVariables?: Record<string, string>;
-  /**
-   * @deprecated NOT SUPPORTED — a non-empty value THROWS a configuration error.
-   *
-   * The gateway runs no per-request guardrail override (measured 2026-08-28:
-   * zero references in nrouter-rust-gateway), so this never scoped anything;
-   * it was forwarded to the provider and rejected there. Guardrails are
-   * assigned per key, team or organization in the nRouter dashboard and apply
-   * automatically. Kept as a REFUSAL rather than deleted: this is a published
-   * package, and a type-only removal is silent to plain-JS callers and to any
-   * TS caller spreading a widened options object.
-   */
-  guardrailIds?: string[];
-  /** Set false to force provider egress. Omitted when true — true is the gateway default. */
-  cache?: boolean;
 
   /**
    * Cancel this call (PGSDK-106).

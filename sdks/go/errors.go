@@ -120,6 +120,8 @@ type Error struct {
 	LimitSource string
 	// AuthReason is the gateway's stable reason on a 401.
 	AuthReason string
+	// Guardrails is the posture of the guardrail chain when reported by the gateway.
+	Guardrails string
 	// RetryAfter is the Retry-After header in whole seconds, when sent. Both
 	// RFC 9110 forms are accepted: delta-seconds and an HTTP-date, which
 	// upstreams do send and the gateway relays unchanged.
@@ -128,6 +130,8 @@ type Error struct {
 	// a DNS failure, a TLS handshake. Exposed through Unwrap so
 	// errors.Is(err, context.Canceled) keeps working through this type.
 	Cause error
+	// Meta is the parsed response metadata when available.
+	Meta *ResponseMeta
 }
 
 func (e *Error) Error() string {
@@ -269,7 +273,17 @@ func transportErr(format string, args ...any) *Error {
 //     caller to fix a body that was never the problem.
 func classify(code, message string, status int) Kind {
 	switch code {
-	case "invalid_request":
+	// The last four are PRE-EGRESS refusals (2026-09-17): the gateway named
+	// what the caller sent and refused it before any provider call, so nothing
+	// was reserved and nothing was spent, and a retry of the identical body is
+	// refused identically. They MUST be listed: an unrecognized code returns
+	// KindOther below and never reaches the status dispatch, so leaving them
+	// out is a real misclassification, not merely a missing name.
+	case "invalid_request",
+		"input_too_large",
+		"max_output_tokens_too_large",
+		"fallback_not_allowed",
+		"guardrail_not_found":
 		return KindRequest
 	case "guardrail_blocked":
 		return KindGuardrailBlocked

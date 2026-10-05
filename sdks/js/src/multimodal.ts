@@ -79,6 +79,7 @@ export interface TransportRequest {
   readonly contentType?: string;
   readonly body?: Uint8Array;
   readonly signal?: AbortSignalLike;
+  readonly headers?: Record<string, string>;
 }
 
 /**

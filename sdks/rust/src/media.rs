@@ -57,6 +57,8 @@ impl Client {
                         limit_source: None,
                         auth_reason: None,
                         retry_after: None,
+                        guardrails: resp.meta.guardrails.clone(),
+                        meta: Some(resp.meta.clone()),
                     })));
                 }
             }

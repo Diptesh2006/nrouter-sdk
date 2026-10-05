@@ -191,6 +191,35 @@ go test ./... -race
 python3 ../../conformance/check_conformance.py
 ```
 
+## Per-request routing and guardrail overrides
+
+Two `FeatureOptions` fields reach the gateway's per-request overrides. Both are
+text wires only (chat completions, completions, messages, responses).
+
+| Field | Wire field | Notes |
+|---|---|---|
+| `Fallbacks []string` | `nrouter_fallbacks` | Up to **4** model names tried in order when the primary cannot be served. **Replaces** your org fallback policy for this one call; the primary stays whatever `model` names. |
+| `Guardrails []string` | `nrouter_guardrails` | Up to **8** guardrail ids or names your org owns. **ADD-ONLY.** |
+
+```go
+extra, err := nrouter.BuildExtraBody(nrouter.FeatureOptions{
+    Fallbacks:  []string{"gpt-4o-mini"},
+    Guardrails: []string{"pii-strict"},
+})
+```
+
+`Guardrails` is add-only by design: the listed guardrails run **in addition to**
+the ones assigned to your key, team or organization and to the platform
+moderation floor. A request can never remove, relax or replace one. A name your
+organization does not own is refused with `guardrail_not_found` rather than
+ignored — a silently dropped guardrail is a request you believe was inspected
+and was not. A fallback target your key cannot route is refused with
+`fallback_not_allowed`. Both refusals happen before any provider call, so
+nothing is reserved and nothing is spent; this SDK refuses an over-long slice
+locally so you do not pay a round trip to learn the ceiling.
+
+A nil or empty slice means *no selection* and is omitted rather than sent.
+
 ## How guardrails, budgets and routing work
 
 They are configured in the dashboard and enforced at the **gateway**, not in

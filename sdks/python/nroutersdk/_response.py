@@ -36,8 +36,12 @@ class nRouterResponseMeta:
             configured; the request still served. ``<scope> soft_budget
             <spend>/<ceiling>``, e.g. ``org soft_budget 80.00/100.00``.
         guardrails: Posture of the PRE-CALL guardrail chain — ``none`` |
-            ``monitor`` | ``pass`` | ``partial`` | ``blocked``, matched exactly
-            and case-sensitively. ``None`` means the gateway made NO guardrail
+            ``monitor`` | ``redacted`` | ``pass`` | ``partial`` | ``blocked`` |
+            ``unavailable``, matched exactly and case-sensitively. ``redacted``
+            means an enforcing chain REWROTE part of the prompt before the
+            provider saw it and the request then served; ``partial`` means only
+            that some content went uninspected, never that anything was
+            rewritten. ``None`` means the gateway made NO guardrail
             claim about this response, never "no guardrail applied" — that is
             the explicit ``none``. Posture only by design: policy name, policy
             id, detector family, rule count and (for ``partial``) which channel
@@ -49,6 +53,13 @@ class nRouterResponseMeta:
         response_cache: Executable nRouter response-cache outcome (``hit`` or
             ``miss``), absent when caching did not participate.
         response_cache_age: Age in seconds of a response-cache hit.
+        compression: Prompt compression outcome (``applied``, ``not_requested``,
+            ``off``, or ``skipped``), absent on cache hits and refusals.
+        routing: Which chain entry answered (``direct`` or ``fallback:<n>``),
+            absent on cache hits and refusals.
+        attempts: Provider calls made for this request (>= 1), absent on cache
+            hits and refusals.
+        intent: Top evaluated intent category if intent routing was requested.
     """
 
     request_id: str | None = None
@@ -68,6 +79,10 @@ class nRouterResponseMeta:
     auth_reason: str | None = None
     response_cache: str | None = None
     response_cache_age: int | None = None
+    compression: str | None = None
+    routing: str | None = None
+    attempts: int | None = None
+    intent: str | None = None
     funding_source: str | None = None
     allowance_reset: int | None = None
 
@@ -97,6 +112,10 @@ class nRouterResponseMeta:
         "x-nr-auth-reason",
         "x-nr-response-cache",
         "x-nr-response-cache-age",
+        "x-nr-compression",
+        "x-nr-routing",
+        "x-nr-attempts",
+        "x-nr-intent",
         "x-nr-funding-source",
         "x-nr-allowance-reset",
     )
@@ -154,9 +173,23 @@ class nRouterResponseMeta:
             auth_reason=norm.get("x-nr-auth-reason"),
             response_cache=norm.get("x-nr-response-cache"),
             response_cache_age=optional_int("x-nr-response-cache-age"),
+            compression=norm.get("x-nr-compression"),
+            routing=norm.get("x-nr-routing"),
+            attempts=optional_int("x-nr-attempts"),
+            intent=norm.get("x-nr-intent"),
             funding_source=norm.get("x-nr-funding-source"),
             allowance_reset=optional_int("x-nr-allowance-reset"),
         )
+
+    @property
+    def is_priced(self) -> bool:
+        """True when the gateway priced this request exactly."""
+        return self.cost_status == "exact" and self.cost is not None
+
+    @property
+    def cache_age_seconds(self) -> int:
+        """Age in seconds of a response-cache hit, or 0 if absent."""
+        return self.response_cache_age if self.response_cache_age is not None else 0
 
     @property
     def is_cache_hit(self) -> bool:

@@ -152,12 +152,14 @@ async function runAgent(client, mode) {
   assert.ok(result.meta.requestId, 'response should include request metadata');
   assert.ok(result.meta.cost === null || result.meta.cost >= 0, 'cost should be null or a non-negative number');
 
+  // Nine guardrails is one over the published ceiling of eight, so the whole
+  // request is refused here rather than as a billed round trip.
   await assert.rejects(
     () =>
       client.nr.chat({
         model: MODEL,
         prompt: 'This must not reach the network',
-        guardrailIds: ['demo-guardrail'],
+        guardrails: ['g1', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7', 'g8', 'g9'],
       }),
     nRouterConfigurationError,
   );

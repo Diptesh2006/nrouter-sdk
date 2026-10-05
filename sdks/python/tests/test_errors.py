@@ -304,6 +304,42 @@ def test_the_header_name_list_matches_what_is_parsed():
     assert meta.response_cache is not None
     assert meta.budget_warning is not None
     assert meta.guardrails is not None
+    assert meta.compression is not None
+    assert meta.routing is not None
+    assert meta.attempts is not None
+
+
+def test_compression_routing_attempts_reach_the_metadata():
+    """All three headers are parsed into typed fields on nRouterResponseMeta.
+
+    They are optional and absent on cache hits and refusals.
+    """
+    from nroutersdk import nRouterResponseMeta
+
+    meta = nRouterResponseMeta.from_headers(
+        {
+            "x-nr-compression": "applied",
+            "x-nr-routing": "fallback:1",
+            "x-nr-attempts": "2",
+        }
+    )
+    assert meta.compression == "applied"
+    assert meta.routing == "fallback:1"
+    assert meta.attempts == 2
+
+    # Absent/None when headers are missing
+    empty_meta = nRouterResponseMeta.from_headers({})
+    assert empty_meta.compression is None
+    assert empty_meta.routing is None
+    assert empty_meta.attempts is None
+
+    # attempts is an optional integer: non-numeric values parse as None
+    for hostile in ("not-a-number", "", "  "):
+        assert (
+            nRouterResponseMeta.from_headers({"x-nr-attempts": hostile}).attempts
+            is None
+        )
+
 
 
 def test_latency_and_trace_reach_the_metadata():
@@ -494,3 +530,41 @@ def test_funding_source_and_allowance_reset_are_parsed_from_headers():
     })
     assert meta.funding_source == "allowance"
     assert meta.allowance_reset == 86400
+
+
+def test_is_priced_and_cache_age_seconds_properties():
+    from nroutersdk import nRouterResponseMeta
+    meta_priced = nRouterResponseMeta.from_headers({
+        "x-nr-request-cost": "0.001234",
+        "x-nr-cost-status": "exact",
+        "x-nr-response-cache-age": "42",
+    })
+    assert meta_priced.is_priced is True
+    assert meta_priced.cache_age_seconds == 42
+
+    meta_unpriced = nRouterResponseMeta.from_headers({
+        "x-nr-cost-status": "zero_cost_tier",
+    })
+    assert meta_unpriced.is_priced is False
+    assert meta_unpriced.cache_age_seconds == 0
+
+
+def test_400_with_guardrail_blocked_header_maps_to_guardrail_error():
+    err = status_error(400, "Refused by rule", {"x-nr-guardrails": "blocked", "x-nr-request-id": "req-123"})
+    with pytest.raises(nRouterGuardrailBlockedError) as caught:
+        _maybe_raise_nrouter_error(err)
+    assert caught.value.guardrails == "blocked"
+    assert caught.value.request_id == "req-123"
+    assert caught.value.meta is not None
+    assert caught.value.meta.guardrails == "blocked"
+
+
+def test_prepare_default_headers_tags_and_compress():
+    from nroutersdk.client import _prepare_default_headers
+    headers = _prepare_default_headers(
+        tags={"env": "prod", "team": "data"},
+        compress=True,
+    )
+    assert headers["x-nr-tags"] == "env=prod,team=data"
+    assert headers["x-nr-compress"] == "true"
+

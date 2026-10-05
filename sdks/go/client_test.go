@@ -267,6 +267,10 @@ func TestEveryDeclaredHeaderIsRead(t *testing.T) {
 		"x-nr-guardrails":         "pass",
 		"x-nr-funding-source":     "allowance",
 		"x-nr-allowance-reset":    "86400",
+		"x-nr-compression":        "applied",
+		"x-nr-routing":            "fallback:1",
+		"x-nr-attempts":           "2",
+		"x-nr-intent":             "chitchat",
 	}
 	if len(headers) != len(HeaderNames) {
 		t.Fatalf("this test covers %d headers, HeaderNames declares %d", len(headers), len(HeaderNames))
@@ -299,6 +303,7 @@ func TestEveryDeclaredHeaderIsRead(t *testing.T) {
 		"input": m.InputTokens, "output": m.OutputTokens, "total": m.TotalTokens,
 		"cacheRead": m.CacheReadTokens, "cacheWrite": m.CacheWriteTokens,
 		"cacheAge": m.ResponseCacheAge,
+		"attempts": m.Attempts,
 	} {
 		if got == nil {
 			t.Fatalf("%s header not parsed", name)
@@ -309,6 +314,9 @@ func TestEveryDeclaredHeaderIsRead(t *testing.T) {
 	}
 	if m.FundingSource != "allowance" || m.AllowanceReset == nil || *m.AllowanceReset != 86400 {
 		t.Fatalf("funding headers not parsed: %+v", m)
+	}
+	if m.Compression != "applied" || m.Routing != "fallback:1" || m.Intent != "chitchat" {
+		t.Fatalf("compression/routing/intent headers not parsed: %+v", m)
 	}
 	if !m.IsPriced() {
 		t.Fatal("an exact cost should report IsPriced")
@@ -333,10 +341,30 @@ func TestUnpricedIsNilNotZero(t *testing.T) {
 	}
 }
 
+func TestOptionalGatewayHeadersAbsent(t *testing.T) {
+	c := newTestClient(t, jsonHandler(200, map[string]string{
+		"x-nr-request-id": "nrouter-abc123",
+	}, map[string]any{"ok": true}))
+	res, err := c.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Meta.Compression != "" {
+		t.Fatalf("absent x-nr-compression must be empty, got %q", res.Meta.Compression)
+	}
+	if res.Meta.Routing != "" {
+		t.Fatalf("absent x-nr-routing must be empty, got %q", res.Meta.Routing)
+	}
+	if res.Meta.Attempts != nil {
+		t.Fatalf("absent x-nr-attempts must be nil, got %v", res.Meta.Attempts)
+	}
+}
+
 func TestUnparseableNumericHeaderIsNilNotZero(t *testing.T) {
 	c := newTestClient(t, jsonHandler(200, map[string]string{
 		"x-nr-input-tokens": "not-a-number",
 		"x-nr-request-cost": "also-not",
+		"x-nr-attempts":     "not-a-number",
 		// The gateway sends WHOLE milliseconds, so a fractional value is a
 		// mangled header, not a latency a caller should chart.
 		"x-nr-latency-ms": "4.5",
@@ -345,7 +373,7 @@ func TestUnparseableNumericHeaderIsNilNotZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Meta.InputTokens != nil || res.Meta.Cost != nil {
+	if res.Meta.InputTokens != nil || res.Meta.Cost != nil || res.Meta.Attempts != nil {
 		t.Fatal("an unparseable numeric header must be nil, never a zero")
 	}
 	if res.Meta.LatencyMs != nil {
@@ -1582,3 +1610,68 @@ func TestPlanLimitsMapToCreditError(t *testing.T) {
 		t.Errorf("expected ErrCredit with plan_required, got %v, code %s", err2.Kind, err2.Code)
 	}
 }
+
+func TestTagsAndCompressHeaders(t *testing.T) {
+	if _, err := New(testKey, WithTags("tag\r\nbad")); err == nil {
+		t.Fatal("expected error on tags with CRLF, got nil")
+	}
+	if _, err := New(testKey, WithCompress("compress\nbad")); err == nil {
+		t.Fatal("expected error on compress with newline, got nil")
+	}
+
+	var receivedTags, receivedCompress string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedTags = r.Header.Get("x-nr-tags")
+		receivedCompress = r.Header.Get("x-nr-compress")
+		w.Header().Set("x-nr-request-id", "req-test-tags-1")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data": []}`))
+	}))
+	defer srv.Close()
+
+	client, err := New(testKey,
+		WithBaseURL(srv.URL),
+		WithTags("env:test,team:core"),
+		WithCompress("target_ratio:0.5"),
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	_, err = client.Models(context.Background())
+	if err != nil {
+		t.Fatalf("Models request failed: %v", err)
+	}
+
+	if receivedTags != "env:test,team:core" {
+		t.Errorf("expected x-nr-tags 'env:test,team:core', got %q", receivedTags)
+	}
+	if receivedCompress != "target_ratio:0.5" {
+		t.Errorf("expected x-nr-compress 'target_ratio:0.5', got %q", receivedCompress)
+	}
+}
+
+func TestGuardrailBlockedClassificationAndMetadata(t *testing.T) {
+	meta1 := ResponseMeta{RequestID: "req-gr-1", Guardrails: "blocked"}
+	err1 := gatewayError(&http.Response{StatusCode: 400}, meta1, []byte(`{"error":{"message":"Prompt blocked by moderation"}}`))
+	if !errors.Is(err1, ErrGuardrailBlocked) {
+		t.Errorf("expected ErrGuardrailBlocked, got %v", err1.Kind)
+	}
+	if err1.Guardrails != "blocked" {
+		t.Errorf("expected Guardrails 'blocked', got %q", err1.Guardrails)
+	}
+	if err1.Meta == nil || err1.Meta.RequestID != "req-gr-1" {
+		t.Errorf("expected Meta with RequestID req-gr-1, got %+v", err1.Meta)
+	}
+
+	meta2 := ResponseMeta{RequestID: "req-gr-2"}
+	err2 := gatewayError(&http.Response{StatusCode: 400}, meta2, []byte(`{"error":{"type":"guardrail_blocked","message":"Blocked"}}`))
+	if !errors.Is(err2, ErrGuardrailBlocked) {
+		t.Errorf("expected ErrGuardrailBlocked for type guardrail_blocked, got %v", err2.Kind)
+	}
+	if err2.Code != "guardrail_blocked" {
+		t.Errorf("expected code guardrail_blocked, got %q", err2.Code)
+	}
+}
+

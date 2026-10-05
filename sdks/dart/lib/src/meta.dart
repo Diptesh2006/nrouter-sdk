@@ -25,6 +25,10 @@ class NRouterResponseMeta {
     this.authReason,
     this.responseCache,
     this.responseCacheAge,
+    this.compression,
+    this.routing,
+    this.attempts,
+    this.intent,
     this.fundingSource,
     this.allowanceReset,
   });
@@ -69,8 +73,12 @@ class NRouterResponseMeta {
   /// `org soft_budget 80.00/100.00`.
   final String? budgetWarning;
 
-  /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `pass`,
-  /// `partial` or `blocked`, matched exactly and case-sensitively.
+  /// Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `redacted`,
+  /// `pass`, `partial`, `blocked` or `unavailable`, matched exactly and
+  /// case-sensitively. `redacted` means an enforcing chain REWROTE part of the
+  /// prompt before the provider saw it and the request then served; `partial`
+  /// means only that some content went uninspected, never that anything was
+  /// rewritten.
   ///
   /// `null` means the gateway made NO guardrail claim about this response —
   /// never "no guardrail applied", which is the explicit `none`. Posture only
@@ -86,6 +94,18 @@ class NRouterResponseMeta {
 
   /// Age in seconds of a response-cache hit.
   final int? responseCacheAge;
+
+  /// Prompt compression outcome for this request: applied, not_requested, off, or skipped.
+  final String? compression;
+
+  /// Which chain entry answered: direct for the first entry, fallback:<n> for the entry n fallbacks deep. Absent on cache hits and refusals.
+  final String? routing;
+
+  /// Provider calls made for this request, retries and failovers alike. Absent on cache hits and refusals.
+  final int? attempts;
+
+  /// The top intent category evaluated by the preflight chain, if intent routing was requested.
+  final String? intent;
 
   /// How this response was funded.
   final String? fundingSource;
@@ -111,6 +131,10 @@ class NRouterResponseMeta {
     'x-nr-auth-reason',
     'x-nr-response-cache',
     'x-nr-response-cache-age',
+    'x-nr-compression',
+    'x-nr-routing',
+    'x-nr-attempts',
+    'x-nr-intent',
     'x-nr-funding-source',
     'x-nr-allowance-reset',
   ];
@@ -145,13 +169,17 @@ class NRouterResponseMeta {
       authReason: get('x-nr-auth-reason'),
       responseCache: get('x-nr-response-cache'),
       responseCacheAge: asInt('x-nr-response-cache-age'),
+      compression: get('x-nr-compression'),
+      routing: get('x-nr-routing'),
+      attempts: asInt('x-nr-attempts'),
+      intent: get('x-nr-intent'),
       fundingSource: get('x-nr-funding-source'),
       allowanceReset: asInt('x-nr-allowance-reset'),
     );
   }
 
-  /// True when the gateway priced this request exactly.
-  bool get isPriced => costStatus == 'exact' && cost != null;
+  /// True when the gateway priced this request.
+  bool get isPriced => cost != null && costStatus != 'unpriced';
 
   bool get isCacheHit => responseCache == 'hit';
   bool get isCacheMiss => responseCache == 'miss';

@@ -100,6 +100,7 @@ class ContractTest {
             "x-nr-cache-read-tokens", "x-nr-cache-write-tokens", "x-nr-limit-source",
             "x-nr-auth-reason", "x-nr-response-cache", "x-nr-response-cache-age",
             "x-nr-budget-warning", "x-nr-guardrails", "x-nr-funding-source", "x-nr-allowance-reset",
+            "x-nr-compression", "x-nr-routing", "x-nr-attempts", "x-nr-intent",
         )
         assertEquals(expected.size, NRouterResponseMeta.HEADER_NAMES.size)
         expected.forEach {
@@ -615,6 +616,9 @@ class ContractTest {
             .add("x-nr-response-cache-age", "120")
             .add("x-nr-budget-warning", "org soft_budget 80.00/100.00")
             .add("x-nr-guardrails", "pass")
+            .add("x-nr-compression", "applied")
+            .add("x-nr-routing", "fallback:1")
+            .add("x-nr-attempts", "2")
             .build()
 
         val meta = NRouterResponseMeta.fromLookup { headers[it] }
@@ -633,6 +637,9 @@ class ContractTest {
         assertEquals(120L, meta.responseCacheAge)
         assertEquals("org soft_budget 80.00/100.00", meta.budgetWarning)
         assertEquals("pass", meta.guardrails)
+        assertEquals("applied", meta.compression)
+        assertEquals("fallback:1", meta.routing)
+        assertEquals(2L, meta.attempts)
         assertTrue(meta.isPriced)
         assertTrue(meta.isCacheHit)
         assertFalse(meta.isCacheMiss)
@@ -1343,5 +1350,67 @@ class ContractTest {
         val nrouterErr2 = NRouterError.fromCode(err2)
         assertTrue(nrouterErr2 is NRouterError.Credit)
         assertEquals("plan_required", err2.code)
+    }
+
+    @Test
+    fun `compression routing and attempts reach metadata`() {
+        val meta = NRouterResponseMeta.fromLookup { name ->
+            when (name) {
+                "x-nr-compression" -> "applied"
+                "x-nr-routing" -> "fallback:1"
+                "x-nr-attempts" -> "2"
+                else -> null
+            }
+        }
+        assertEquals("applied", meta.compression)
+        assertEquals("fallback:1", meta.routing)
+        assertEquals(2L, meta.attempts)
+
+        val empty = NRouterResponseMeta.fromLookup { null }
+        assertNull(empty.compression)
+        assertNull(empty.routing)
+        assertNull(empty.attempts)
+
+        val mangled = NRouterResponseMeta.fromLookup { name ->
+            if (name == "x-nr-attempts") "not-a-number" else null
+        }
+        assertNull(mangled.attempts)
+    }
+
+    @Test
+    fun `cacheAgeSeconds returns cached age or 0`() {
+        val empty = NRouterResponseMeta()
+        assertEquals(0L, empty.cacheAgeSeconds)
+        val cached = NRouterResponseMeta(responseCacheAge = 60L)
+        assertEquals(60L, cached.cacheAgeSeconds)
+    }
+
+    @Test
+    fun `tags and compress configure client and reject CRLF`() {
+        val client = NRouter(
+            apiKey = "sk-nrouter-test",
+            tags = "env:test,team:qa",
+            compress = "target_ratio:0.5",
+        )
+        assertEquals("env:test,team:qa", client.tags)
+        assertEquals("target_ratio:0.5", client.compress)
+
+        assertFailsWith<IllegalArgumentException> {
+            NRouter(apiKey = "sk-nrouter-test", tags = "tag\r\nbad")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            NRouter(apiKey = "sk-nrouter-test", compress = "compress\nbad")
+        }
+    }
+
+    @Test
+    fun `guardrails blocked error maps to GuardrailBlocked with metadata`() {
+        val meta = NRouterResponseMeta(requestId = "req-gr-test", guardrails = "blocked")
+        val errBody = NRouter.errorBody(400, JSONObject().put("message", "blocked by moderation"), meta)
+        val err = NRouterError.fromCode(errBody)
+        assertTrue(err is NRouterError.GuardrailBlocked)
+        assertEquals("blocked", err.guardrails)
+        assertEquals("req-gr-test", err.requestId)
+        assertEquals("blocked", err.meta?.guardrails)
     }
 }

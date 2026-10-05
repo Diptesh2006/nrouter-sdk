@@ -40,6 +40,10 @@ fn every_spec_header_is_read() {
         "x-nr-auth-reason",
         "x-nr-response-cache",
         "x-nr-response-cache-age",
+        "x-nr-compression",
+        "x-nr-routing",
+        "x-nr-attempts",
+        "x-nr-intent",
         "x-nr-budget-warning",
         "x-nr-guardrails",
         "x-nr-funding-source",
@@ -403,6 +407,7 @@ fn error_envelope_and_format_error() {
         limit_source: Some("rpm".into()),
         auth_reason: None,
         retry_after: Some(30),
+        ..Default::default()
     };
     let err = NRouterError::from_code(body);
     assert_eq!(err.param(), Some("prompt"));
@@ -491,7 +496,7 @@ fn test_parses_funding_source_and_allowance_reset() {
 #[test]
 fn test_plan_limits_map_to_credit_error() {
     use nrouter::errors::{ErrorBody, NRouterError};
-    
+
     let mut body1 = ErrorBody::default();
     body1.status = Some(402);
     body1.limit_source = Some("plan_allowance_exhausted".into());
@@ -512,4 +517,64 @@ fn test_plan_limits_map_to_credit_error() {
         NRouterError::Credit(b) => assert_eq!(b.code.as_deref(), Some("plan_required")),
         _ => panic!("Expected Credit error"),
     }
+}
+
+#[test]
+fn test_parses_compression_routing_and_attempts() {
+    let get = |name: &str| -> Option<String> {
+        match name {
+            "x-nr-compression" => Some("applied".into()),
+            "x-nr-routing" => Some("fallback:1".into()),
+            "x-nr-attempts" => Some("2".into()),
+            _ => None,
+        }
+    };
+    let meta = nrouter::meta::ResponseMeta::from_lookup(get);
+    assert_eq!(meta.compression.as_deref(), Some("applied"));
+    assert_eq!(meta.routing.as_deref(), Some("fallback:1"));
+    assert_eq!(meta.attempts, Some(2));
+
+    let empty = nrouter::meta::ResponseMeta::from_lookup(|_| None);
+    assert_eq!(empty.compression, None);
+    assert_eq!(empty.routing, None);
+    assert_eq!(empty.attempts, None);
+}
+
+#[test]
+fn test_cache_age_seconds_and_guardrail_metadata() {
+    let mut meta = ResponseMeta::default();
+    assert_eq!(meta.cache_age_seconds(), 0);
+    meta.response_cache_age = Some(120);
+    assert_eq!(meta.cache_age_seconds(), 120);
+
+    let client = nrouter::http::Client::new("sk-nrouter-test00000000000000000123")
+        .unwrap()
+        .with_tags("env:prod,service:chat")
+        .unwrap()
+        .with_compress("aggressive")
+        .unwrap();
+
+    assert_eq!(client.tags(), Some("env:prod,service:chat"));
+    assert_eq!(client.compress(), Some("aggressive"));
+
+    assert!(nrouter::http::Client::new("sk-nrouter-test00000000000000000123")
+        .unwrap()
+        .with_tags("tag\r\nbad")
+        .is_err());
+    assert!(nrouter::http::Client::new("sk-nrouter-test00000000000000000123")
+        .unwrap()
+        .with_compress("compress\nbad")
+        .is_err());
+
+    let body = ErrorBody {
+        message: "Prompt refused".into(),
+        status: Some(400),
+        guardrails: Some("blocked".into()),
+        meta: Some(meta.clone()),
+        ..Default::default()
+    };
+    let err = NRouterError::from_code(body);
+    assert!(matches!(err, NRouterError::GuardrailBlocked(_)));
+    assert_eq!(err.guardrails(), Some("blocked"));
+    assert_eq!(err.meta().unwrap().response_cache_age, Some(120));
 }

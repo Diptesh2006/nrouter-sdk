@@ -219,9 +219,13 @@ async function handleApi(req, res, pathname) {
       await nr.nr.chat({
         model: DEFAULT_MODEL,
         prompt: 'This should be refused locally before the network.',
-        guardrailIds: ['demo'],
+        // One over the published ceiling of eight.
+        guardrails: ['g1', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7', 'g8', 'g9'],
       });
-      sendJson(res, 500, { ok: false, error: 'guardrailIds unexpectedly reached the network' });
+      sendJson(res, 500, {
+        ok: false,
+        error: 'an over-ceiling guardrails list unexpectedly reached the network',
+      });
     } catch (err) {
       if (err instanceof nRouterConfigurationError || (err && err.name === 'nRouterConfigurationError')) {
         sendJson(res, 200, {

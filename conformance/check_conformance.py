@@ -1212,6 +1212,224 @@ def check_readme_parity(root: Path = ROOT) -> list[str]:
     return failures
 
 
+# ---------------------------------------------------------------------------
+# The option-builder pin.
+#
+# `extra_body_fields` is the CLOSED set of fields the gateway lifts off a
+# request body. Everything else it forwards to the provider verbatim, which is
+# why a field an SDK fails to model is not a missing feature a caller can work
+# around — it is a feature only our own surfaces can reach, and a hand-rolled
+# `extra` carrying the right name is the only escape.
+#
+# Nothing gated that. `route_coverage` proves every ENDPOINT is reachable and
+# the error/header loops prove every CODE and HEADER is read, so the spec's
+# third wire surface — the request body — was the one an SDK could silently
+# stop tracking. Two per-request overrides landed on the gateway and three SDKs
+# could express them; the pin below is what makes the other seven say so out
+# loud instead of just being quiet.
+#
+# DERIVED from what exists, per SDK, rather than assumed: `sdks/<sdk>/…` really
+# does have four different shapes here, and pretending otherwise would have
+# meant either seven false failures or an allowlist covering the three that
+# work.
+# ---------------------------------------------------------------------------
+# An nRouter request-body field name as it appears in a builder's source. The
+# `nrouter_` prefix plus a snake_case tail is the whole namespace; it cannot
+# match the `nroutersdk` package name (no underscore) or a `nRouter*` class.
+_NROUTER_FIELD = re.compile(r"nrouter_[a-z0-9_]+")
+
+OPTION_BUILDERS: dict[str, list[str]] = {
+    "python": ["sdks/python/nroutersdk/_options.py"],
+    # types.ts carries the typed option and body interfaces; options.ts carries
+    # the mapping. The gate needs both or every field reads as unmapped.
+    "js": ["sdks/js/src/options.ts", "sdks/js/src/types.ts"],
+    "go": ["sdks/go/options.go"],
+}
+
+# An SDK with NO typed option builder, and why. Each entry names the files that
+# come closest, so the stale check below can refuse an entry that has quietly
+# become untrue — an allowlist nothing re-validates is how a pin turns vacuous.
+NO_OPTION_BUILDER: dict[str, dict] = {
+    "android": {
+        "reason": "WRAPPER — delegates every wire concern to sdks/kotlin; it "
+        "builds no request body of its own",
+        "files": [],
+    },
+    "java": {
+        "reason": "NO-BUILDER — NRouterPrompts is a PROMPT-ONLY helper (the "
+        "template id and its variables); there is no type that maps the rest "
+        "of extra_body_fields, so a caller reaches them through a raw map",
+        "files": ["sdks/java/src/main/java/ai/nrouter/sdk/NRouterPrompts.java"],
+    },
+    "kotlin": {
+        "reason": "NO-BUILDER — Prompts.kt is prompt-only, same shape as java",
+        "files": ["sdks/kotlin/src/main/kotlin/ai/nrouter/sdk/Prompts.kt"],
+    },
+    "swift": {
+        "reason": "NO-BUILDER — Prompts.swift is prompt-only, same shape as java",
+        "files": ["sdks/swift/Sources/NRouter/Prompts.swift"],
+    },
+    "dart": {
+        "reason": "NO-BUILDER — prompts.dart is prompt-only, same shape as java",
+        "files": ["sdks/dart/lib/src/prompts.dart"],
+    },
+    "r": {
+        "reason": "NO-BUILDER — prompts.R is prompt-only, same shape as java",
+        "files": ["sdks/r/R/prompts.R"],
+    },
+    "rust": {
+        "reason": "BUILDER-PENDING, and this one is NOT a wrapper excuse — "
+        "sdks/rust/src/options.rs IS a full builder (FeatureOptions + "
+        "build_extra_body + EXTRA_BODY_FIELDS) and it carries only the three "
+        "older fields. It is listed here rather than enforced because the "
+        "2026-09-17 slice that added nrouter_fallbacks and nrouter_guardrails "
+        "held a file lease covering python, js and go only. The stale check "
+        "below FAILS this entry the moment options.rs names every spec field, "
+        "so it cannot outlive the follow-up that closes it.",
+        "files": ["sdks/rust/src/options.rs"],
+    },
+}
+
+
+def check_option_builders(root: Path = ROOT, spec: dict | None = None) -> list[str]:
+    """Every SDK that has a typed option builder names every `extra_body_fields`
+    key at least once, in code rather than in a comment.
+
+    `at least once` is deliberately weaker than the headers rule's
+    declared-AND-used. A builder legitimately names a field exactly once — the
+    constant IS the mapping — so requiring two occurrences would fail a correct
+    file. What this catches is the real shape: the spec grows a field and a
+    builder never learns it exists.
+
+    BOTH DIRECTIONS, and the second one is not symmetry for its own sake. It is
+    the 2026-08-28 defect exactly: `nrouter_guardrail_ids` was a field the SDKs
+    emitted and NO gateway read, so it went to the provider verbatim and the
+    call failed there. A `spec ⊆ builder` check alone stays green through that
+    — the invented field is simply not asked about — which is how it survived
+    to ship in twelve languages. So every `nrouter_*` literal a builder names in
+    code must be a field the spec carries.
+    """
+    spec = spec or load_spec()
+    fields = sorted(spec["extra_body_fields"])
+    failures: list[str] = []
+
+    if not fields:
+        return ["option builders: the spec declares no extra_body_fields"]
+
+    # Neither map may quietly omit an SDK: an SDK in neither is unpinned, and
+    # one in both is two answers to the same question.
+    classified = set(OPTION_BUILDERS) | set(NO_OPTION_BUILDER)
+    for sdk in sorted(set(SDK_SOURCES) - classified):
+        failures.append(
+            f"{sdk}: is in neither OPTION_BUILDERS nor NO_OPTION_BUILDER — say "
+            f"which files map extra_body_fields, or record why none do"
+        )
+    for sdk in sorted(set(OPTION_BUILDERS) & set(NO_OPTION_BUILDER)):
+        failures.append(f"{sdk}: is listed as both having and not having a builder")
+
+    for sdk, rel_paths in sorted(OPTION_BUILDERS.items()):
+        blob_parts = []
+        for rel in rel_paths:
+            path = root / rel
+            if not path.exists():
+                failures.append(f"{sdk}: missing option builder {rel}")
+                continue
+            blob_parts.append(path.read_text(encoding="utf-8", errors="replace"))
+        if not blob_parts:
+            continue
+        blob = strip_comments("\n".join(blob_parts))
+        for field in fields:
+            if field not in blob:
+                failures.append(
+                    f"{sdk}: option builder does not map extra_body field "
+                    f"{field!r} — the gateway reads it, so an SDK that cannot "
+                    f"emit it forwards nothing and the option is unreachable"
+                )
+        for invented in sorted(set(_NROUTER_FIELD.findall(blob)) - set(fields)):
+            failures.append(
+                f"{sdk}: option builder names {invented!r}, which the spec's "
+                f"extra_body_fields does not carry — the gateway reads only "
+                f"what the spec lists and forwards the rest to the provider "
+                f"verbatim, so this is a dead option that looks live"
+            )
+
+    # The stale check. An SDK excused as prompt-only or pending stops being
+    # either the moment its file names the whole field set.
+    for sdk, entry in sorted(NO_OPTION_BUILDER.items()):
+        rels = entry["files"]
+        if not rels:
+            continue
+        blob_parts = []
+        for rel in rels:
+            path = root / rel
+            if not path.exists():
+                failures.append(
+                    f"{sdk}: NO_OPTION_BUILDER names {rel}, which does not exist — "
+                    f"the allowlist entry describes a file that is gone"
+                )
+                continue
+            blob_parts.append(path.read_text(encoding="utf-8", errors="replace"))
+        if not blob_parts:
+            continue
+        blob = strip_comments("\n".join(blob_parts))
+        if all(field in blob for field in fields):
+            failures.append(
+                f"{sdk}: is excused in NO_OPTION_BUILDER but {', '.join(rels)} "
+                f"now names every extra_body field — move it to OPTION_BUILDERS "
+                f"so the pin enforces what the code already does"
+            )
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# Codes the gateway sends that a given SDK does not yet NAME.
+#
+# This is an allowlist, which is a WEAKENING, so read what it actually costs
+# before extending it. It is tempting to say the classification is already
+# right and only the spelling is missing — that is FALSE here, and it was
+# checked rather than assumed. These SDKs deliberately refuse to let an
+# unrecognized code fall through to status dispatch: Go returns `KindOther`
+# and Python raises the base `nRouterError`, both on purpose (an unknown code
+# on a 503 would otherwise become a retryable service error carrying a
+# fabricated code — a confident wrong answer). So an unmapped code is a real
+# misclassification: `fallback_not_allowed` reaches the caller as a generic
+# error instead of a request error, and `catch (nRouterRequestError)` misses it.
+#
+# It is therefore written to EXPIRE, not to settle:
+#   * the stale check below fails any entry whose SDK has since named the code;
+#   * an entry for a code the spec no longer carries is a failure too;
+#   * a code missing from the SPEC is never excusable here — that end is held
+#     by `tests/test_sdk_contract.py::
+#     test_spec_errors_name_every_refusal_code_on_the_wire`.
+#
+# 2026-09-17: the four refusal codes below reached the customer wire with the
+# per-request routing and guardrail overrides. The slice that published them
+# held a file lease over spec/, tests/, conformance/ and the python, js and go
+# SDKs only, so those three name the codes and the remaining six do not. Each
+# closes its own entry by adding the code to its dispatch; until then its
+# callers see a generic error for these four refusals.
+# ---------------------------------------------------------------------------
+_SDKS_PENDING_REFUSAL_CODES = {
+    "java",
+    "kotlin",
+    "android",
+    "swift",
+    "rust",
+    "dart",
+    "r",
+}
+
+CODES_PENDING_SDK_MAPPING: dict[str, set[str]] = {
+    code: set(_SDKS_PENDING_REFUSAL_CODES)
+    for code in (
+        "input_too_large",
+        "max_output_tokens_too_large",
+        "fallback_not_allowed",
+        "guardrail_not_found",
+    )
+}
+
+
 def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
     """Return a list of failure strings; empty means conformant."""
     spec = spec or load_spec()
@@ -1287,8 +1505,24 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
                 )
 
         for code in codes:
-            if code not in blob:
-                failures.append(f"{sdk}: error code {code!r} is not mapped")
+            if code in blob:
+                continue
+            if sdk in CODES_PENDING_SDK_MAPPING.get(code, ()):
+                # Excused, and the block comment on CODES_PENDING_SDK_MAPPING
+                # says exactly what that costs — the code reaches this SDK's
+                # callers as a generic error — and what closes the entry.
+                continue
+            failures.append(f"{sdk}: error code {code!r} is not mapped")
+
+        # An excuse that has come true is an excuse that must go: leaving it
+        # behind is how the allowlist keeps growing while the gate shrinks.
+        for code, pending in sorted(CODES_PENDING_SDK_MAPPING.items()):
+            if sdk in pending and code in blob:
+                failures.append(
+                    f"{sdk}: error code {code!r} is mapped but still listed in "
+                    f"CODES_PENDING_SDK_MAPPING — remove the stale exemption so "
+                    f"the pin holds it"
+                )
 
         if sdk in STREAMING_NATIVE:
             for basename in STREAM_HELPERS.values():
@@ -1325,8 +1559,19 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
                     f"response with that status cannot be classified"
                 )
 
+    # A code the SPEC does not carry can have no exemption — otherwise the
+    # allowlist outlives the contract it excuses.
+    for code in sorted(set(CODES_PENDING_SDK_MAPPING) - set(codes)):
+        failures.append(
+            f"CODES_PENDING_SDK_MAPPING exempts {code!r}, which the spec's "
+            f"`errors` no longer names — delete the entry"
+        )
+
     route_failures, _, _ = route_coverage(root, spec)
     failures.extend(route_failures)
+    # The third wire surface: the request body. Endpoints and headers were
+    # gated; `extra_body_fields` was not.
+    failures.extend(check_option_builders(root, spec))
     failures.extend(check_swift_manifests(root))
     failures.extend(check_release_versions(root, spec))
     failures.extend(check_doc_wires(root, spec))
@@ -1467,6 +1712,14 @@ def self_test() -> int:
         copied_paths.update(
             str(p.relative_to(ROOT)) for p in ROOT.glob("sdks/*/README.md")
         )
+        # Same reason, for `check_option_builders`: it reads the option-builder
+        # files and the ones the NO_OPTION_BUILDER entries name, and neither set
+        # is in SDK_SOURCES. Omitting them makes the "an unmodified copy passes"
+        # control fail on a missing fixture rather than on anything under test.
+        for paths in OPTION_BUILDERS.values():
+            copied_paths.update(paths)
+        for entry in NO_OPTION_BUILDER.values():
+            copied_paths.update(entry["files"])
         for rel in copied_paths:
             src = ROOT / rel
             if not src.exists():

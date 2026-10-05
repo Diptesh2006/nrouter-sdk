@@ -30,7 +30,7 @@ import {
   errorEnvelopeOnSuccess,
 } from './errors';
 import { buildSamplingParams } from './sampling';
-import { buildChatBody } from './options';
+import { buildChatBody, formatTags, formatCompress } from './options';
 import { HEADER_NAMES, type NRouterCallOptions, type NRouterResponse, type ResponseMeta } from './types';
 import type { AbortSignalLike } from './multimodal';
 
@@ -131,7 +131,7 @@ export interface ChatRunner {
   request(
     path: string,
     body: unknown,
-    init?: { readonly signal?: AbortSignalLike },
+    init?: { readonly signal?: AbortSignalLike; readonly headers?: Record<string, string> },
   ): Promise<ChatRunnerResponse>;
 }
 
@@ -201,11 +201,16 @@ export async function chat(
   if (messagesWire) {
     refuseUnservableOnMessagesWire(body);
   }
+  const customHeaders: Record<string, string> = {};
+  if (opts.tags) customHeaders['x-nr-tags'] = formatTags(opts.tags);
+  if (opts.compress !== undefined) customHeaders['x-nr-compress'] = formatCompress(opts.compress);
+
   const res = await send(
     runner,
     messagesWire ? MESSAGES_PATH : CHAT_PATH,
     messagesWire ? toAnthropicMessagesRequest(body).body : body,
     opts.signal,
+    Object.keys(customHeaders).length > 0 ? customHeaders : undefined,
   );
   const meta = metaFromHeaders(res.headers);
 
@@ -1338,13 +1343,14 @@ async function send(
   path: string,
   body: Record<string, unknown>,
   signal?: AbortSignalLike,
+  headers?: Record<string, string>,
 ): Promise<ChatRunnerResponse> {
   try {
     // The signal rides in `init`, NEVER in `body` — a cancellation token
     // written into the request body would be forwarded to the provider as an
     // unknown field. `undefined` is passed through as `undefined` so a runner
     // cannot tell "no signal" from "a signal that is not aborted".
-    return await runner.request(path, body, { signal });
+    return await runner.request(path, body, { signal, headers });
   } catch (cause) {
     throw normalize(cause);
   }

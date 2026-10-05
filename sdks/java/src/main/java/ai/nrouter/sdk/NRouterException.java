@@ -49,7 +49,10 @@ public final class NRouterException extends RuntimeException {
                 code = ls;
             }
         }
-        return new NRouterException(classify(code, message, status), message, code, param, type, status, meta, retryAfter);
+        if (code == null && status == 400 && meta != null && "blocked".equals(meta.guardrails())) {
+            code = "guardrail_blocked";
+        }
+        return new NRouterException(classify(code, message, status, meta), message, code, param, type, status, meta, retryAfter);
     }
 
     static NRouterException transport(String message) {
@@ -64,7 +67,7 @@ public final class NRouterException extends RuntimeException {
         return new NRouterException(Kind.CONFIGURATION, redactKeys(message), "configuration_error", null, null, 400, null, null);
     }
 
-    private static Kind classify(String code, String message, int status) {
+    private static Kind classify(String code, String message, int status, NRouterResponseMeta meta) {
         if (code != null) {
             switch (code) {
                 case "invalid_request": return Kind.REQUEST;
@@ -83,7 +86,11 @@ public final class NRouterException extends RuntimeException {
         }
         String lower = message == null ? "" : message.trim().toLowerCase(java.util.Locale.ROOT);
         switch (status) {
-            case 400: return lower.contains("guardrail") ? Kind.GUARDRAIL_BLOCKED : Kind.REQUEST;
+            case 400:
+                if (lower.contains("guardrail") || (meta != null && "blocked".equals(meta.guardrails()))) {
+                    return Kind.GUARDRAIL_BLOCKED;
+                }
+                return Kind.REQUEST;
             case 401: return Kind.AUTHENTICATION;
             case 402: return lower.startsWith("budget") ? Kind.BUDGET_EXCEEDED : Kind.CREDIT;
             case 404: return lower.contains("model") ? Kind.NOT_FOUND : Kind.OTHER;
@@ -105,6 +112,10 @@ public final class NRouterException extends RuntimeException {
     public int status() { return status; }
     public NRouterResponseMeta meta() { return meta; }
     public java.util.Optional<Long> retryAfter() { return java.util.Optional.ofNullable(retryAfter); }
+    public String requestId() { return meta != null ? meta.requestId() : null; }
+    public String limitSource() { return meta != null ? meta.limitSource() : null; }
+    public String authReason() { return meta != null ? meta.authReason() : null; }
+    public String guardrails() { return meta != null ? meta.guardrails() : null; }
     public boolean isRetryable() {
         if (status == 408 || status == 425) {
             return true;

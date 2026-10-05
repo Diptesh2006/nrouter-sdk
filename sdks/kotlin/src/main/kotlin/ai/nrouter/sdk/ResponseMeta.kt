@@ -50,8 +50,12 @@ public data class NRouterResponseMeta(
      */
     val budgetWarning: String? = null,
     /**
-     * Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `pass`,
-     * `partial` or `blocked`, matched exactly and case-sensitively.
+     * Posture of the PRE-CALL guardrail chain: `none`, `monitor`, `redacted`,
+     * `pass`, `partial`, `blocked` or `unavailable`, matched exactly and
+     * case-sensitively. `redacted` means an enforcing chain REWROTE part of the
+     * prompt before the provider saw it and the request then served; `partial`
+     * means only that some content went uninspected, never that anything was
+     * rewritten.
      *
      * `null` means the gateway made NO guardrail claim about this response —
      * never "no guardrail applied", which is the explicit `none`. Posture only
@@ -65,6 +69,14 @@ public data class NRouterResponseMeta(
     val responseCache: String? = null,
     /** Age in seconds of a response-cache hit. */
     val responseCacheAge: Long? = null,
+    /** Prompt compression outcome: applied, not_requested, off, skipped. */
+    val compression: String? = null,
+    /** Which chain entry answered: direct or fallback:<n>. */
+    val routing: String? = null,
+    /** Provider calls made for this request (>= 1). */
+    val attempts: Long? = null,
+    /** The top intent category evaluated by the preflight chain, if intent routing was requested. */
+    val intent: String? = null,
     /** How this response was funded. */
     val fundingSource: String? = null,
     /** When the current usage allowance resets. */
@@ -78,6 +90,9 @@ public data class NRouterResponseMeta(
 
     /** True when the response was a cache miss. */
     val isCacheMiss: Boolean get() = responseCache == "miss"
+
+    /** Age in seconds of a cached response, or 0 if not cached or absent. */
+    val cacheAgeSeconds: Long get() = responseCacheAge ?: 0L
 
     /** Parses structured budget warning information if present. */
     public fun parseBudgetWarning(): BudgetWarningInfo? {
@@ -115,6 +130,10 @@ public data class NRouterResponseMeta(
             "x-nr-auth-reason",
             "x-nr-response-cache",
             "x-nr-response-cache-age",
+            "x-nr-compression",
+            "x-nr-routing",
+            "x-nr-attempts",
+            "x-nr-intent",
             "x-nr-funding-source",
             "x-nr-allowance-reset",
         )
@@ -149,6 +168,10 @@ public data class NRouterResponseMeta(
                 authReason = lookup("x-nr-auth-reason"),
                 responseCache = lookup("x-nr-response-cache"),
                 responseCacheAge = num("x-nr-response-cache-age"),
+                compression = lookup("x-nr-compression"),
+                routing = lookup("x-nr-routing"),
+                attempts = num("x-nr-attempts"),
+                intent = lookup("x-nr-intent"),
                 fundingSource = lookup("x-nr-funding-source"),
                 allowanceReset = num("x-nr-allowance-reset"),
             )

@@ -61,6 +61,10 @@ export const EMPTY_META: ResponseMeta = Object.freeze({
   authReason: null,
   responseCache: null,
   responseCacheAge: null,
+  compression: null,
+  routing: null,
+  attempts: null,
+  intent: null,
   fundingSource: null,
   allowanceReset: null,
 });
@@ -182,6 +186,10 @@ export function metaFromLookup(get: (name: string) => string | null | undefined)
     authReason: text(get('x-nr-auth-reason')),
     responseCache: text(get('x-nr-response-cache')),
     responseCacheAge: count(get('x-nr-response-cache-age')),
+    compression: text(get('x-nr-compression')),
+    routing: text(get('x-nr-routing')),
+    attempts: count(get('x-nr-attempts')),
+    intent: text(get('x-nr-intent')),
     fundingSource: text(get('x-nr-funding-source')),
     allowanceReset: count(get('x-nr-allowance-reset')),
   };
@@ -354,6 +362,11 @@ export function isCacheHit(meta: ResponseMeta): boolean {
 
 export function isCacheMiss(meta: ResponseMeta): boolean {
   return meta.responseCache === 'miss';
+}
+
+/** Age in seconds of a response-cache hit, or 0 if absent or not a hit. */
+export function cacheAgeSeconds(meta: ResponseMeta): number {
+  return meta.responseCacheAge ?? 0;
 }
 
 /**

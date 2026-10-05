@@ -68,7 +68,7 @@ public enum NRouterError: Error, Equatable {
         case nil:
             switch body.status {
             case 400:
-                return body.message.lowercased().contains("guardrail")
+                return (body.guardrails == "blocked" || body.type == "guardrail_blocked" || body.message.lowercased().contains("guardrail"))
                     ? .guardrailBlocked(body)
                     : .request(body)
             case 401: return .authentication(body)
@@ -110,6 +110,12 @@ public enum NRouterError: Error, Equatable {
         }
     }
 
+    public var requestID: String? { body?.requestID }
+    public var limitSource: String? { body?.limitSource }
+    public var authReason: String? { body?.authReason }
+    public var guardrails: String? { body?.guardrails }
+    public var meta: NRouterResponseMeta? { body?.meta }
+
     /// Whether retrying the identical request could plausibly succeed.
     ///
     /// False for every permanent 4xx: retrying there burns quota and cannot
@@ -141,6 +147,10 @@ public struct NRouterErrorBody: Equatable, Sendable {
     public var authReason: String?
     /// On a 429: wait duration in seconds from Retry-After header.
     public var retryAfter: UInt64?
+    /// Posture of the guardrail chain when reported by the gateway.
+    public var guardrails: String?
+    /// Parsed response metadata when available.
+    public var meta: NRouterResponseMeta?
 
     public init(
         message: String,
@@ -151,7 +161,9 @@ public struct NRouterErrorBody: Equatable, Sendable {
         requestID: String? = nil,
         limitSource: String? = nil,
         authReason: String? = nil,
-        retryAfter: UInt64? = nil
+        retryAfter: UInt64? = nil,
+        guardrails: String? = nil,
+        meta: NRouterResponseMeta? = nil
     ) {
         self.message = redactKeys(message)
         self.code = code
@@ -162,6 +174,8 @@ public struct NRouterErrorBody: Equatable, Sendable {
         self.limitSource = limitSource
         self.authReason = authReason
         self.retryAfter = retryAfter
+        self.guardrails = guardrails
+        self.meta = meta
     }
 }
 

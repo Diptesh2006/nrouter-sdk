@@ -115,6 +115,8 @@ public struct NRouter: Sendable {
     public let baseURL: String
     public let traceId: String?
     public let sessionId: String?
+    public let tags: String?
+    public let compress: String?
     private let apiKey: String
     private let session: URLSession
     private let streamingSession: URLSession
@@ -182,13 +184,17 @@ public struct NRouter: Sendable {
     ///     downloads different deadlines from buffered calls.
     ///   - traceId: Optional distributed trace ID.
     ///   - sessionId: Optional multi-turn session ID.
+    ///   - tags: Optional request tags forwarded via x-nr-tags.
+    ///   - compress: Optional compression instruction forwarded via x-nr-compress.
     public init(
         apiKey: String? = nil,
         baseURL: String = NRouter.defaultBaseURL,
         session: URLSession? = nil,
         streamingSession: URLSession? = nil,
         traceId: String? = nil,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        tags: String? = nil,
+        compress: String? = nil
     ) throws {
         if let traceId, traceId.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) {
             throw NRouterError.configuration("traceId must not contain CRLF characters")
@@ -196,12 +202,20 @@ public struct NRouter: Sendable {
         if let sessionId, sessionId.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) {
             throw NRouterError.configuration("sessionId must not contain CRLF characters")
         }
+        if let tags, tags.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) {
+            throw NRouterError.configuration("tags must not contain CRLF characters")
+        }
+        if let compress, compress.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) {
+            throw NRouterError.configuration("compress must not contain CRLF characters")
+        }
         self.apiKey = try NRouter.resolveAPIKey(apiKey)
         self.baseURL = try NRouter.validateGatewayBaseURL(baseURL)
         self.session = session ?? NRouter.sharedSession
         self.streamingSession = streamingSession ?? session ?? NRouter.sharedStreamingSession
         self.traceId = traceId
         self.sessionId = sessionId
+        self.tags = tags
+        self.compress = compress
     }
 
     /// Parse and enforce transport boundary on gateway base URL.
@@ -693,6 +707,12 @@ public struct NRouter: Sendable {
         if let sessionId {
             request.setValue(sessionId, forHTTPHeaderField: "x-nr-session-id")
         }
+        if let tags {
+            request.setValue(tags, forHTTPHeaderField: "x-nr-tags")
+        }
+        if let compress {
+            request.setValue(compress, forHTTPHeaderField: "x-nr-compress")
+        }
     }
 
     /// Copy a session's between-bytes bound onto the request about to use it.
@@ -804,18 +824,25 @@ public struct NRouter: Sendable {
     ) -> NRouterErrorBody {
         let node = (payload["error"] as? [String: Any]) ?? payload
         var code = node["code"] as? String
+        let type = node["type"] as? String
         if code == nil && status == 402 && (meta.limitSource == "plan_allowance_exhausted" || meta.limitSource == "plan_required") {
             code = meta.limitSource
+        }
+        if code == nil && status == 400 && (meta.guardrails == "blocked" || type == "guardrail_blocked") {
+            code = "guardrail_blocked"
         }
         return NRouterErrorBody(
             message: node["message"] as? String ?? "nRouter request failed",
             code: code,
             param: node["param"] as? String,
-            type: node["type"] as? String,
+            type: type,
             status: status,
             requestID: meta.requestID,
             limitSource: meta.limitSource,
-            authReason: meta.authReason
+            authReason: meta.authReason,
+            retryAfter: nil,
+            guardrails: meta.guardrails,
+            meta: meta
         )
     }
 
@@ -845,7 +872,10 @@ public struct NRouter: Sendable {
                         status: 200,
                         requestID: meta.requestID,
                         limitSource: meta.limitSource,
-                        authReason: meta.authReason
+                        authReason: meta.authReason,
+                        retryAfter: nil,
+                        guardrails: meta.guardrails,
+                        meta: meta
                     )
                 )
             }
@@ -855,7 +885,10 @@ public struct NRouter: Sendable {
             let node = (raw["error"] as? [String: Any]) ?? raw
             let explicitCode = node["code"] as? String
             let type = node["type"] as? String
-            let code = explicitCode ?? (knownStreamErrorCodes.contains(type ?? "") ? type : nil)
+            var code = explicitCode ?? (knownStreamErrorCodes.contains(type ?? "") ? type : nil)
+            if code == nil && meta.guardrails == "blocked" {
+                code = "guardrail_blocked"
+            }
             throw NRouterError.fromCode(
                 NRouterErrorBody(
                     message: node["message"] as? String ?? trimmed,
@@ -865,7 +898,10 @@ public struct NRouter: Sendable {
                     status: 200,
                     requestID: meta.requestID,
                     limitSource: meta.limitSource,
-                    authReason: meta.authReason
+                    authReason: meta.authReason,
+                    retryAfter: nil,
+                    guardrails: meta.guardrails,
+                    meta: meta
                 )
             )
         }
@@ -891,8 +927,10 @@ public struct NRouter: Sendable {
 
     private static let knownStreamErrorCodes: Set<String> = [
         "invalid_request", "guardrail_blocked", "invalid_api_key", "insufficient_credits",
+        "plan_allowance_exhausted", "plan_required",
         "model_not_found", "rate_limit_exceeded", "tpm_limit_exceeded",
         "credit_check_failed", "service_unavailable",
+        "input_too_large", "max_output_tokens_too_large", "fallback_not_allowed", "guardrail_not_found"
     ]
 }
 

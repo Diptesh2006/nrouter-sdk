@@ -1,13 +1,13 @@
 // PGSDK-122. `docs/guardrails.md` explains at length how the gateway RESOLVES
 // which guardrails run — scope precedence, the disabling assignment, caching —
 // and then never tells the reader how to READ the outcome. It mentions neither
-// `x-nr-guardrails` nor `meta.guardrails`, and none of the five statuses the
+// `x-nr-guardrails` nor `meta.guardrails`, and none of the statuses the
 // gateway publishes.
 //
 // The cost of that omission is a specific wrong belief, and the doc actively
 // teaches it: "failures refuse; they do not fall through" plus a Billing
 // section about blocks reads as a two-state world — blocked is an error,
-// anything else means you were protected. Two of the five statuses mean you
+// anything else means you were protected. Two of the seven statuses mean you
 // were NOT protected:
 //
 //   none    — no guardrail was resolved for this request at all
@@ -18,8 +18,8 @@
 // dashboard shows as on, that changes nothing, with no way to tell from the
 // response.
 //
-// docs/audio.md:155, docs/images.md:121 and docs/video.md:188 all already carry
-// the `none | monitor | pass | partial | blocked` token, so the guardrails doc
+// docs/audio.md, docs/images.md and docs/video.md all already carry
+// the `none | monitor | redacted | pass | partial | blocked` token, so the guardrails doc
 // was the one place a reader looking specifically for guardrail semantics would
 // land and find the least. Gateway source: preflight.rs documents the
 // distinction.
@@ -30,7 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const DOC = path.join(__dirname, '..', 'docs', 'guardrails.md');
-const STATUSES = ['none', 'monitor', 'pass', 'partial', 'blocked'];
+const STATUSES = ['none', 'monitor', 'redacted', 'pass', 'partial', 'blocked', 'unavailable'];
 
 test('guardrails.md documents where the result is published', () => {
   const doc = fs.readFileSync(DOC, 'utf8');
@@ -44,7 +44,7 @@ test('guardrails.md documents where the result is published', () => {
   );
 });
 
-test('guardrails.md documents all five statuses', () => {
+test('guardrails.md documents all seven statuses', () => {
   const doc = fs.readFileSync(DOC, 'utf8');
   const missing = STATUSES.filter((s) => !new RegExp(`\`${s}\``).test(doc));
   assert.deepEqual(
@@ -78,11 +78,15 @@ test('the sibling modality docs still carry the same token (the shape being mirr
   // replaces would have gone on passing after the status token was deleted
   // outright, as long as ordinary English survived anywhere in the file. That is
   // the false green: the assertion cannot distinguish the contract from prose.
-  const audio = fs.readFileSync(path.join(__dirname, '..', 'docs', 'audio.md'), 'utf8');
-  assert.match(
-    audio,
-    /`none \| monitor \| pass \| partial \| blocked`/,
-    'docs/audio.md no longer carries the five-status token verbatim — the ' +
-      'mirror in guardrails.md is then copying a pattern its sibling dropped',
-  );
+  // All three modality docs carry the token, and all seven values: a list
+  // that drops `unavailable` tells a reader a 503 posture does not exist.
+  for (const doc of ['audio.md', 'images.md', 'video.md']) {
+    const text = fs.readFileSync(path.join(__dirname, '..', 'docs', doc), 'utf8');
+    assert.match(
+      text,
+      /`none \| monitor \| redacted \| pass \| partial \| blocked \| unavailable`/,
+      `docs/${doc} no longer carries the seven-value status token verbatim — the ` +
+        'mirror in guardrails.md is then copying a pattern its sibling dropped',
+    );
+  }
 });

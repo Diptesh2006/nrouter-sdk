@@ -12,7 +12,7 @@ use std::fmt;
 /// SDK does not know is preserved as [`NRouterError::Other`] rather than being
 /// forced into a neighbouring variant — guessing here would tell a caller to
 /// retry something permanent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)] // every payload variant is boxed below
 pub enum NRouterError {
     /// `invalid_request` (400) — invalid JSON or request shape.
@@ -51,7 +51,7 @@ pub enum NRouterError {
 }
 
 /// The parsed gateway error payload plus the metadata worth acting on.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ErrorBody {
     pub message: String,
     pub code: Option<String>,
@@ -67,6 +67,10 @@ pub struct ErrorBody {
     pub auth_reason: Option<String>,
     /// Present on a 429 when the gateway supplied `retry-after`, in seconds.
     pub retry_after: Option<u64>,
+    /// Posture of the guardrail chain when reported by the gateway.
+    pub guardrails: Option<String>,
+    /// Parsed response metadata when available.
+    pub meta: Option<crate::meta::ResponseMeta>,
 }
 
 impl NRouterError {
@@ -94,14 +98,19 @@ impl NRouterError {
             Some("invalid_request") => Self::Request(body),
             Some("guardrail_blocked") => Self::GuardrailBlocked(body),
             Some("invalid_api_key") => Self::Authentication(body),
-            Some("insufficient_credits") | Some("plan_allowance_exhausted") | Some("plan_required") => Self::Credit(body),
+            Some("insufficient_credits")
+            | Some("plan_allowance_exhausted")
+            | Some("plan_required") => Self::Credit(body),
             Some("model_not_found") => Self::NotFound(body),
             Some("rate_limit_exceeded") | Some("tpm_limit_exceeded") => Self::RateLimit(body),
             Some("credit_check_failed") | Some("service_unavailable") => Self::Service(body),
             Some(_) => Self::Other(body),
             None => match body.status {
                 Some(400) => {
-                    if body.message.to_lowercase().contains("guardrail") {
+                    if body.guardrails.as_deref() == Some("blocked")
+                        || body.error_type.as_deref() == Some("guardrail_blocked")
+                        || body.message.to_lowercase().contains("guardrail")
+                    {
                         Self::GuardrailBlocked(body)
                     } else {
                         Self::Request(body)
@@ -172,6 +181,31 @@ impl NRouterError {
     /// Error family/type when reported by gateway.
     pub fn error_type(&self) -> Option<&str> {
         self.body().and_then(|b| b.error_type.as_deref())
+    }
+
+    /// Request ID of the response when available.
+    pub fn request_id(&self) -> Option<&str> {
+        self.body().and_then(|b| b.request_id.as_deref())
+    }
+
+    /// Limit source when reported by gateway.
+    pub fn limit_source(&self) -> Option<&str> {
+        self.body().and_then(|b| b.limit_source.as_deref())
+    }
+
+    /// Auth reason when reported by gateway.
+    pub fn auth_reason(&self) -> Option<&str> {
+        self.body().and_then(|b| b.auth_reason.as_deref())
+    }
+
+    /// Guardrail posture when reported by gateway.
+    pub fn guardrails(&self) -> Option<&str> {
+        self.body().and_then(|b| b.guardrails.as_deref())
+    }
+
+    /// Response metadata when available.
+    pub fn meta(&self) -> Option<&crate::meta::ResponseMeta> {
+        self.body().and_then(|b| b.meta.as_ref())
     }
 
     /// Whether retrying the identical request could plausibly succeed.

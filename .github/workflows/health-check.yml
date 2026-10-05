@@ -45,15 +45,26 @@ jobs:
           python-version: '3.11'
 
       - name: Self-test the health-check harness (offline)
-        run: python3 scripts/curl_health_checks.py --self-test
+        run: bash scripts/curl_health_checks/run_all.sh --self-test
 
       - name: Run Pure-Curl Health Checks
         run: |
           mkdir -p dist
-          python3 scripts/curl_health_checks.py \
-            --step-summary \
-            --output-dir dist/ \
-            --email
+          bash scripts/curl_health_checks/run_all.sh --step-summary --json > dist/sentinel-report.json
+
+      - name: Generate HTML Report
+        run: |
+          python3 scripts/send_sentinel_email.py \
+            --report-file dist/sentinel-report.json \
+            --dry-run \
+            --preview-out dist/index.html
+
+      - name: Send Daily Health Alert Email
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.notify_email)
+        run: |
+          python3 scripts/send_sentinel_email.py \
+            --report-file dist/sentinel-report.json \
+            --recipient "${SENTINEL_EMAIL_RECIPIENT}"
 
       - name: Upload Health Check Artifacts
         uses: actions/upload-artifact@v4
@@ -62,7 +73,6 @@ jobs:
           name: health-check-reports
           path: |
             dist/sentinel-report.json
-            dist/status.json
             dist/index.html
           retention-days: 30
 

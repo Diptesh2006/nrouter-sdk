@@ -22,7 +22,7 @@ import {
   type TransportRequest,
   type TransportResponse,
 } from './multimodal';
-import { buildFeatureBody } from './options';
+import { buildFeatureBody, formatTags, formatCompress } from './options';
 import { jsonRequest } from './json';
 import { streamChat, type StreamRunner, type StreamResult } from './stream';
 import type { NRouterCallOptions, NRouterFeatureOptions, NRouterResponse, ResponseMeta } from './types';
@@ -403,6 +403,10 @@ type NRouterOptions = Omit<
   traceId?: string;
   /** Multi-turn session ID forwarded to the gateway via `x-nr-session-id`. */
   sessionId?: string;
+  /** Request tags forwarded to the gateway via `x-nr-tags`. */
+  tags?: Record<string, string> | string[] | string;
+  /** Prompt compression instruction forwarded to the gateway via `x-nr-compress`. */
+  compress?: boolean | string;
   /**
    * `headers` is omitted deliberately. The constructor discards it — the
    * vendor spreads `fetchOptions` onto the request after the headers this SDK
@@ -732,6 +736,8 @@ export class nRouter extends OpenAI {
     const sessionId = options.sessionId
       ? assertTraceValue('sessionId', options.sessionId)
       : undefined;
+    const tagsStr = options.tags ? formatTags(options.tags) : undefined;
+    const compressStr = options.compress !== undefined ? formatCompress(options.compress) : undefined;
 
     // MEASURED against openai 7.8.0, with OPENAI_CUSTOM_HEADERS and
     // OPENAI_ORG_ID set in the environment: `nr.chat()` sent
@@ -820,6 +826,12 @@ export class nRouter extends OpenAI {
       }
       if (sessionId && !headers.has('x-nr-session-id')) {
         headers.set('x-nr-session-id', sessionId);
+      }
+      if (tagsStr && !headers.has('x-nr-tags')) {
+        headers.set('x-nr-tags', tagsStr);
+      }
+      if (compressStr && !headers.has('x-nr-compress')) {
+        headers.set('x-nr-compress', compressStr);
       }
       if (!headers.has('x-nr-client-language')) {
         headers.set('x-nr-client-language', 'js');
@@ -969,7 +981,7 @@ export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
   async request(
     pathOrReq: string | TransportRequest,
     body?: unknown,
-    init?: { readonly signal?: AbortSignalLike },
+    init?: { readonly signal?: AbortSignalLike; readonly headers?: Record<string, string> },
   ): Promise<
     { status: number; headers: HeaderSource; text: string; contentType: string } & TransportResponse
   > {
@@ -990,6 +1002,7 @@ export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
             // seam, so a `chat()` call becomes cancellable by carrying it into
             // the same field rather than by adding a second abort path.
             signal: init?.signal,
+            headers: init?.headers,
           }
         : pathOrReq;
 
@@ -1094,6 +1107,11 @@ export class NRouterSurface implements ChatRunner, StreamRunner, Transport {
   private async raw(req: TransportRequest): Promise<FetchResponse> {
     const headers: Record<string, string> = {};
     if (req.contentType) headers['content-type'] = req.contentType;
+    if (req.headers) {
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (v !== undefined && v !== null) headers[k] = String(v);
+      }
+    }
 
     const options = {
       body: req.body,

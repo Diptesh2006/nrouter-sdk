@@ -182,6 +182,8 @@ class NRouter {
     this.bodyIdleTimeout = defaultBodyIdleTimeout,
     this.traceId,
     this.sessionId,
+    this.tags,
+    this.compress,
   })  : _apiKey = validateApiKey(apiKey),
         baseUrl = _normalizeBaseUrl(baseUrl),
         _http = httpClient ?? http.Client(),
@@ -191,6 +193,12 @@ class NRouter {
     }
     if (sessionId != null && (sessionId!.contains('\r') || sessionId!.contains('\n'))) {
       throw NRouterConfigurationError('sessionId must not contain CRLF characters');
+    }
+    if (tags != null && (tags!.contains('\r') || tags!.contains('\n'))) {
+      throw NRouterConfigurationError('tags must not contain CRLF characters');
+    }
+    if (compress != null && (compress!.contains('\r') || compress!.contains('\n'))) {
+      throw NRouterConfigurationError('compress must not contain CRLF characters');
     }
   }
 
@@ -203,6 +211,12 @@ class NRouter {
 
   /// Optional multi-turn session ID forwarding to gateway.
   final String? sessionId;
+
+  /// Optional request tags forwarding to gateway.
+  final String? tags;
+
+  /// Optional prompt compression strategy ('llmlingua2').
+  final String? compress;
 
   /// Whole-request ceiling applied to buffered JSON and multipart calls.
   final Duration timeout;
@@ -219,6 +233,8 @@ class NRouter {
       'x-nr-client-language': 'dart',
       if (traceId != null) 'x-nr-trace-id': traceId!,
       if (sessionId != null) 'x-nr-session-id': sessionId!,
+      if (tags != null) 'x-nr-tags': tags!,
+      if (compress != null) 'x-nr-compress': compress!,
       if (extra != null) ...extra,
     };
   }
@@ -819,6 +835,8 @@ class NRouter {
       limitSource: meta.limitSource,
       authReason: meta.authReason,
       retryAfter: retryAfter,
+      guardrails: meta.guardrails,
+      meta: meta,
     );
   }
 }
@@ -860,6 +878,8 @@ _SseResult _parseSseFrame(
         requestId: meta.requestId,
         limitSource: meta.limitSource,
         authReason: meta.authReason,
+        guardrails: meta.guardrails,
+        meta: meta,
       ));
     }
     return (chunk: null, terminal: false);
@@ -889,6 +909,8 @@ _SseResult _parseSseFrame(
       requestId: meta.requestId,
       limitSource: meta.limitSource,
       authReason: meta.authReason,
+      guardrails: meta.guardrails,
+      meta: meta,
     ));
   }
 
@@ -928,9 +950,15 @@ bool _knownErrorCode(String code) => const {
       'guardrail_blocked',
       'invalid_api_key',
       'insufficient_credits',
+      'plan_allowance_exhausted',
+      'plan_required',
       'model_not_found',
       'rate_limit_exceeded',
       'tpm_limit_exceeded',
       'credit_check_failed',
       'service_unavailable',
+      'input_too_large',
+      'max_output_tokens_too_large',
+      'fallback_not_allowed',
+      'guardrail_not_found',
     }.contains(code);

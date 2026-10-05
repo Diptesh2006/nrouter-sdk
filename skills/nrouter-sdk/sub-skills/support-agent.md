@@ -1,6 +1,6 @@
 # Sub-skill: Customer Support Agent (@nrouter_ai/support-agent)
 
-Skill `nrouter-sdk`, sub-skill `support-agent`. Open it when developing, configuring, or testing the public `@nrouter_ai/support-agent` package located at `agents/customer-support-agent/`.
+Skill `nrouter-sdk`, sub-skill `support-agent`. Open it when developing, configuring, or testing the public `@nrouter_ai/support-agent` package. It lives in its own public repository, `nRouterGateway/customer-support-agent`; every path below is relative to that repository's root.
 
 The customer support agent is a streaming, in-process assistant library built directly on `@nrouter_ai/sdk`. It provides document-grounded retrieval over static markdown docs or index files, cosine similarity search, tools, confidence scoring, citation generation, PII masking, and SSE streaming.
 
@@ -13,8 +13,7 @@ The customer support agent is a streaming, in-process assistant library built di
 
 ## Package Structure
 
-Derive it rather than trusting a tree that goes stale: `ls agents/customer-support-agent/src
-agents/customer-support-agent/src/knowledge agents/customer-support-agent/test`. The entry points
+Derive it rather than trusting a tree that goes stale: `ls src src/knowledge test`. The entry points
 that matter: `src/agent.ts` (the `createSupportAgent` factory), `src/client.ts` (the SDK wrapper),
 `src/retrieval.ts` (cosine ranking), `src/pii.ts` (masking), `src/sse.ts` (the SSE formatter),
 `src/node.ts` (file-system helpers: `readDocsDir`, `saveKnowledgeIndex`, `loadKnowledgeIndex`),
@@ -58,7 +57,7 @@ const sseStream = agent.chatSSE(
 
 ## Test Commands
 
-Run from `agents/customer-support-agent/`:
+Run from the root of the `customer-support-agent` repository:
 
 ```bash
 npm test           # vitest run — the offline suite; derive the count, do not pin it
@@ -68,7 +67,7 @@ npm run e2e        # builds, then playwright — needs a key and a browser; neve
 ```
 
 This package uses **npm** (`package-lock.json`), not pnpm. Derive the scripts rather than trusting
-this block: `python3 -c "import json;print(json.load(open('agents/customer-support-agent/package.json'))['scripts'])"`.
+this block: `python3 -c "import json;print(json.load(open('package.json'))['scripts'])"`.
 
 ## Host integration is the host's concern
 

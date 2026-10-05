@@ -13,7 +13,7 @@ metadata:
 
 # nRouter SDKs (router)
 
-Ten SDKs, one gateway contract, plus the public zero-DB customer support agent (`@nrouter_ai/support-agent`). This router holds the facts every SDK change shares; open the
+Ten SDKs, one gateway contract. The public zero-DB customer support agent (`@nrouter_ai/support-agent`) is built on the JS SDK and lives in its own repository, `nRouterGateway/customer-support-agent`. This router holds the facts every SDK change shares; open the
 sub-skill for the kind of change you are making.
 
 ## Sub-skills
@@ -23,7 +23,7 @@ sub-skill for the kind of change you are making.
 | sub-skill `parity` | Any wire, endpoint, header, error code, request-body option, demo, example, validation playbook, README or version change — the cross-SDK propagation protocol, the synchronization matrix, the README standard, the coordinated version. |
 | sub-skill `hardening` | Error classification (and the undocumented 502/504 arms), streaming and abort/cancellation, secret redaction, client retry policy, timeouts. |
 | sub-skill `testing` | Adding, changing, running or auditing tests — per-language runner commands, the offline-by-default suite, the `NROUTER_LIVE` billed probe, the pure-curl proof harness, in-process fakes per ecosystem, what a change must be covered by, what each registry publishes. |
-| sub-skill `support-agent` | Developing, configuring, or testing the public `@nrouter_ai/support-agent` package (`agents/customer-support-agent/`), building knowledge base indices with `support-agent build-kb`, or verifying in-process zero-DB retrieval and SSE streaming. |
+| sub-skill `support-agent` | Developing, configuring, or testing the public `@nrouter_ai/support-agent` package (its own repository, `nRouterGateway/customer-support-agent`), building knowledge base indices with `support-agent build-kb`, or verifying in-process zero-DB retrieval and SSE streaming. |
 
 Most changes touch more than one: a new wire is `parity` (all ten SDKs) plus `testing` (a contract
 test per SDK); a classification change is `hardening` plus `testing` (a behavioural test per status).
@@ -182,9 +182,11 @@ one place the default silently comes back.
 
 ### The customer support agent (`@nrouter_ai/support-agent`)
 
-Located at `agents/customer-support-agent/`. It is a zero-database streaming agent package built
-exclusively on `@nrouter_ai/sdk`. It implements in-process cosine similarity search over static JSON
-indices built via `support-agent build-kb`, supports PII masking and citation formatting, and streams
-SSE frames. Tested with `npm test` from `agents/customer-support-agent/` (offline-by-default).
+It lives in its own public repository, `nRouterGateway/customer-support-agent`, not in this one. It is
+a zero-database streaming agent package built exclusively on `@nrouter_ai/sdk`. It implements
+in-process cosine similarity search over static JSON indices built via `support-agent build-kb`,
+supports PII masking and citation formatting, and streams SSE frames. Tested with `npm test` from
+that repository's root (offline-by-default). A breaking change to the JS SDK's public surface is a
+breaking change for it: it pins an exact `@nrouter_ai/sdk` version.
 Detail in sub-skill `support-agent`.
 

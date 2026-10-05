@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 1. **Ten client SDKs** under `sdks/` (js, python, java, kotlin, android, go, rust, swift, dart, r), all speaking one gateway wire contract (`api.nrouter.ai/v1/*`). Package names and versions live in each SDK's manifest — read them there, never from prose; the SDKs are not all on the same version.
-2. **Agents** under `agents/`; `agents/customer-support-agent/` is the public zero-DB `@nrouter_ai/support-agent`.
+2. **Agents** under `agents/`. The public zero-DB `@nrouter_ai/support-agent` is no longer one of them: it has its own public repository, `nRouterGateway/customer-support-agent`, and depends on `@nrouter_ai/sdk` from here.
 
 ## The One Rule: Canonical Specification (Rule #14)
 

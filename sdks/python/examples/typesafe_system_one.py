@@ -28,8 +28,8 @@ def main() -> None:
     # 1. Setting and reading NROUTER_API_KEY
     api_key = os.environ.get("NROUTER_API_KEY")
     if not api_key:
-        print("Notice: NROUTER_API_KEY not found in environment.")
-        print("To run against the live gateway: export NROUTER_API_KEY='sk-nrouter-...'\n")
+        print("Set NROUTER_API_KEY before running this live example.", file=sys.stderr)
+        raise SystemExit(1)
 
     print("======================================================")
     print(f"Model: {MODEL_TYPESAFE_JEV} (TypeSafe AI Jev System One)")
@@ -48,7 +48,7 @@ def main() -> None:
 
     # 2. Initializing nRouter client (reads NROUTER_API_KEY automatically if unset)
     with nRouter(
-        api_key=api_key or "sk-nrouter-demo-virtual-key",
+        api_key=api_key,
         base_url=os.environ.get("NROUTER_BASE_URL", "https://api.nrouter.ai/v1"),
     ) as client:
         system_prompt = (

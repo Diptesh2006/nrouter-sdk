@@ -105,6 +105,13 @@ asyncio.run(main())
 
 ## Core Capabilities & Examples
 
+### TypeSafe Jev System One
+
+[`examples/typesafe_system_one.py`](examples/typesafe_system_one.py) sends a normal
+chat-completions request to `typesafe/jev`, requests a structured triage decision,
+and prints standard response metadata. See the cross-SDK
+[`JEV Examples`](../../examples/README.md) index for prerequisites and limits.
+
 | Example Script | Topic | Description |
 |---|---|---|
 | [`01_quickstart.py`](demo/01_quickstart.py) | **Quickstart** | Basic chat completion & metadata extraction |

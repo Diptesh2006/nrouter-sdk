@@ -28,6 +28,13 @@ dependencies:
     path: ../nrouter-sdk/sdks/dart
 ```
 
+## TypeSafe Jev System One
+
+[`demo/jev_system_one.dart`](demo/jev_system_one.dart) sends a standard
+chat-completions request to `typesafe/jev` and prints the decision plus normal
+nRouter metadata. See the cross-SDK [`JEV Examples`](../../examples/README.md)
+index for prerequisites and feature limits.
+
 ## Authentication & Setup
 
 Pass your API key to the `NRouter` constructor:

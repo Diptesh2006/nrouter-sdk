@@ -33,6 +33,13 @@ Or in Xcode: **File → Add Package Dependencies** and paste the URL.
 | watchOS | 8 |
 | visionOS | 1 |
 
+## TypeSafe Jev System One
+
+[`demo/jev_system_one.swift`](demo/jev_system_one.swift) sends a standard
+chat-completions request to `typesafe/jev` and prints the decision plus normal
+nRouter metadata. See the cross-SDK [`JEV Examples`](../../examples/README.md)
+index for prerequisites and feature limits.
+
 ## Authentication & Setup
 
 Set your API key in your environment (macOS/CLI) or pass it explicitly:

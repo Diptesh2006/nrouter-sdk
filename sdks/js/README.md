@@ -107,6 +107,13 @@ gateway serves that alias — pick another model rather than trying a second wir
 
 ## nRouter Helpers
 
+### TypeSafe Jev System One
+
+[`examples/typesafe-jev-decision.ts`](examples/typesafe-jev-decision.ts) sends a normal
+chat-completions request to `typesafe/jev`, asks for a structured triage decision,
+and prints standard nRouter metadata. See the cross-SDK
+[`JEV Examples`](../../examples/README.md) index for prerequisites and limits.
+
 Use `client.nr.chat()` when you want nRouter features and response metadata in
 one call:
 

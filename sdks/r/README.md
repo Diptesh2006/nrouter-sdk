@@ -27,6 +27,13 @@ For a development install directly from the monorepo:
 remotes::install_github("nRouterGateway/nrouter-sdk", subdir = "sdks/r")
 ```
 
+## TypeSafe Jev System One
+
+[`demo/jev_system_one.R`](demo/jev_system_one.R) sends a standard
+chat-completions request to `typesafe/jev` and prints the decision plus normal
+nRouter metadata. See the cross-SDK [`JEV Examples`](../../examples/README.md)
+index for prerequisites and feature limits.
+
 ## Authentication & Setup
 
 Set your API key in your environment or `.Renviron`:

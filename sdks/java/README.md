@@ -13,6 +13,13 @@ around the official `openai-java` client — same API surface, pre-configured fo
 </dependency>
 ```
 
+## TypeSafe Jev System One
+
+[`demo/JevSystemOneExample.java`](demo/JevSystemOneExample.java) sends a standard
+chat-completions request to `typesafe/jev` and prints the decision plus normal
+nRouter metadata. See the cross-SDK [`JEV Examples`](../../examples/README.md)
+index for prerequisites and feature limits.
+
 ## Authentication & Setup
 
 The SDK automatically reads your API key from the `NROUTER_API_KEY` environment variable:

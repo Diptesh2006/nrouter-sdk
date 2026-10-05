@@ -2,6 +2,13 @@
 
 One API key for models across six provider clouds.
 
+## TypeSafe Jev System One
+
+[`demo/jev_system_one.rs`](demo/jev_system_one.rs) sends a standard
+chat-completions request to `typesafe/jev` and prints the decision plus normal
+nRouter metadata. See the cross-SDK [`JEV Examples`](../../examples/README.md)
+index for prerequisites and feature limits.
+
 ## Installation
 
 Add `nrouter` to your `Cargo.toml`:

@@ -18,13 +18,13 @@ import { nRouter, MODEL_TYPESAFE_JEV } from '../dist/index.mjs';
 // 1. Setting and reading NROUTER_API_KEY
 const apiKey = process.env.NROUTER_API_KEY;
 if (!apiKey) {
-  console.log('Notice: NROUTER_API_KEY not found in environment.');
-  console.log('To run against the live gateway: export NROUTER_API_KEY="sk-nrouter-..."\n');
+  console.error('Set NROUTER_API_KEY before running this live example.');
+  process.exit(1);
 }
 
 // 2. Initialize nRouter client
 const client = new nRouter({
-  apiKey: apiKey ?? 'sk-nrouter-demo-virtual-key',
+  apiKey,
   baseURL: process.env.NROUTER_BASE_URL ?? 'https://api.nrouter.ai/v1',
 });
 

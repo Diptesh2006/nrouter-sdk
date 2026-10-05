@@ -20,6 +20,13 @@ dependencies {
 }
 ```
 
+## TypeSafe Jev System One
+
+[`demo/JevSystemOneDemo.kt`](demo/JevSystemOneDemo.kt) shows the same standard
+`typesafe/jev` chat-completions request from an Android coroutine. Pass a
+short-lived key from your backend. See the cross-SDK
+[`JEV Examples`](../../examples/README.md) index for feature limits.
+
 ## Authentication & Setup
 
 Pass your API key directly to `NRouterAndroid.create(...)`:

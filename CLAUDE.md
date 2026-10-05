@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > 📍 `github.com/nRouterGateway/nrouter-sdk` (**public**).
-> **The only PUBLIC repo in the workspace** — everything committed here is world-readable.
+> Everything committed here is world-readable.
 > Treat every file as published. Never commit internal keys, project IDs, or internal endpoints.
 > `AGENTS.md`/`GEMINI.md` are symlinks to this file.
 

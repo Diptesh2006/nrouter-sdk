@@ -13,34 +13,23 @@ metadata:
 
 # nRouter SDKs (router)
 
-Ten SDKs, one gateway contract. The public zero-DB customer support agent (`@nrouter_ai/support-agent`) is built on the JS SDK and lives in its own repository, `nRouterGateway/customer-support-agent`. This router holds the facts every SDK change shares; open the
-sub-skill for the kind of change you are making.
-
-## Sub-skills
+Ten SDKs, one gateway contract. Shared facts here; open the sub-skill for the change.
 
 | Sub-skill | When to open |
 |---|---|
-| sub-skill `parity` | Any wire, endpoint, header, error code, request-body option, demo, example, validation playbook, README or version change — the cross-SDK propagation protocol, the synchronization matrix, the README standard, the coordinated version. |
-| sub-skill `hardening` | Error classification (and the undocumented 502/504 arms), streaming and abort/cancellation, secret redaction, client retry policy, timeouts. |
-| sub-skill `testing` | Adding, changing, running or auditing tests — per-language runner commands, the offline-by-default suite, the `NROUTER_LIVE` billed probe, the pure-curl proof harness, in-process fakes per ecosystem, what a change must be covered by, what each registry publishes. |
-| sub-skill `support-agent` | Developing, configuring, or testing the public `@nrouter_ai/support-agent` package (its own repository, `nRouterGateway/customer-support-agent`), building knowledge base indices with `support-agent build-kb`, or verifying in-process zero-DB retrieval and SSE streaming. |
+| sub-skill `parity` | Any wire, endpoint, header, error code, body option, example, README or version change — propagation, sync matrix, README standard, coordinated version. |
+| sub-skill `hardening` | Error classification (incl. undocumented 502/504), streaming, cancellation, secret redaction, retries, timeouts. |
+| sub-skill `testing` | Per-language runners, offline suites, the `NROUTER_LIVE` billed probe, curl harness, in-process fakes, required coverage, registry contents. |
+| sub-skill `support-agent` | `@nrouter_ai/support-agent` (repo `nRouterGateway/customer-support-agent`): `support-agent build-kb`, zero-DB retrieval, SSE. |
 
-Most changes touch more than one: a new wire is `parity` (all ten SDKs) plus `testing` (a contract
-test per SDK); a classification change is `hardening` plus `testing` (a behavioural test per status).
+A new wire is `parity` (all SDKs) + `testing` (a contract test per SDK); a classification change is `hardening` + `testing` (a behavioural test per status).
 
 ## Shared facts
 
-### The ten SDKs
+### SDKs and the spec
 
-`js python java go rust kotlin android swift dart r`, each under `sdks/<tech>/`. Derive the list
-rather than trusting this sentence: `ls -d sdks/*/ | wc -l`.
-
-### The spec is canonical
-
-`spec/nrouter-sdk-spec.json` is the sole source of truth, derived from the gateway: base URL,
-`NROUTER_API_KEY`, the `sk-nrouter-` key prefix, every `x-nr-*` header and its value enum, the
-documented error codes, the request-body fields the gateway lifts, and the coordinated release
-version. **Read a value from the spec; never retype one here.** Every count below grows — derive it:
+- SDKs live under `sdks/<tech>/` (`js python java go rust kotlin android swift dart r`); derive: `ls -d sdks/*/ | wc -l`.
+- `spec/nrouter-sdk-spec.json` (derived from the gateway) is the sole source of truth for base URL, `NROUTER_API_KEY`, `sk-nrouter-` prefix, headers and value enums, error codes, body fields, version. **Read values from it; never retype.** SDK ≠ spec → the SDK is wrong; a contract change is never single-language.
 
 ```bash
 python3 - <<'PY'
@@ -51,142 +40,67 @@ print('version', s['version'])
 PY
 ```
 
-When an SDK and the spec disagree, the SDK is wrong. A contract change is never single-language.
+### The request body is a wire surface
 
-### Three wire surfaces, not two — the request BODY is one of them
-
-`spec.extra_body_fields` is the **closed** set of `nrouter_*` keys the gateway lifts off a request
-body. Everything else in the body is forwarded to the provider verbatim, and **an unknown `nrouter_*`
-key is refused 400** rather than passed through — so a field an SDK does not model is not a gap a
-caller can route around. Read each field's own `description` in the spec; the three a client must not
-get wrong:
+`spec.extra_body_fields` is the **closed** set of lifted `nrouter_*` keys; the rest is forwarded verbatim; an **unknown `nrouter_*` key is 400**. The three most mis-modelled:
 
 | Field | Shape | Refusal |
 |---|---|---|
-| `nrouter_fallbacks` | 1–4 model ids, tried in order. **REPLACES** the organization's fallback policy for this one call; never merged with it. `model` stays the primary and is never listed. Text wires only. | a target this key cannot route — including an alias, auto-router or allowance name, or any other model that is not offered as a fallback target — is `400 fallback_not_allowed`, before any provider egress |
-| `nrouter_guardrails` | 1–8 guardrail ids or names. **ADD-ONLY**: they run *in addition to* what is assigned to the key, team and organization, and a request can never remove, relax or replace an assigned guardrail or the platform moderation floor. Text wires only. | an id or name the organization does not own is `400 guardrail_not_found` — refused, never silently ignored |
-| `nrouter_cache` | Boolean. `false` forces provider egress for a buffered text request; streams are never cached anyway. | none — the response carries `x-nr-response-cache: bypass` |
+| `nrouter_fallbacks` | 1–4 model ids in order; **REPLACES** (never merges) the org fallback policy; `model` stays primary, unlisted. Text wires. | unroutable target (incl. alias/auto/allowance names) → `400 fallback_not_allowed`, before egress |
+| `nrouter_guardrails` | 1–8 ids/names; **ADD-ONLY** — never removes, relaxes or replaces an assigned guardrail or the moderation floor. Text wires. | not owned by the org → `400 guardrail_not_found` |
+| `nrouter_cache` | Boolean; `false` forces egress for buffered text (streams never cached). | none; `x-nr-response-cache: bypass` |
 
-**Typed option builders exist in three of the ten SDKs today, and the gate says which** — the other
-seven are recorded with a reason rather than assumed, so never claim ten of ten. Derive:
+Typed option builders exist in only some SDKs; never claim all. Derive:
 
 ```bash
 python3 -c "import sys;sys.path.insert(0,'conformance');import check_conformance as c;\
 print('typed:',sorted(c.OPTION_BUILDERS));print('none:',sorted(c.NO_OPTION_BUILDER))"
 ```
 
-`check_option_builders` fails an SDK whose builder omits a spec field, an entry in
-`NO_OPTION_BUILDER` that has quietly grown a builder, and a builder naming an invented `nrouter_*`
-key — the gateway refuses any key outside `spec.extra_body_fields` with a 400 before the provider
-is called, so such a builder can only ever produce refusals.
+`check_option_builders` fails a builder that omits a spec field, a `NO_OPTION_BUILDER` entry that grew a builder, and a builder naming an invented `nrouter_*` key.
 
-### Reading a response: routing, guardrails, cache
+### Reading a response
 
-Each of these is a `spec.response_headers` entry — read the entry rather than retyping its values.
+Each is a `spec.response_headers` entry — read it, don't retype it.
 
-- **`x-nr-routing` and `x-nr-attempts` are EMITTED, not planned.** Routing names which chain entry
-  answered — `direct`, or `fallback:<n>` where `n` is the 0-based index of the answering entry with
-  the primary at 0; attempts counts provider calls, retries and failovers alike. **Both are ABSENT on
-  a cache hit and on every refusal**; a refusal advertising routing it never performed is a defect,
-  and `tracing_curl` pins that.
-- **`x-nr-guardrails` carries seven values**, each with its own `value_semantics` entry, matched
-  case-sensitively. Two are routinely mis-read: `redacted` means an enforcing rule REWROTE part of
-  the prompt before it was sent, so the model did not see what the caller sent; `partial` means some
-  content went uninspected — never that anything was acted on, and it is the ORDINARY answer on the
-  two audio upload wires. Absence is not `none`; `none` is an explicit token. The token is the whole
-  payload by design: no policy name, id, detector family or rule count, ever.
-- **`x-nr-response-cache` includes `bypass`** beside `hit` and `miss`.
-- **`x-nr-limit-source` is present on 402 as well as 429**, and `budget` is one of its values.
-- **A model outside the key's access list is 403 with `x-nr-auth-reason: key_model_not_allowed`** —
-  not a 404. `model_not_found` is the alias being absent or invisible to the key.
+- **`x-nr-routing`** (`direct` | `fallback:<n>`, 0-based, primary = 0) and **`x-nr-attempts`** (provider calls incl. retries/failovers) are emitted; **both ABSENT on a cache hit and on every refusal** (pinned by `tracing_curl`).
+- **`x-nr-guardrails`** (case-sensitive; `value_semantics` in the spec): `redacted` = the prompt was REWRITTEN before sending; `partial` = some content went uninspected (normal on audio uploads), not that anything was acted on. Absence ≠ `none`. No policy name, id or count, ever.
+- **`x-nr-response-cache`**: `hit` | `miss` | `bypass`.
+- **`x-nr-limit-source`** is present on 402 as well as 429; `budget` is a value.
+- A model outside the key's access list is **403 `x-nr-auth-reason: key_model_not_allowed`**, not 404; `model_not_found` = alias absent or invisible to the key.
 
-### The conformance gate — the only cross-SDK check, and it needs nothing
+### Conformance gate — the only cross-SDK check
 
 ```bash
-python3 conformance/check_conformance.py --self-test   # prove the gate bites, FIRST
-python3 conformance/check_conformance.py               # then run it
+python3 conformance/check_conformance.py --self-test   # prove it bites, FIRST
+python3 conformance/check_conformance.py
 ```
 
-**Requires Python 3 and nothing else** — no toolchains, no network, no key. That is deliberate: it
-greps each SDK's SOURCE TEXT for spec constants rather than importing or compiling it, because a
-missing toolchain would otherwise be silently "skipped", and a skip that reads as a pass is the
-failure mode the gate exists to prevent.
+Python 3 only — it greps SDK source text, so a missing toolchain never reads as a skipped pass. Enforces base URL, env name, key prefix, every header and error code, the route-ownership matrix (native helper or declared delegation seam per route × SDK), the coordinated version across manifests and JS/Rust lockfiles, the option-builder pin, and sub-gates `doc_wires`, `source_defaults`, `doc_header_count`, `client_timeouts`.
 
-It enforces the base URL, the `NROUTER_API_KEY` env name, the `sk-nrouter-` key prefix, every
-`x-nr-*` header and every gateway error code the spec documents; the route-ownership matrix (every route × every
-SDK, each either exposing a native helper or declaring an explicit delegation seam); and the
-coordinated release version across all ten distribution manifests plus the JS and Rust lockfiles.
-It also drives the option-builder pin above and four sub-gates — doc wires, source defaults, doc
-header counts, and client timeouts.
+**Green is necessary, never sufficient:** it cannot bind a code to its status, prove a header lands in the right field, see statuses outside the spec (502/504 — sub-skill `hardening`), or see the gateway. Behaviour needs a test in the SDK's own suite (sub-skill `testing`).
 
-**Run `--self-test` before trusting a green run.** A conformance gate that passes while checking
-nothing is worse than no gate.
+### Curl proof harness — what the wire actually answers
 
-### What the conformance gate cannot see
-
-Reading source text is the right design, but it has consequences the gate's own
-`conformance/README.md` states plainly. Do not let the gate stand in for a real test:
-
-1. **It cannot bind an error code to its status.** It proves the full set of codes and the full set
-   of statuses each appear *somewhere* in the dispatch. A code wired to the wrong status passes.
-2. **It cannot prove a header is used correctly.** It proves the header name is *referenced*. A
-   header parsed into the wrong field passes.
-3. **By construction, any status outside the spec's documented errors is invisible to the gate.**
-   502 and 504 are the live examples. That is where the worst divergence lives (sub-skill
-   `hardening`, §1).
-4. **It cannot see the gateway.** It reads this repository only. What the wire actually answers is
-   the curl proof harness below.
-
-**A green conformance run is necessary and never sufficient.** Behaviour needs a behavioural test in
-the SDK's own suite (sub-skill `testing`).
-
-### The curl proof harness — what the wire actually answers
-
-`nrouter-sdk/scripts/curl_health_checks/` asks the gateway in raw `curl`, with zero SDK bias, and is the only
-thing in this repo that proves a contract claim rather than a source-text claim. Its own
-`README.md` is authoritative; the facts that decide whether a run means anything:
+`scripts/curl_health_checks/` (its `README.md` is authoritative) is the only contract proof in this repo.
 
 ```bash
-python3 nrouter-sdk/scripts/curl_health_checks/run_all.py --self-test            # offline, no key, proves the checks bite
+python3 scripts/curl_health_checks/run_all.py --self-test            # offline, proves checks bite
 export NROUTER_API_KEY="sk-nrouter-..."
-python3 nrouter-sdk/scripts/curl_health_checks/run_all.py --route /messages --model <a model this key may use>
-python3 nrouter-sdk/scripts/curl_health_checks/run_all.py --quick                # sampled
-python3 nrouter-sdk/scripts/curl_health_checks/run_all.py --json > report.json   # stdout is exactly one document
+python3 scripts/curl_health_checks/run_all.py --route /messages --model <a model this key may use>
+python3 scripts/curl_health_checks/run_all.py --quick                # sampled
+python3 scripts/curl_health_checks/run_all.py --json > report.json   # stdout is one document
 ```
 
-- **Per-domain modules run standalone** with the same flags and the same JSON shape — derive them
-  rather than listing them: `ls nrouter-sdk/scripts/curl_health_checks/*_curl.py`. `fallbacks_curl`,
-  `guardrails_request_curl` and `cache_curl` are the three that pin the per-request body options
-  above; `contract_curl` compares the live wire against the spec directly.
-- **Four results, and only one is a pass.** `PASS` · `FAIL` · `NOT-CONFIGURED` (the precondition
-  provably does not exist on this plane) · `NOT-EVALUATED` (the response could not be judged).
-  **Neither of the last two is ever a pass** — a run carrying either is PARTIAL and is not release
-  evidence for that property.
-- **The key comes from `NROUTER_API_KEY` (or `--api-key`) and nowhere else.** There is deliberately
-  no credentials-file fallback: this repository is public, so a hardcoded path would publish an
-  internal convention. Prefer the environment variable — an argv key lands in the shell history and
-  the process table.
-- **Pass `--route`.** A virtual key is commonly scoped to a subset of routes and models, so pointing
-  the suite at a route the key may not use tests the key policy, not the gateway. The same reasoning
-  one level down is why `--fallback-model` exists.
+- Modules (`ls scripts/curl_health_checks/*_curl.py`) run standalone; `fallbacks_curl`, `guardrails_request_curl`, `cache_curl` pin the body options; `contract_curl` diffs the live wire against the spec.
+- **Only `PASS` passes**; `NOT-CONFIGURED` / `NOT-EVALUATED` make the run PARTIAL, never release evidence.
+- Key only from `NROUTER_API_KEY` (or `--api-key`, which leaks to history); no credentials-file fallback.
+- Pass a `--route` (and `--fallback-model`) the key may use, or you test key policy, not the gateway.
 
-### The client retries nothing on a billed path
+### Zero client retries on billed calls
 
-**Every SDK pins automatic client-side retries to zero on billed calls.** The gateway reserves
-credit once per request and owns retry and failover itself; a client-side retry is a second call and
-a second bill, with nothing to deduplicate against.
+Every SDK pins automatic client retries to zero on billed calls: the gateway reserves once and owns retry/failover, so a client retry is a second bill. SDKs wrapping a vendor client override its non-zero default — re-assert the pin with a test on any swap or upgrade.
 
-⚠️ **The two SDKs wrapping a vendor client had to OVERRIDE a non-zero vendor default.** If you swap,
-upgrade, or reconfigure a vendor client, re-assert the pin and prove it with a test — this is the
-one place the default silently comes back.
+### `@nrouter_ai/support-agent`
 
-### The customer support agent (`@nrouter_ai/support-agent`)
-
-It lives in its own public repository, `nRouterGateway/customer-support-agent`, not in this one. It is
-a zero-database streaming agent package built exclusively on `@nrouter_ai/sdk`. It implements
-in-process cosine similarity search over static JSON indices built via `support-agent build-kb`,
-supports PII masking and citation formatting, and streams SSE frames. Tested with `npm test` from
-that repository's root (offline-by-default). A breaking change to the JS SDK's public surface is a
-breaking change for it: it pins an exact `@nrouter_ai/sdk` version.
-Detail in sub-skill `support-agent`.
-
+Separate repo; pins an exact `@nrouter_ai/sdk` version, so a breaking JS SDK change breaks it. Detail: sub-skill `support-agent`.

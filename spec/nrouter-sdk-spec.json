@@ -200,7 +200,7 @@
     },
     "x-nr-funding-source": {
       "type": "string",
-      "description": "Which balance paid for this request: the plan's usage allowance, credits, promotional credit (nrouter/promo only) or hackathon credit (nrouter/hack only)",
+      "description": "Which balance paid for this request: the plan's usage allowance, credits, promotional credit (promo-labeled models) or hackathon credit (hack-labeled models)",
       "always": false,
       "values": [
         "allowance",
@@ -300,7 +300,7 @@
     "rate_limit_exceeded": {
       "http": 429,
       "class": "nRouterRateLimitError",
-      "description": "A rate limit was exceeded (RPM, TPM, RPS or RPD), or an 8-hour/daily/weekly nrouter/auto allowance window is used up (x-nr-limit-source: plan_window_h8|plan_window_day|plan_window_week; Retry-After and x-nr-allowance-reset carry the wait in seconds). With extra usage turned on in Billing, allowance overflow is funded from credits instead of refused; see x-nr-limit-source. A used-up nrouter/promo or nrouter/hack spend window answers pot_spend_limit_exceeded instead"
+      "description": "A rate limit was exceeded (RPM, TPM, RPS or RPD), or an 8-hour/daily/weekly nrouter/auto allowance window is used up (x-nr-limit-source: plan_window_h8|plan_window_day|plan_window_week; Retry-After and x-nr-allowance-reset carry the wait in seconds). With extra usage turned on in Billing, allowance overflow is funded from credits instead of refused; see x-nr-limit-source. A used-up promo or hack spend window answers pot_spend_limit_exceeded instead"
     },
     "tpm_limit_exceeded": {
       "http": 429,
@@ -325,7 +325,7 @@
     "plan_required": {
       "http": 402,
       "class": "nRouterCreditError",
-      "description": "A request for nrouter/auto was refused because the organization's plan usage allowance is paused pending payment. Pay-as-you-go organizations are served nrouter/auto from credits and do not receive this code. Named models are paid from credits. nrouter/promo and nrouter/hack are funded only by their own credit and never receive this code."
+      "description": "An organization's legacy subscription plan usage allowance is paused pending payment. Pay-as-you-go organizations are served nrouter/auto and named models from credits and do not receive this code. Promo- and hack-labeled models are funded from their promotional or hackathon credit first (falling back to credits when available) and never receive this code."
     },
     "input_too_large": {
       "http": 400,
@@ -340,42 +340,42 @@
     "model_denied_by_org": {
       "http": 403,
       "class": "nRouterError",
-      "description": "The requested model, or a model named in nrouter_fallbacks, is on the organization's model deny list. A deny always wins over an allow list, and a denied model is also removed from nrouter/auto, nrouter/promo and nrouter/hack. Refused before any provider egress; nothing was reserved and nothing was spent."
+      "description": "The requested model, or a model named in nrouter_fallbacks, is on the organization's model deny list. A deny always wins over an allow list, and a denied model is also removed from nrouter/auto and promo/hack pot eligibility. Refused before any provider egress; nothing was reserved and nothing was spent."
     },
     "model_denied_by_team": {
       "http": 403,
       "class": "nRouterError",
-      "description": "The requested model, or a model named in nrouter_fallbacks, is on the deny list of the team this virtual key belongs to. A deny always wins over an allow list, and a denied model is also removed from nrouter/auto, nrouter/promo and nrouter/hack. Refused before any provider egress; nothing was reserved and nothing was spent."
+      "description": "The requested model, or a model named in nrouter_fallbacks, is on the deny list of the team this virtual key belongs to. A deny always wins over an allow list, and a denied model is also removed from nrouter/auto and promo/hack pot eligibility. Refused before any provider egress; nothing was reserved and nothing was spent."
     },
     "model_denied_by_key": {
       "http": 403,
       "class": "nRouterError",
-      "description": "The requested model, or a model named in nrouter_fallbacks, is on this virtual key's own model deny list. A deny always wins over an allow list, and a denied model is also removed from nrouter/auto, nrouter/promo and nrouter/hack. Refused before any provider egress; nothing was reserved and nothing was spent."
+      "description": "The requested model, or a model named in nrouter_fallbacks, is on this virtual key's own model deny list. A deny always wins over an allow list, and a denied model is also removed from nrouter/auto and promo/hack pot eligibility. Refused before any provider egress; nothing was reserved and nothing was spent."
     },
     "fallback_not_allowed": {
       "http": 400,
       "class": "nRouterRequestError",
-      "description": "A model named in the request's nrouter_fallbacks list cannot be used as a fallback target by this virtual key: the key cannot route it, or it is nrouter/auto, nrouter/promo, nrouter/hack, an allowance model or another model that is not offered as a fallback target. On a request for nrouter/auto it is also returned for a target whose own hold for this request is above the largest hold a single request may take. On a request for nrouter/promo or nrouter/hack it is also returned for a target outside that route's model set. Refused before any provider egress; nothing was reserved and nothing was spent."
+      "description": "A model named in the request's nrouter_fallbacks list cannot be used as a fallback target by this virtual key: the key cannot route it, or it is nrouter/auto, an allowance model or another model that is not offered as a fallback target. On a request for nrouter/auto it is also returned for a target whose own hold for this request is above the largest hold a single request may take. Refused before any provider egress; nothing was reserved and nothing was spent."
     },
     "insufficient_promo_credit": {
       "http": 402,
       "class": "nRouterCreditError",
-      "description": "A request for nrouter/promo was refused because the organization's available promotional credit cannot cover the request's hold. Promotional credit has no cash value and is spent only through nrouter/promo; prepaid credits are never used instead. Refused before any provider egress; nothing was reserved and nothing was spent."
+      "description": "A request for a promo-labeled model was refused because neither the organization's available promotional credit nor its prepaid credit balance can cover the request's hold. Promotional credit has no cash value and is spent only on promo-labeled models. Refused before any provider egress; nothing was reserved and nothing was spent."
     },
     "insufficient_hack_credit": {
       "http": 402,
       "class": "nRouterCreditError",
-      "description": "A request for nrouter/hack was refused because the organization's available hackathon credit cannot cover the request's hold. Hackathon credit has no cash value and is spent only through nrouter/hack; prepaid credits are never used instead. Refused before any provider egress; nothing was reserved and nothing was spent."
+      "description": "A request for a hack-labeled model was refused because neither the organization's available hackathon credit nor its prepaid credit balance can cover the request's hold. Hackathon credit has no cash value and is spent only on hack-labeled models. Refused before any provider egress; nothing was reserved and nothing was spent."
     },
     "pot_spend_limit_exceeded": {
       "http": 429,
       "class": "nRouterRateLimitError",
-      "description": "A request for nrouter/promo or nrouter/hack would take the organization's spend on that route past one of its windows (set by nRouter; by default hourly none, daily $1, weekly $7, monthly $30; x-nr-limit-source: pot_window). Windows are UTC calendar buckets: the hour, the day, the ISO week starting Monday 00:00 UTC, and the month. The message names the window that refused and when it resets; spend held by a request counts against the windows open when it was admitted. Refused before any provider egress; nothing was reserved and nothing was spent."
+      "description": "A promo- or hack-funded request would take the organization's spend on that pot past one of its windows (set by nRouter; by default hourly none, daily $1, weekly $7, monthly $30; x-nr-limit-source: pot_window) and no prepaid credit balance was available to overflow into. Windows are UTC calendar buckets: the hour, the day, the ISO week starting Monday 00:00 UTC, and the month. The message names the window that refused and when it resets. Refused before any provider egress; nothing was reserved and nothing was spent."
     },
     "pot_route_feature_unsupported": {
       "http": 400,
       "class": "nRouterRequestError",
-      "description": "A request for nrouter/promo or nrouter/hack asked for a feature those routes do not serve: web search (nrouter_web_search), more than one choice (n > 1), or a tool-billed feature. Refused before any provider egress; nothing was reserved and nothing was spent. Remove the feature or name a model directly."
+      "description": "A promo- or hack-funded request asked for a feature those pots do not fund when no prepaid credit balance is available: web search (nrouter_web_search), more than one choice (n > 1), or a tool-billed feature. Refused before any provider egress; nothing was reserved and nothing was spent. Remove the feature or add prepaid credits."
     },
     "guardrail_not_found": {
       "http": 400,

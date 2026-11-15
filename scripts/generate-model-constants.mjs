@@ -165,6 +165,13 @@ export function syncSnapshotFromCatalogPayload(existingSnapshot, payload, option
     throw new Error('Catalog payload must carry a "data" or "models" array.');
   }
 
+  const compatModelValuesByConst = new Map();
+  for (const item of base.compat ?? []) {
+    if (item && typeof item.name === 'string' && item.name.startsWith('MODEL_') && typeof item.value === 'string') {
+      compatModelValuesByConst.set(item.name, item.value);
+    }
+  }
+
   const byId = new Map();
   for (const prev of base.models) {
     byId.set(prev.id, {
@@ -222,6 +229,22 @@ export function syncSnapshotFromCatalogPayload(existingSnapshot, payload, option
 
     for (const candidate of candidateEntries) {
       assertSafeValue(candidate.id, 'catalog model id');
+      const derivedConst = deriveConstantName(candidate.id);
+      const frozenCompatValue = compatModelValuesByConst.get(derivedConst);
+      if (frozenCompatValue && frozenCompatValue !== candidate.id) {
+        // Semver compatibility (a208): when a frozen compat `MODEL_*` constant already binds
+        // `derivedConst` to its pre-a208 moving alias (`google/gemini-*`), never mutate the
+        // published constant's string value; keep the moving alias active alongside it.
+        const compatModel = byId.get(frozenCompatValue);
+        if (compatModel) {
+          byId.set(frozenCompatValue, {
+            ...compatModel,
+            maker_key: makerKey ?? compatModel.maker_key ?? null,
+            retired: rowRetired,
+          });
+        }
+        continue;
+      }
       const prev = byId.get(candidate.id);
       byId.set(candidate.id, {
         id: candidate.id,
@@ -481,11 +504,21 @@ function renderRustModule(snapshot, { constants, mapEntries }) {
     const msg = deprecationMessage(e);
     if (msg) {
       lines.push(`/// Deprecated: ${msg}`);
-      lines.push(`#[deprecated(note = "${escapeDoubleQuote(msg)}")]`);
+      const singleLineAttr = `#[deprecated(note = "${escapeDoubleQuote(msg)}")]`;
+      if (singleLineAttr.length > 100) {
+        lines.push('#[deprecated(', `    note = "${escapeDoubleQuote(msg)}"`, ')]');
+      } else {
+        lines.push(singleLineAttr);
+      }
     } else {
       lines.push(`/// Canonical identifier \`${e.id}\`.`);
     }
-    lines.push(`pub const ${e.constantName}: &str = "${escapeDoubleQuote(e.id)}";`);
+    const singleLineConst = `pub const ${e.constantName}: &str = "${escapeDoubleQuote(e.id)}";`;
+    if (singleLineConst.length > 100) {
+      lines.push(`pub const ${e.constantName}: &str =`, `    "${escapeDoubleQuote(e.id)}";`);
+    } else {
+      lines.push(singleLineConst);
+    }
   }
   lines.push(
     '',
@@ -495,7 +528,12 @@ function renderRustModule(snapshot, { constants, mapEntries }) {
   );
   for (const e of mapEntries) {
     const rhs = e.constantName ?? `"${escapeDoubleQuote(e.value)}"`;
-    lines.push(`    ("${escapeDoubleQuote(e.keyName)}", ${rhs}),`);
+    const tupleExpr = `("${escapeDoubleQuote(e.keyName)}", ${rhs})`;
+    if (tupleExpr.length > 62) {
+      lines.push('    (', `        "${escapeDoubleQuote(e.keyName)}",`, `        ${rhs},`, '    ),');
+    } else {
+      lines.push(`    ${tupleExpr},`);
+    }
   }
   lines.push(
     '];',
@@ -566,19 +604,71 @@ function renderGoFile(snapshot, { constants, mapEntries }) {
     '',
     'const (',
   ];
+  let constGroup = [];
+  const flushConstGroup = () => {
+    if (constGroup.length === 0) return;
+    const maxNameLen = Math.max(...constGroup.map((item) => item.constantName.length));
+    for (const item of constGroup) {
+      lines.push(`\t${item.constantName.padEnd(maxNameLen, ' ')} = "${escapeDoubleQuote(item.id)}"`);
+    }
+    constGroup = [];
+  };
   for (const e of constants) {
     const msg = deprecationMessage(e);
     if (msg) {
+      flushConstGroup();
       lines.push(`\t// ${e.constantName} is retained for compatibility.`);
       lines.push('\t//');
       lines.push(`\t// Deprecated: ${msg}`);
     }
-    lines.push(`\t${e.constantName} = "${escapeDoubleQuote(e.id)}"`);
+    constGroup.push(e);
   }
+  flushConstGroup();
   lines.push(')', '', '// MODELS maps each short constant key to its wire model identifier.', 'var MODELS = map[string]string{');
-  for (const e of mapEntries) {
-    lines.push(`\t"${escapeDoubleQuote(e.keyName)}": "${escapeDoubleQuote(e.value)}",`);
+  const log2ish = (x) => {
+    const e = Math.floor(Math.log2(x)) + 1;
+    const f = x / 2 ** e;
+    return e + 2 * (f - 1);
+  };
+  const exp2ish = (x) => {
+    const n = Math.floor(x);
+    return (1 + (x - n)) * 2 ** n;
+  };
+  let mapGroup = [];
+  const flushMapGroup = () => {
+    if (mapGroup.length === 0) return;
+    const maxMapLhsLen = Math.max(...mapGroup.map((p) => p.lhs.length));
+    for (const p of mapGroup) {
+      lines.push(`\t${p.lhs.padEnd(maxMapLhsLen + 1, ' ')}${p.rhs}`);
+    }
+    mapGroup = [];
+  };
+  let prevSize = 0;
+  let log2sum = 0;
+  let count = 0;
+  for (let i = 0; i < mapEntries.length; i += 1) {
+    const e = mapEntries[i];
+    const keyLit = `"${escapeDoubleQuote(e.keyName)}"`;
+    const size = keyLit.length;
+    if (i > 0) {
+      const smallSize = 40;
+      let useFF = true;
+      if (count === 0 || (prevSize <= smallSize && size <= smallSize)) {
+        useFF = false;
+      } else {
+        const r = 2.5;
+        const geomean = exp2ish(log2sum / count);
+        const ratio = size / geomean;
+        useFF = r * ratio <= 1 || r <= ratio;
+      }
+      if (useFF) flushMapGroup();
+    }
+    mapGroup.push({ lhs: `${keyLit}:`, rhs: `"${escapeDoubleQuote(e.value)}",` });
+    log2sum += log2ish(size);
+    count += 1;
+    prevSize = size;
   }
+  flushMapGroup();
   lines.push('}', '');
   return lines.join('\n');
 }

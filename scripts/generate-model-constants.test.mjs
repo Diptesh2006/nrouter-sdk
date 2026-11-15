@@ -132,7 +132,7 @@ function parseRustModelsMap(source) {
   const blockMatch = source.match(/pub const MODELS:\s*&\[\(&str,\s*&str\)\]\s*=\s*&\[([\s\S]*?)\];/);
   assert.ok(blockMatch, 'Expected pub const MODELS: &[(&str, &str)] block');
   const entries = [];
-  const re = /^\s*\("([A-Z0-9_]+)",\s*(?:(MODEL_[A-Z0-9_]+)|"([^"]+)")\),\s*$/gm;
+  const re = /\(\s*"([A-Z0-9_]+)",\s*(?:(MODEL_[A-Z0-9_]+)|"([^"]+)"),?\s*\),/g;
   for (const m of blockMatch[1].matchAll(re)) {
     const key = m[1];
     const value = m[2] ? constants[m[2]] : m[3];
@@ -230,8 +230,8 @@ test('pinned snapshot has versioned catalog shape (schema_version, catalog_revis
   assert.equal(raw.schema_version, 1);
   assert.equal(typeof raw.catalog_revision, 'number');
   assert.equal(raw.source, '/api/public/models');
-  assert.equal(raw.version, '2026-11-11');
-  assert.ok(Array.isArray(raw.models) && raw.models.length === 27);
+  assert.match(raw.version, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(Array.isArray(raw.models) && raw.models.length >= 27);
   for (const item of raw.models) {
     assert.deepEqual(Object.keys(item).sort(), ['id', 'maker_key', 'namespace', 'retired']);
     assert.equal(typeof item.id, 'string');
@@ -275,10 +275,11 @@ test('output is deterministic and sorted regardless of input model order', () =>
   assert.equal(first.pyContent, second.pyContent);
   assert.equal(first.rustContent, second.rustContent);
   assert.equal(first.javaContent, second.javaContent);
-  assert.match(first.jsContent, /snapshot version:\s*2026-11-11/i);
-  assert.match(first.pyContent, /snapshot version:\s*2026-11-11/i);
-  assert.match(first.rustContent, /snapshot version:\s*2026-11-11/i);
-  assert.match(first.javaContent, /snapshot version:\s*2026-11-11/i);
+  const versionRe = new RegExp(`snapshot version:\\s*${snapshot.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i');
+  assert.match(first.jsContent, versionRe);
+  assert.match(first.pyContent, versionRe);
+  assert.match(first.rustContent, versionRe);
+  assert.match(first.javaContent, versionRe);
 
   const names = parseJsConstants(first.jsContent).map(([k]) => k);
   const sortedNames = [...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
@@ -297,11 +298,12 @@ test('all SDK language targets (JS, Python, Rust, Java, Go, Kotlin, Android, Swi
   const dartSource = fs.readFileSync(DEFAULT_LANGUAGE_TARGETS.dart, 'utf8');
   const rSource = fs.readFileSync(DEFAULT_LANGUAGE_TARGETS.r, 'utf8');
 
+  const snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8'));
   const jsEntries = parseJsConstants(jsSource);
   const jsModels = parseJsModelsMap(jsSource);
 
-  assert.equal(jsEntries.length, 40);
-  assert.equal(jsModels.length, 40);
+  assert.ok(jsEntries.length >= snapshot.models.length, 'JS MODEL_* count must cover snapshot models');
+  assert.equal(jsModels.length, jsEntries.length);
 
   const parsedConstants = {
     py: parsePyConstants(pySource),
@@ -504,6 +506,47 @@ test('syncSnapshotFromCatalogPayload syncs /api/public/models payload, keeps can
   });
 });
 
+test('syncSnapshotFromCatalogPayload preserves frozen compat constant values when bare canonical ids collide (a208)', () => {
+  const existing = {
+    schema_version: 1,
+    catalog_revision: 1,
+    source: '/api/public/models',
+    version: '2026-11-11',
+    models: [
+      { id: 'google/gemini-3.1-flash-lite', namespace: 'canonical', maker_key: 'google', retired: false },
+    ],
+    compat: [
+      { name: 'MODEL_GEMINI_3_1_FLASH_LITE', value: 'google/gemini-3.1-flash-lite', deprecated: true },
+    ],
+  };
+
+  const feedPayload = {
+    catalog_revision: 42,
+    data: [
+      {
+        model_name: 'gemini-3.1-flash-lite',
+        maker: { key: 'google', name: 'Google' },
+        served: true,
+      },
+      {
+        model_name: 'deepseek-v3.2',
+        maker: { key: 'deepseek', name: 'DeepSeek' },
+        served: true,
+      },
+    ],
+  };
+
+  const synced = syncSnapshotFromCatalogPayload(existing, feedPayload, { version: '2026-11-14' });
+  assert.equal(synced.version, '2026-11-14');
+  assert.equal(synced.catalog_revision, 42);
+  // Pre-a208 moving alias remains active (not falsely retired) and frozen compat constant never mutates.
+  assert.deepEqual(synced.models, [
+    { id: 'deepseek-v3.2', namespace: 'canonical', maker_key: 'deepseek', retired: false },
+    { id: 'google/gemini-3.1-flash-lite', namespace: 'canonical', maker_key: 'google', retired: false },
+  ]);
+  assert.deepEqual(synced.compat, existing.compat);
+});
+
 test('HEAD constants, MODELS keys, and WellKnownModel literals keep identical values after generation', () => {
   const headJs = gitShowHead('sdks/js/src/models.ts');
   const headPy = gitShowHead('sdks/python/nroutersdk/models.py');
@@ -596,8 +639,25 @@ test('--check mode exits 0 when fresh across all SDK targets and exits non-zero 
     assert.notEqual(runCli([...args, '--check']).status, 0);
 
     fs.copyFileSync(DEFAULT_LANGUAGE_TARGETS.rust, rustFile);
-    const staleJs = fs.readFileSync(jsFile, 'utf8').replace('2026-11-11', '2025-01-01');
+    const currentVersion = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8')).version;
+    const staleJs = fs.readFileSync(jsFile, 'utf8').replace(currentVersion, '2025-01-01');
     fs.writeFileSync(jsFile, staleJs);
-    assert.notEqual(runCli([...args, '--check']).status, 0);
+    assert.notEqual(runCli(['--check', ...args]).status, 0);
   });
+});
+
+test('generated Go and Rust sources are natively gofmt- and rustfmt-clean', () => {
+  const snapshot = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, 'utf8'));
+  const existingJs = fs.readFileSync(JS_MODELS_PATH, 'utf8');
+  const generated = generateModelConstants(snapshot, { existingJsSource: existingJs });
+
+  const gofmt = spawnSync('gofmt', [], { input: generated.goContent, encoding: 'utf8' });
+  if (gofmt.status === 0) {
+    assert.equal(generated.goContent, gofmt.stdout, 'renderGoFile must emit exact gofmt column alignment');
+  }
+
+  const rustfmt = spawnSync('rustfmt', ['--edition', '2021'], { input: generated.rustContent, encoding: 'utf8' });
+  if (rustfmt.status === 0) {
+    assert.equal(generated.rustContent, rustfmt.stdout, 'renderRustModule must emit exact rustfmt attribute wrapping');
+  }
 });

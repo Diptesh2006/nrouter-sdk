@@ -3,8 +3,8 @@
 
 library(nrouter)
 
-# A Smart Router alias activates its strategy/fallback chain; a concrete model
-# id pins the request to that model.
+# A concrete model id pins the request to that model; `nrouter/auto` lets
+# nRouter choose, and `x-nr-model` names the model that answered.
 model <- Sys.getenv("NROUTER_MODEL", "gpt-5.4-mini")
 client <- nrouter_client()
 

@@ -10,8 +10,8 @@ use serde_json::json;
 #[tokio::main]
 async fn main() {
     let client = Client::from_env().expect("NROUTER_API_KEY not set");
-    // A Smart Router alias activates its strategy/fallback chain; a concrete
-    // model id pins the request to that model.
+    // A concrete model id pins the request to that model; `nrouter/auto`
+    // lets nRouter choose, and `x-nr-model` names the model that answered.
     let model = std::env::var("NROUTER_MODEL")
         .unwrap_or_else(|_| "gpt-5.4-mini".to_string());
     let response = client.chat_completions(&json!({

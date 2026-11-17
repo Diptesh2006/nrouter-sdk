@@ -367,7 +367,25 @@ class SpecContractTests(unittest.TestCase):
             "nrouter_optimize still advertises the retired cost v1 list-rate wording",
         )
         self.assertIn("nrouter_cost_band", optimize_desc)
-        self.assertIn("Default Pick", optimize_desc)
+        # Current design: one scoring formula for every eligible model; the
+        # decision model assesses but never picks, and auto always selects.
+        self.assertIn("same formula", optimize_desc)
+        self.assertIn("leaderboard ratings minus a cost weight", optimize_desc)
+        self.assertIn("never picks", optimize_desc)
+        self.assertRegex(optimize_desc, r"still selects")
+        # The retired design (a fallback pick, intent tiers) must not return.
+        for path, text in (
+            ("spec", json.dumps(spec)),
+            ("README.md", (SDK_ROOT / "README.md").read_text(encoding="utf-8")),
+            (
+                "sdks/js/docs/routing.md",
+                (SDK_ROOT / "sdks" / "js" / "docs" / "routing.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+        ):
+            self.assertNotRegex(text, r"(?i)default pick", f"{path} revives Default Pick")
+            self.assertNotRegex(text, r"(?i)intent tiers?|both tiers", f"{path} revives tiers")
 
         fallbacks_desc = fields["nrouter_fallbacks"]["description"]
         self.assertIn("nrouter_cost_band", fallbacks_desc)

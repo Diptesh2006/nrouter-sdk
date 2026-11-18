@@ -97,8 +97,8 @@ func BuildExtraBody(opts FeatureOptions) (map[string]any, error) {
 		extra["nrouter_fallbacks"] = names
 	}
 	if opts.Optimize != "" {
-		if opts.Optimize != "quality" && opts.Optimize != "cost" {
-			return nil, configErr(`Optimize must be "quality" or "cost"; it maps onto the gateway field nrouter_optimize and applies to the model nrouter/auto only`)
+		if opts.Optimize != "quality" && opts.Optimize != "balanced" && opts.Optimize != "cost" {
+			return nil, configErr(`Optimize must be "quality", "balanced", or "cost"; it maps onto the gateway field nrouter_optimize and applies to the model nrouter/auto only`)
 		}
 		extra["nrouter_optimize"] = opts.Optimize
 	}

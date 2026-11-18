@@ -166,9 +166,9 @@ export function buildExtraBody(opts: NRouterFeatureOptions): NRouterExtraBody {
   // spent on a round trip that ends in 400 `invalid_request`. Pairing it with a
   // model other than `nrouter/auto` is refused by the gateway the same way.
   if (opts.optimize !== undefined) {
-    if (opts.optimize !== 'quality' && opts.optimize !== 'cost') {
+    if (opts.optimize !== 'quality' && opts.optimize !== 'balanced' && opts.optimize !== 'cost') {
       throw configurationError(
-        'optimize must be "quality" or "cost"; it maps onto the gateway field ' +
+        'optimize must be "quality", "balanced", or "cost"; it maps onto the gateway field ' +
           '`nrouter_optimize` and applies to the model nrouter/auto only.',
       );
     }

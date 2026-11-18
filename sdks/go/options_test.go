@@ -64,7 +64,7 @@ func TestBuildExtraBodyOmitsEmptyOverrides(t *testing.T) {
 }
 
 func TestBuildExtraBodyMapsOptimizeAndRefusesOtherValues(t *testing.T) {
-	for _, v := range []string{"quality", "cost"} {
+	for _, v := range []string{"quality", "balanced", "cost"} {
 		body, err := BuildExtraBody(FeatureOptions{Optimize: v})
 		if err != nil || body["nrouter_optimize"] != v {
 			t.Errorf("Optimize %q: body %v, err %v", v, body, err)

@@ -35,10 +35,11 @@ pub struct FeatureOptions {
     pub guardrail_ids: Vec<String>,
     pub cache: Option<bool>,
     /// Strategy for a request on `nrouter/auto` only: `"quality"` (the
-    /// organization default) or `"cost"` (restricted to the `cost_band`
-    /// ceiling). Both score every eligible model with one formula; a model is
-    /// always selected. Pairing it with any other
-    /// model is refused by the gateway with 400 `invalid_request`.
+    /// organization default), `"balanced"` (across all price bands with no
+    /// ceiling), or `"cost"` (restricted to the `cost_band` ceiling). All three
+    /// score every eligible model with one formula; a model is always selected.
+    /// Pairing it with any other model is refused by the gateway with 400
+    /// `invalid_request`.
     pub optimize: Option<String>,
     /// Cost-band ceiling for cost-mode `nrouter/auto` only: `"low"`, `"mid"`
     /// (default), or `"high"`.
@@ -106,9 +107,9 @@ pub fn build_extra_body(opts: &FeatureOptions) -> Result<Map<String, Value>, NRo
         );
     }
     if let Some(optimize) = opts.optimize.as_deref() {
-        if optimize != "quality" && optimize != "cost" {
+        if optimize != "quality" && optimize != "balanced" && optimize != "cost" {
             return Err(NRouterError::Configuration(
-                "optimize must be \"quality\" or \"cost\"; it maps onto the gateway field \
+                "optimize must be \"quality\", \"balanced\", or \"cost\"; it maps onto the gateway field \
                  nrouter_optimize and applies to the model nrouter/auto only."
                     .into(),
             ));

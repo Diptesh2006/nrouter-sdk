@@ -24,8 +24,8 @@ EXTRA_BODY_FIELDS = (
     GUARDRAILS_FIELD,
 )
 
-#: The two strategies ``nrouter_optimize`` accepts, for ``nrouter/auto`` only.
-OPTIMIZE_VALUES = ("quality", "cost")
+#: The three strategies ``nrouter_optimize`` accepts, for ``nrouter/auto`` only.
+OPTIMIZE_VALUES = ("quality", "balanced", "cost")
 
 #: The three ceilings ``nrouter_cost_band`` accepts on cost-mode ``nrouter/auto``.
 COST_BAND_VALUES = ("low", "mid", "high")
@@ -138,7 +138,7 @@ def build_extra_body(
         # gateway with 400 ``invalid_request``.
         if optimize not in OPTIMIZE_VALUES:
             raise _configuration_error(
-                'optimize must be "quality" or "cost"; it maps onto the '
+                'optimize must be "quality", "balanced", or "cost"; it maps onto the '
                 "gateway field nrouter_optimize and applies to the model "
                 "nrouter/auto only."
             )

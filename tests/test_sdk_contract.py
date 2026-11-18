@@ -360,7 +360,9 @@ class SpecContractTests(unittest.TestCase):
                 f"nrouter_cost_band description omits {needle!r}",
             )
 
-        optimize_desc = fields["nrouter_optimize"]["description"]
+        optimize_field = fields["nrouter_optimize"]
+        self.assertEqual(optimize_field["enum"], ["quality", "balanced", "cost"])
+        optimize_desc = optimize_field["description"]
         self.assertNotIn(
             "lowest list rate",
             optimize_desc,

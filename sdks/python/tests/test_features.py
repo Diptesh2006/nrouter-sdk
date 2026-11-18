@@ -91,8 +91,8 @@ def test_fallbacks_map_onto_the_gateway_field():
 
 
 def test_optimize_maps_onto_the_gateway_field_and_refuses_other_values():
-    assert build_extra_body(optimize="cost") == {"nrouter_optimize": "cost"}
-    assert build_extra_body(optimize="quality") == {"nrouter_optimize": "quality"}
+    for strategy in ("quality", "balanced", "cost"):
+        assert build_extra_body(optimize=strategy) == {"nrouter_optimize": strategy}
     assert build_extra_body() == {}
     with pytest.raises(nRouterConfigurationError, match="optimize"):
         build_extra_body(optimize="cheap")

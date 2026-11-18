@@ -1,9 +1,10 @@
 use nrouter::memory::Memory;
-use nrouter::options::{build_extra_body, vet_extra, FeatureOptions};
+use nrouter::options::{build_extra_body, vet_extra, FeatureOptions, OPTIMIZE_VALUES};
 use nrouter::prompts::{
     prompt_extra_body, prompt_template, prompt_variables, system_variable_conflicts, with_variables,
 };
 use nrouter::sampling::build_sampling_params;
+use nrouter::NRouterError;
 use serde_json::{json, Map, Value};
 
 fn vars(entries: &[(&str, &str)]) -> Map<String, Value> {
@@ -98,20 +99,30 @@ fn fallbacks_and_guardrails_map_to_gateway_fields_and_enforce_bounds() {
 
 #[test]
 fn optimize_maps_onto_the_gateway_field_and_refuses_other_values() {
-    let body = build_extra_body(&FeatureOptions {
-        optimize: Some("cost".into()),
-        ..FeatureOptions::default()
-    })
-    .unwrap();
-    assert_eq!(body["nrouter_optimize"], json!("cost"));
+    assert_eq!(OPTIMIZE_VALUES, ["quality", "balanced", "cost"]);
+    for strategy in OPTIMIZE_VALUES {
+        let body = build_extra_body(&FeatureOptions {
+            optimize: Some(strategy.into()),
+            ..FeatureOptions::default()
+        })
+        .unwrap();
+        assert_eq!(body["nrouter_optimize"], json!(strategy));
+    }
     assert!(build_extra_body(&FeatureOptions::default())
         .unwrap()
         .is_empty());
-    assert!(build_extra_body(&FeatureOptions {
+    let err = build_extra_body(&FeatureOptions {
         optimize: Some("cheap".into()),
         ..FeatureOptions::default()
     })
-    .is_err());
+    .unwrap_err();
+    match err {
+        NRouterError::Configuration(msg) => assert!(
+            msg.contains("balanced"),
+            "expected Configuration error to mention balanced, got {msg:?}"
+        ),
+        other => panic!("expected NRouterError::Configuration, got {other:?}"),
+    }
 }
 
 #[test]

@@ -88,6 +88,7 @@ void main() {
 
     test('each gateway code maps to its type', () {
       expect(build('invalid_request'), isA<NRouterRequestError>());
+      expect(build('cost_band_unsatisfiable'), isA<NRouterRequestError>());
       expect(build('guardrail_blocked'), isA<NRouterGuardrailBlockedError>());
       expect(build('invalid_api_key'), isA<NRouterAuthenticationError>());
       expect(build('insufficient_credits'), isA<NRouterCreditError>());
@@ -186,6 +187,7 @@ void main() {
       }
       for (final code in [
         'invalid_request',
+        'cost_band_unsatisfiable',
         'guardrail_blocked',
         'invalid_api_key',
         'insufficient_credits',
@@ -1223,6 +1225,68 @@ void main() {
       final metaUnpriced = NRouterResponseMeta.fromHeaders({});
       expect(metaUnpriced.isPriced, isFalse);
       expect(metaUnpriced.cacheAgeSeconds, 0);
+    });
+
+    test('nrouter_optimize passes through on the wire and cost_band_unsatisfiable throws NRouterRequestError', () async {
+      final seenStrategies = <String?>[];
+      final mock = MockClient((request) async {
+        final decoded = jsonDecode(request.body) as Map<String, dynamic>;
+        seenStrategies.add(decoded['nrouter_optimize'] as String?);
+        if (decoded['nrouter_cost_band'] == 'low' &&
+            decoded['nrouter_optimize'] == 'cost') {
+          return http.Response(
+            jsonEncode({
+              'error': {
+                'type': 'invalid_request_error',
+                'code': 'cost_band_unsatisfiable',
+                'message': 'zero eligible models in low band',
+              }
+            }),
+            400,
+            headers: {
+              'content-type': 'application/json',
+              'x-nr-request-id': 'req_band_0',
+            },
+          );
+        }
+        return http.Response(
+          jsonEncode({'choices': []}),
+          200,
+          headers: {
+            'content-type': 'application/json',
+            'x-nr-request-id': 'req_auto_ok',
+          },
+        );
+      });
+
+      final client = NRouter(apiKey: 'sk-nrouter-test', httpClient: mock);
+      for (final strategy in ['quality', 'balanced', 'cost']) {
+        final res = await client.chatCompletions({
+          'model': 'nrouter/auto',
+          'messages': [
+            {'role': 'user', 'content': 'hello'}
+          ],
+          'nrouter_optimize': strategy,
+        });
+        expect(res.meta.requestId, 'req_auto_ok');
+      }
+      expect(seenStrategies, ['quality', 'balanced', 'cost']);
+
+      await expectLater(
+        client.chatCompletions({
+          'model': 'nrouter/auto',
+          'messages': [
+            {'role': 'user', 'content': 'hello'}
+          ],
+          'nrouter_optimize': 'cost',
+          'nrouter_cost_band': 'low',
+        }),
+        throwsA(
+          isA<NRouterRequestError>()
+              .having((e) => e.body?.code, 'code', 'cost_band_unsatisfiable')
+              .having((e) => e.isRetryable, 'isRetryable', isFalse),
+        ),
+      );
     });
   });
 }

@@ -23,6 +23,7 @@ pub const EXTRA_BODY_FIELDS: [&str; 7] = [
 
 pub const MAX_FALLBACKS: usize = 4;
 pub const MAX_GUARDRAILS: usize = 8;
+pub const OPTIMIZE_VALUES: [&str; 3] = ["quality", "balanced", "cost"];
 
 const TENANCY_KEYS: [&str; 5] = ["organizationid", "orgid", "teamid", "userid", "nrouterorg"];
 
@@ -34,14 +35,18 @@ pub struct FeatureOptions {
     pub guardrails: Vec<String>,
     pub guardrail_ids: Vec<String>,
     pub cache: Option<bool>,
-    /// Strategy for a request on `nrouter/auto` only: `"quality"` (the
-    /// organization default) or `"cost"` (restricted to the `cost_band`
-    /// ceiling). Both score every eligible model with one formula; a model is
-    /// always selected. Pairing it with any other
-    /// model is refused by the gateway with 400 `invalid_request`.
+    /// Strategy for a request on `nrouter/auto` only: `"balanced"` (the
+    /// organization default across all price bands with no ceiling),
+    /// `"quality"` (small cost weight across all price bands), or `"cost"`
+    /// (restricted to the `cost_band` ceiling). All three score every eligible
+    /// model with one formula; a model is always selected. Pairing it with any
+    /// other model is refused by the gateway with 400 `invalid_request`.
     pub optimize: Option<String>,
     /// Cost-band ceiling for cost-mode `nrouter/auto` only: `"low"`, `"mid"`
-    /// (default), or `"high"`.
+    /// (default), or `"high"`. Refused by the gateway with 400
+    /// `invalid_request` on Direct models or under `"quality"` or `"balanced"`,
+    /// and 400 `cost_band_unsatisfiable` when zero eligible models fit the
+    /// ceiling.
     pub cost_band: Option<String>,
 }
 
@@ -106,9 +111,9 @@ pub fn build_extra_body(opts: &FeatureOptions) -> Result<Map<String, Value>, NRo
         );
     }
     if let Some(optimize) = opts.optimize.as_deref() {
-        if optimize != "quality" && optimize != "cost" {
+        if !OPTIMIZE_VALUES.contains(&optimize) {
             return Err(NRouterError::Configuration(
-                "optimize must be \"quality\" or \"cost\"; it maps onto the gateway field \
+                "optimize must be \"quality\", \"balanced\", or \"cost\"; it maps onto the gateway field \
                  nrouter_optimize and applies to the model nrouter/auto only."
                     .into(),
             ));

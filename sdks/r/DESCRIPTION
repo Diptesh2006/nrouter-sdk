@@ -1,7 +1,7 @@
 Package: nrouter
 Type: Package
 Title: OpenAI-Compatible SDK for the nRouter LLM Gateway
-Version: 3.1.4
+Version: 3.1.5
 Authors@R: person("nRouter", email = "hello@nrouter.ai", role = c("aut", "cre"))
 Author: nRouter [aut, cre]
 Maintainer: nRouter <hello@nrouter.ai>

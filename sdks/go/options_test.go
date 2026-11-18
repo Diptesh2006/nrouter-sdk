@@ -1,6 +1,8 @@
 package nrouter
 
 import (
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -64,7 +66,7 @@ func TestBuildExtraBodyOmitsEmptyOverrides(t *testing.T) {
 }
 
 func TestBuildExtraBodyMapsOptimizeAndRefusesOtherValues(t *testing.T) {
-	for _, v := range []string{"quality", "cost"} {
+	for _, v := range []string{OptimizeQuality, OptimizeBalanced, OptimizeCost} {
 		body, err := BuildExtraBody(FeatureOptions{Optimize: v})
 		if err != nil || body["nrouter_optimize"] != v {
 			t.Errorf("Optimize %q: body %v, err %v", v, body, err)
@@ -74,8 +76,16 @@ func TestBuildExtraBodyMapsOptimizeAndRefusesOtherValues(t *testing.T) {
 	if err != nil || len(body) != 0 {
 		t.Errorf("empty Optimize must be omitted, got %v, %v", body, err)
 	}
-	if _, err := BuildExtraBody(FeatureOptions{Optimize: "cheap"}); err == nil {
-		t.Errorf("expected an unknown Optimize value to be refused")
+	_, err = BuildExtraBody(FeatureOptions{Optimize: "cheap"})
+	if err == nil {
+		t.Fatalf("expected an unknown Optimize value to be refused")
+	}
+	var e *Error
+	if !errors.As(err, &e) || e.Kind != KindConfiguration {
+		t.Errorf("expected KindConfiguration, got %T (%v)", err, err)
+	}
+	if !strings.Contains(err.Error(), "balanced") {
+		t.Errorf("expected Optimize refusal to mention balanced, got %q", err.Error())
 	}
 }
 

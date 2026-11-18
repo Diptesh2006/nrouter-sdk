@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.5
+
+- Tracks the coordinated 3.1.5 nRouter SDK release.
+- Documents `nrouter_cost_band` (`"low"`, `"mid"`, `"high"`) for cost-mode `nrouter/auto` requests and maps `cost_band_unsatisfiable` to `NRouterRequestError`.
+- Reads `x-nr-pot-fallback` and `x-nr-byok-fallback` as typed response metadata; adds generated model-name constants.
+
 ## 3.1.4
 
 - Tracks the coordinated 3.1.4 nRouter SDK release.

@@ -11,6 +11,16 @@ to correct a release, only appended to.
 
 ## [Unreleased]
 
+## [3.1.5] - pending registry upload
+
+- Coordinated release 3.1.5 across all ten SDKs.
+- **Cost band for `nrouter/auto`**:
+  - New `nrouter_cost_band` request option (`"low"`, `"mid"`, `"high"`; default `"mid"`) for cost-mode `nrouter/auto` requests (`nrouter_optimize: "cost"`). It caps each eligible model's blended list rate, `(3 * input + 1 * output) / 4` per 1M tokens: `"low"` admits models under $1, `"mid"` models under $7 (the low band included), `"high"` every band. Typed options with local validation in JavaScript (`costBand`), Python (`cost_band`), Go (`CostBand`) and Rust (`cost_band`); the other SDKs send it as a request body field, documented in each README.
+  - New error code `cost_band_unsatisfiable` (HTTP 400, request error class in every SDK): the active band left zero eligible models. Refused before any charge; nRouter never escalates to a higher band. Sending `nrouter_cost_band` on a named model, with an unknown value, or under `"quality"` returns `400 invalid_request`; an `nrouter_fallbacks` entry outside the band returns `400 fallback_not_allowed`.
+  - `x-nr-model` is documented as the concrete model that served the request: the named model, the fallback that answered, or the model `nrouter/auto` selected.
+- **Bring your own key (BYOK)**: every SDK's error table documents `byok_plan_required` (402), `byok_fair_use_exceeded` (429), `byok_credential_rejected` (401) and `byok_credential_unavailable`. JavaScript, Python and Dart read `x-nr-byok-fallback` as typed metadata. `x-nr-funding-source: byok` pairs with `x-nr-cost-status: byok` and no `x-nr-request-cost`.
+- **Model name constants**: every SDK ships generated constants for the served model catalog.
+- Kotlin: `org.json` updated to `20260719` (security advisory GHSA-ghc9-756g-vrcv).
 - **Paid fallback for promo- and hack-labeled models**:
   - New `x-nr-pot-fallback` response header, read as typed metadata by every SDK (`pot_fallback` / `potFallback` / `PotFallback`). Present only when a request for a `promo`- or `hack`-labeled model was charged to prepaid credits because the organization turned on paid fallback in Settings; values `pot_empty`, `pot_insufficient`, `window_hour`, `window_day`, `window_week`, `window_month`, `platform_day`, `platform_month`, `policy_excluded`, `feature`, `fallbacks_ineligible`. Absent otherwise.
   - An organization that holds promotional or hackathon credit is no longer charged prepaid credits for those models unless it turns on paid fallback; until then `insufficient_promo_credit` / `insufficient_hack_credit` (402), `pot_spend_limit_exceeded` (429) and `pot_route_feature_unsupported` (400) refuse instead, and the message names the remedy. Frozen promotional or hackathon credit answers the same 402 codes even with paid fallback on. No new error codes.

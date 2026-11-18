@@ -56,18 +56,19 @@ test_that("latency and trace reach the metadata", {
 
 test_that("each gateway code maps to its condition class", {
   expected <- list(
-    invalid_request      = "nrouter_request_error",
-    guardrail_blocked    = "nrouter_guardrail_blocked_error",
-    invalid_api_key      = "nrouter_authentication_error",
-    insufficient_credits = "nrouter_credit_error",
-    model_not_found      = "nrouter_not_found_error",
-    rate_limit_exceeded  = "nrouter_rate_limit_error",
-    tpm_limit_exceeded   = "nrouter_rate_limit_error",
-    credit_check_failed  = "nrouter_service_error",
-    service_unavailable  = "nrouter_service_error",
-    model_denied_by_org  = "nrouter_other_error",
-    model_denied_by_team = "nrouter_other_error",
-    model_denied_by_key  = "nrouter_other_error"
+    invalid_request          = "nrouter_request_error",
+    cost_band_unsatisfiable  = "nrouter_request_error",
+    guardrail_blocked        = "nrouter_guardrail_blocked_error",
+    invalid_api_key          = "nrouter_authentication_error",
+    insufficient_credits     = "nrouter_credit_error",
+    model_not_found          = "nrouter_not_found_error",
+    rate_limit_exceeded      = "nrouter_rate_limit_error",
+    tpm_limit_exceeded       = "nrouter_rate_limit_error",
+    credit_check_failed      = "nrouter_service_error",
+    service_unavailable      = "nrouter_service_error",
+    model_denied_by_org      = "nrouter_other_error",
+    model_denied_by_team     = "nrouter_other_error",
+    model_denied_by_key      = "nrouter_other_error"
   )
   for (code in names(expected)) {
     cond <- nrouter_condition("boom", code = code)
@@ -89,8 +90,8 @@ test_that("only transient failures are retryable", {
   for (code in c("rate_limit_exceeded", "service_unavailable", "credit_check_failed")) {
     expect_true(nrouter_is_retryable(nrouter_condition("x", code = code)), info = code)
   }
-  for (code in c("invalid_request", "guardrail_blocked", "invalid_api_key",
-                 "insufficient_credits", "model_not_found")) {
+  for (code in c("invalid_request", "cost_band_unsatisfiable", "guardrail_blocked",
+                 "invalid_api_key", "insufficient_credits", "model_not_found")) {
     expect_false(nrouter_is_retryable(nrouter_condition("x", code = code)), info = code)
   }
   expect_true(nrouter_is_retryable(nrouter_transport_condition("dns")))

@@ -8,7 +8,7 @@ One API key for models across six provider clouds. There is no official OpenAI
 SDK for R, so this package calls the gateway's HTTP API directly via `httr`.
 
 **Registry & Package URL:** [https://nroutergateway.r-universe.dev/nrouter](https://nroutergateway.r-universe.dev/nrouter)  
-**Registry Status:** 🧪 Public Preview on R-universe (Package `nrouter` v3.1.4)
+**Registry Status:** 🧪 Public Preview on R-universe (Package `nrouter` v3.1.5)
 
 ```r
 # Public preview from R-universe.
@@ -189,7 +189,7 @@ request you were billed for.
 
 ```bash
 cd sdks
-R CMD build r && R CMD check nrouter_3.1.4.tar.gz --as-cran   # Status: OK
+R CMD build r && R CMD check nrouter_3.1.5.tar.gz --as-cran   # Status: OK
 ```
 
 Publishing: [PUBLISHING.md](PUBLISHING.md).
@@ -224,6 +224,16 @@ enabled:
   `nrouter_fallbacks` on the request). *`nrouter/auto`*: nRouter chooses an
   eligible model for you. Either way you pay the served model's list price,
   and `x-nr-model` names it.
+- **Selection strategies on `nrouter/auto`.** Pass `nrouter_optimize` as
+  `"balanced"` (org default, all price bands, no ceiling), `"quality"` (small
+  cost weight, all price bands), or `"cost"`. For cost mode, add `nrouter_optimize = "cost"` and
+  `nrouter_cost_band = "low"` (or `"mid"`, the default, or `"high"`) to the
+  request body list. The band caps each model's blended list rate
+  `(3 * input + 1 * output) / 4` per 1M tokens: `low` under $1, `mid` under $7
+  (low included), `high` every band. `nrouter_cost_band` on a Direct model or
+  under `"quality"` or `"balanced"` is refused with `400 invalid_request`; a
+  band with no eligible model is refused with `400 cost_band_unsatisfiable`
+  before any spend.
 - **Text wires only** — chat completions, responses, messages and legacy
   completions. Audio, image and video calls take a single-provider route and
   have no cross-provider failover.

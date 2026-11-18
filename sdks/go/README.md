@@ -13,7 +13,7 @@ audio, images and video.
 ## Installation
 
 ```bash
-go get github.com/nRouterGateway/nrouter-sdk/sdks/go/v3@v3.1.4
+go get github.com/nRouterGateway/nrouter-sdk/sdks/go/v3@v3.1.5
 ```
 
 ## TypeSafe Jev System One
@@ -216,13 +216,15 @@ python3 ../../conformance/check_conformance.py
 
 ## Per-request routing and guardrail overrides
 
-Two `FeatureOptions` fields reach the gateway's per-request overrides. Both are
+Four `FeatureOptions` fields reach the gateway's per-request overrides. All are
 text wires only (chat completions, completions, messages, responses).
 
 | Field | Wire field | Notes |
 |---|---|---|
 | `Fallbacks []string` | `nrouter_fallbacks` | Up to **4** model names tried in order when the primary cannot be served. **Replaces** your org fallback policy for this one call; the primary stays whatever `model` names. On `nrouter/auto` it replaces the fallbacks nrouter/auto would choose (an empty list = none). |
 | `Guardrails []string` | `nrouter_guardrails` | Up to **8** guardrail ids or names your org owns. **ADD-ONLY.** |
+| `Optimize string` | `nrouter_optimize` | `nrouter/auto` only: `"balanced"` (org default, all price bands, no ceiling), `"quality"` (small cost weight, all price bands), or `"cost"` (within `CostBand` ceiling). |
+| `CostBand string` | `nrouter_cost_band` | Cost-mode `nrouter/auto` only: `"low"` (blended list rate under $1 / 1M), `"mid"` (under $7, the default) or `"high"` (every band). Any other value is refused locally; sent on a Direct model or under `"quality"` or `"balanced"` is refused with `400 invalid_request`, and a band with no eligible model is refused with `cost_band_unsatisfiable` before any spend. |
 
 ```go
 extra, err := nrouter.BuildExtraBody(nrouter.FeatureOptions{

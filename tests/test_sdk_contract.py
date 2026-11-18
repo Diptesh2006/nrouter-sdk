@@ -352,6 +352,7 @@ class SpecContractTests(unittest.TestCase):
             "cost_band_unsatisfiable",
             "invalid_request",
             "quality",
+            "balanced",
             "nrouter/auto",
         ):
             self.assertIn(
@@ -360,13 +361,25 @@ class SpecContractTests(unittest.TestCase):
                 f"nrouter_cost_band description omits {needle!r}",
             )
 
-        optimize_desc = fields["nrouter_optimize"]["description"]
+        optimize_field = fields["nrouter_optimize"]
+        self.assertEqual(optimize_field["enum"], ["quality", "balanced", "cost"])
+        optimize_desc = optimize_field["description"]
         self.assertNotIn(
             "lowest list rate",
             optimize_desc,
             "nrouter_optimize still advertises the retired cost v1 list-rate wording",
         )
         self.assertIn("nrouter_cost_band", optimize_desc)
+        # "balanced" is the built-in default strategy on nrouter/auto everywhere.
+        auto_desc = spec["selection_routes"]["nrouter/auto"]["description"]
+        self.assertIn('"balanced" by default', auto_desc)
+        self.assertNotIn('"quality" by default', auto_desc)
+        self.assertIn('"balanced" (the organization default', optimize_desc)
+        self.assertNotRegex(
+            optimize_desc,
+            r'(?is)"quality"\s*(?:by default|\([^)]*default)',
+            'nrouter_optimize still advertises "quality" as the default strategy',
+        )
         # Current design: one scoring formula for every eligible model; the
         # decision model assesses but never picks, and auto always selects.
         self.assertIn("same formula", optimize_desc)
@@ -1475,6 +1488,81 @@ class TwoModeRoutingDocsTests(unittest.TestCase):
         blob = json.dumps(spec)
         for stale in ("Smart Router alias", "alias resolution", "Model alias absent"):
             self.assertNotIn(stale, blob, f"spec still describes {stale!r}")
+
+    def test_every_sdk_readme_mentioning_nrouter_optimize_documents_all_three_strategies(
+        self,
+    ) -> None:
+        readmes = [self.ROOT_README, *sorted(SDK_ROOT.glob("sdks/*/README.md"))]
+        mentioning = [
+            path
+            for path in readmes
+            if "nrouter_optimize" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(
+            len(mentioning),
+            len(readmes),
+            "every shipped SDK README and root README.md must document nrouter_optimize",
+        )
+        for path in mentioning:
+            text = path.read_text(encoding="utf-8")
+            rel = path.relative_to(SDK_ROOT)
+            for strategy in ("quality", "balanced", "cost"):
+                self.assertRegex(
+                    text,
+                    rf'["\']{strategy}["\']',
+                    f"{rel} mentions nrouter_optimize without documenting {strategy!r}",
+                )
+
+    def test_every_surface_documents_balanced_not_quality_as_default_strategy(
+        self,
+    ) -> None:
+        stale_quality_default = re.compile(
+            r"""(?is)(?:["'`]+quality["'`]+|\*Best for the task\*)[\s/*]*"""
+            r"""(?:by default|,\s*default|\([^)]*default[^)]*\))"""
+            r"""|`quality`\s+strategy\s*\([^)]*default"""
+        )
+        balanced_default = re.compile(
+            r"""(?is)["'`]+balanced["'`]+[\s/*]*(?:by default|,\s*default|\([^)]*default)"""
+        )
+        option_doc_files = [
+            SDK_ROOT / "sdks" / "js" / "src" / "types.ts",
+            SDK_ROOT / "sdks" / "python" / "nroutersdk" / "client.py",
+            SDK_ROOT / "sdks" / "go" / "options.go",
+            SDK_ROOT / "sdks" / "rust" / "src" / "options.rs",
+        ]
+        for path in [*self._docs(), *option_doc_files]:
+            text = path.read_text(encoding="utf-8")
+            rel = path.relative_to(SDK_ROOT)
+            self.assertIsNone(
+                stale_quality_default.search(text),
+                f'{rel} still advertises "quality" / Best for the task as the default strategy',
+            )
+
+        routing_text = self.ROUTING_DOC.read_text(encoding="utf-8")
+        self.assertIn(
+            "*Balanced* (the default)",
+            routing_text,
+            "sdks/js/docs/routing.md must document *Balanced* (the default)",
+        )
+
+        readmes = [self.ROOT_README, *sorted(SDK_ROOT.glob("sdks/*/README.md"))]
+        for path in readmes:
+            text = path.read_text(encoding="utf-8")
+            rel = path.relative_to(SDK_ROOT)
+            self.assertRegex(
+                text,
+                balanced_default,
+                f'{rel} does not document "balanced" as the default strategy',
+            )
+
+        for path in option_doc_files:
+            text = path.read_text(encoding="utf-8")
+            rel = path.relative_to(SDK_ROOT)
+            self.assertRegex(
+                text,
+                balanced_default,
+                f'{rel} does not document "balanced" as the organization default strategy',
+            )
 
 
 # AT THE BOTTOM, and that is the whole point. This block used to sit at line

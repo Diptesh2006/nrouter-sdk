@@ -37,7 +37,7 @@ flowchart LR
 
 ## All Ten SDKs Supported
 
-All ten SDKs are officially maintained, tested against the identical gateway wire contract, and share coordinated releases under [Rule #14](https://github.com/nRouterGateway/nrouter-sdk#the-one-rule-that-matters-here) (v3.1.4). Every package manifest, lockfile, documentation, and installation snippet is synchronized.
+All ten SDKs are officially maintained, tested against the identical gateway wire contract, and share coordinated releases under [Rule #14](https://github.com/nRouterGateway/nrouter-sdk#the-one-rule-that-matters-here) (v3.1.5). Every package manifest, lockfile, documentation, and installation snippet is synchronized.
 
 | SDK | Registry / Distribution | Registry URL | Package |
 |---|---|---|---|
@@ -124,7 +124,7 @@ print(f"Cost: ${client.last_response.cost}" if client.last_response.cost else "C
 <dependency>
     <groupId>ai.nrouter</groupId>
     <artifactId>nrouter-sdk</artifactId>
-    <version>3.1.4</version>
+    <version>3.1.5</version>
 </dependency>
 ```
 ```java
@@ -147,7 +147,7 @@ System.out.println(res.choices().get(0).message().content());
 ### Swift
 ```swift
 // Swift Package Manager
-.package(url: "https://github.com/nRouterGateway/nrouter-sdk.git", from: "3.1.4")
+.package(url: "https://github.com/nRouterGateway/nrouter-sdk.git", from: "3.1.5")
 ```
 ```swift
 import NRouter
@@ -164,7 +164,7 @@ print(res.meta.isPriced ? "Cost: $\(res.meta.cost!)" : "Cost: unpriced")
 ```toml
 # Cargo.toml
 [dependencies]
-nrouter = "3.1.4"
+nrouter = "3.1.5"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 ```rust
@@ -187,7 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```yaml
 # pubspec.yaml
 dependencies:
-  nrouter: ^3.1.4
+  nrouter: ^3.1.5
 ```
 ```dart
 import 'package:nrouter/nrouter.dart';
@@ -206,7 +206,7 @@ client.close();
 // build.gradle.kts
 repositories { mavenCentral() }
 dependencies {
-    implementation("ai.nrouter:nrouter-sdk-kotlin:3.1.4")
+    implementation("ai.nrouter:nrouter-sdk-kotlin:3.1.5")
 }
 ```
 ```kotlin
@@ -227,7 +227,7 @@ println("Cost: ${res.meta.cost?.let { "$$it" } ?: "unpriced"}")
 // app/build.gradle.kts
 repositories { mavenCentral() }
 dependencies {
-    implementation("ai.nrouter:nrouter-sdk-android:3.1.4")
+    implementation("ai.nrouter:nrouter-sdk-android:3.1.5")
 }
 ```
 
@@ -289,8 +289,8 @@ Also from the spec (`request_headers`, `extra_body_fields`). The body fields app
 |---|---|---|
 | `nrouter_cache` | body, boolean, default `true` | Use the tenant-isolated response cache for buffered text requests. `false` forces a provider call; streams are never cached |
 | `nrouter_fallbacks` | body, up to 4 model names | Per-request fallback chain, tried in order. Replaces the organization's fallback policy for this call. On `nrouter/auto` it replaces the fallbacks nrouter/auto would choose (`[]` = none). An invalid or out-of-band target is refused with `400 fallback_not_allowed` |
-| `nrouter_optimize` | body, `"quality"` or `"cost"` | `nrouter/auto` only: the selection strategy for this one request (`"quality"` by default, or `"cost"` restricted to the `nrouter_cost_band` ceiling; both score every eligible model with one formula), overriding the organization's Router Settings strategy. Any other value, or the field on another model, is refused with `400 invalid_request` |
-| `nrouter_cost_band` | body, `"low"`, `"mid"`, or `"high"`, default `"mid"` | Cost-mode `nrouter/auto` only: sets the blended-rate ceiling (`"low"` `< $1`, `"mid"` `$1` to `< $7` default, `"high"` `$7+` per 1M tokens on `(3 * input + 1 * output) / 4`). Sent on a Direct model, with an invalid value, or under `"quality"` returns `400 invalid_request`; zero eligible models in the band returns `400 cost_band_unsatisfiable` (`$0` spent) |
+| `nrouter_optimize` | body, `"quality"`, `"balanced"`, or `"cost"` | `nrouter/auto` only: the selection strategy for this one request (`"balanced"` by default across all price bands with no ceiling, `"quality"` with a small cost weight across all price bands, or `"cost"` restricted to the `nrouter_cost_band` ceiling; all three score every eligible model with one formula), overriding the organization's Router Settings strategy. Any other value, or the field on another model, is refused with `400 invalid_request` |
+| `nrouter_cost_band` | body, `"low"`, `"mid"`, or `"high"`, default `"mid"` | Cost-mode `nrouter/auto` only: sets a ceiling on each model's blended list rate `(3 * input + 1 * output) / 4` per 1M tokens: `"low"` admits models under `$1`, `"mid"` (the default) models under `$7` including the low band, and `"high"` every band including `$7+`. Sent on a Direct model, with an invalid value, or under `"quality"` or `"balanced"` returns `400 invalid_request`; zero eligible models in the band returns `400 cost_band_unsatisfiable` (`$0` spent) |
 | `nrouter_guardrails` | body, up to 8 ids or names | Guardrails to run in addition to the assigned ones; it can never remove one. An unknown id is refused with `400 guardrail_not_found` |
 | `nrouter_prompt_template_id` / `nrouter_prompt_variables` | body | Select a prompt template and supply its variables |
 | `x-nr-tags` | request header | Custom spend tags, `key=value,key2=value2` |
@@ -303,7 +303,7 @@ Also from the spec (`request_headers`, `extra_body_fields`). The body fields app
 Routing is a gateway concern; what you put in `model` chooses the mode:
 
 - **Direct — you choose the model.** Name it in `model`. nRouter never swaps it for another: a concrete model is never re-routed and inherits no hidden fallback. A different model answers only through a fallback you configured yourself — in Router Settings or `nrouter_fallbacks` on the request (up to 4) — and only when the provider fails (`429`, `503`, `529`, connection or first-byte stall). You are charged once, for the model that answered.
-- **`nrouter/auto` — nRouter chooses an eligible model for you.** Scores every eligible model with one formula — task suitability from public leaderboard ratings minus a cost weight — under the `quality` strategy (`nrouter_optimize: "quality"`, default) or the `cost` strategy restricted to a blended-rate ceiling (`nrouter_optimize: "cost"`, `nrouter_cost_band: "low" | "mid" | "high"`, default `"mid"`). The decision model only assesses the request; it never picks. If it is off, abstains or times out, or your organization turned off Smart model selection, `nrouter/auto` still selects a model. Former Smart Router alias names return `404`. `nrouter_fallbacks` on a request for `nrouter/auto` replaces the fallbacks it would choose.
+- **`nrouter/auto` — nRouter chooses an eligible model for you.** Scores every eligible model with one formula — task suitability from public leaderboard ratings minus a cost weight — under the `balanced` strategy across all price bands with no ceiling (`nrouter_optimize: "balanced"`, default), the `quality` strategy with a small cost weight across all price bands (`nrouter_optimize: "quality"`), or the `cost` strategy restricted to a blended-rate ceiling (`nrouter_optimize: "cost"`, `nrouter_cost_band: "low" | "mid" | "high"`, default `"mid"`). The decision model only assesses the request; it never picks. If it is off, abstains or times out, or your organization turned off Smart model selection, `nrouter/auto` still selects a model. Former Smart Router alias names return `404`. `nrouter_fallbacks` on a request for `nrouter/auto` replaces the fallbacks it would choose.
 
 In both modes you pay 0% markup on the served model's exact list price: `x-nr-model` always names the concrete model that served the request, and `x-nr-routing` indicates `direct` or `fallback:<n>`.
 
@@ -463,6 +463,6 @@ nrouter-sdk/
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build and test each SDK. Develop on `development`; `main` only via PR (Rule #20). |
 | [SECURITY.md](SECURITY.md) | Report vulnerabilities privately to `security@nrouter.ai`. |
 | [SUPPORT.md](SUPPORT.md) | Bug reports and account assistance. |
-| [CHANGELOG.md](CHANGELOG.md) | Coordinated release notes for shared version `3.1.4`. |
+| [CHANGELOG.md](CHANGELOG.md) | Coordinated release notes for shared version `3.1.5`. |
 | [LICENSE](LICENSE) | MIT License. |
 

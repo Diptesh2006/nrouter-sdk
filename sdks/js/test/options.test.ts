@@ -103,12 +103,11 @@ test('fallbacks MAP onto nrouter_fallbacks, and an empty list is omitted', () =>
 });
 
 test('optimize MAPS onto nrouter_optimize and anything else is refused, naming the option', () => {
-  assert.deepEqual(buildExtraBody({ model: 'nrouter/auto', optimize: 'cost' }), {
-    nrouter_optimize: 'cost',
-  });
-  assert.deepEqual(buildExtraBody({ model: 'nrouter/auto', optimize: 'quality' }), {
-    nrouter_optimize: 'quality',
-  });
+  for (const strategy of ['quality', 'balanced', 'cost'] as const) {
+    assert.deepEqual(buildExtraBody({ model: 'nrouter/auto', optimize: strategy }), {
+      nrouter_optimize: strategy,
+    });
+  }
   assert.deepEqual(buildExtraBody({ model: 'nrouter/auto' }), {});
   assert.throws(
     () => buildExtraBody({ model: 'nrouter/auto', optimize: 'cheap' as unknown as 'cost' }),

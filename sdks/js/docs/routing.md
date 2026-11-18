@@ -20,19 +20,22 @@ await client.nr.chat({ model: 'nrouter/auto', prompt });                // nRout
   supported steady state, not a misconfiguration.
 - **`nrouter/auto` — nRouter chooses an eligible model for you.** Your
   organization picks how, in the dashboard's Router Settings (or per request via
-  `nrouter_optimize: "quality" | "cost"`):
-  both strategies score every eligible model with one formula — task
+  `nrouter_optimize: "quality" | "balanced" | "cost"`):
+  all three strategies score every eligible model with one formula — task
   suitability from public leaderboard ratings minus a cost weight.
-  *Best for the task* (the default) weights task suitability; *Lowest cost*
-  first restricts eligible models to the active `nrouter_cost_band` ceiling
-  (`"low"` `< $1`, `"mid"` `$1` to `< $7` default, `"high"` `$7+` per million
-  tokens on the `(3 * input + 1 * output) / 4` blended list rate) and weights
-  cost more heavily. The decision model only assesses the request; it never
-  picks. If it is off, abstains or times out, or your organization turned off
-  Smart model selection, `nrouter/auto` still selects a model. If the active `nrouter_cost_band` leaves zero eligible models, the
-  gateway refuses before hold with `400 cost_band_unsatisfiable` (`$0` spent)
-  rather than escalating to a higher band; sending `nrouter_cost_band` on a
-  Direct model or under `"quality"` returns `400 invalid_request`.
+  *Balanced* (the default) weighs task suitability against request cost across
+  all price bands with no ceiling; *Best for the task* weights task suitability
+  with a small cost weight across all price bands;
+  *Lowest cost* first restricts eligible models to the active `nrouter_cost_band`
+  ceiling (`"low"` `< $1`, `"mid"` `$1` to `< $7` default, `"high"` `$7+` per
+  million tokens on the `(3 * input + 1 * output) / 4` blended list rate) and
+  weights cost more heavily. The decision model only assesses the request; it
+  never picks. If it is off, abstains or times out, or your organization turned
+  off Smart model selection, `nrouter/auto` still selects a model. If the active
+  `nrouter_cost_band` leaves zero eligible models, the gateway refuses before
+  hold with `400 cost_band_unsatisfiable` (`$0` spent) rather than escalating to
+  a higher band; sending `nrouter_cost_band` on a Direct model or under
+  `"quality"` or `"balanced"` returns `400 invalid_request`.
 
 Either way you pay 0% markup on the served model's exact list price, and
 `x-nr-model` (`res.meta.model`) always names the concrete model that served the

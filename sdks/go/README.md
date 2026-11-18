@@ -223,8 +223,8 @@ text wires only (chat completions, completions, messages, responses).
 |---|---|---|
 | `Fallbacks []string` | `nrouter_fallbacks` | Up to **4** model names tried in order when the primary cannot be served. **Replaces** your org fallback policy for this one call; the primary stays whatever `model` names. On `nrouter/auto` it replaces the fallbacks nrouter/auto would choose (an empty list = none). |
 | `Guardrails []string` | `nrouter_guardrails` | Up to **8** guardrail ids or names your org owns. **ADD-ONLY.** |
-| `Optimize string` | `nrouter_optimize` | `nrouter/auto` only: `"quality"` (org default) or `"cost"`. |
-| `CostBand string` | `nrouter_cost_band` | Cost-mode `nrouter/auto` only: `"low"` (blended list rate under $1 / 1M), `"mid"` (under $7, the default) or `"high"` (every band). Any other value is refused locally; a band with no eligible model is refused with `cost_band_unsatisfiable` before any spend. |
+| `Optimize string` | `nrouter_optimize` | `nrouter/auto` only: `"quality"` (org default), `"balanced"` (all price bands, no ceiling), or `"cost"` (within `CostBand` ceiling). |
+| `CostBand string` | `nrouter_cost_band` | Cost-mode `nrouter/auto` only: `"low"` (blended list rate under $1 / 1M), `"mid"` (under $7, the default) or `"high"` (every band). Any other value is refused locally; sent on a Direct model or under `"quality"` or `"balanced"` is refused with `400 invalid_request`, and a band with no eligible model is refused with `cost_band_unsatisfiable` before any spend. |
 
 ```go
 extra, err := nrouter.BuildExtraBody(nrouter.FeatureOptions{

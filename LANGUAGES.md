@@ -517,6 +517,15 @@ response = client.chat(
   }
 )
 
+# Automatic model selection ("quality" | "balanced" | "cost")
+response = client.chat(
+  parameters: {
+    model: "nrouter/auto",
+    messages: [{ role: "user", content: "Summarize this..." }],
+    nrouter_optimize: "balanced",
+  }
+)
+
 # Embeddings
 response = client.embeddings(
   parameters: {
@@ -564,6 +573,16 @@ foreach ($stream as $response) {
     echo $response->choices[0]->delta->content;
 }
 
+// Automatic model selection ("quality" | "balanced" | "cost")
+$auto = $client->chat()->create([
+    'model' => 'nrouter/auto',
+    'messages' => [
+        ['role' => 'user', 'content' => 'Summarize this...'],
+    ],
+    'nrouter_optimize' => 'balanced',
+]);
+echo $auto->choices[0]->message->content;
+
 // Embeddings
 $response = $client->embeddings()->create([
     'model' => 'text-embedding-3-small',
@@ -581,6 +600,7 @@ dotnet add package OpenAI
 ```
 
 ```csharp
+using System.ClientModel;
 using OpenAI;
 using OpenAI.Chat;
 
@@ -602,6 +622,16 @@ ChatCompletion response = await client.CompleteChatAsync(
     }
 );
 Console.WriteLine(response.Content[0].Text);
+
+// Automatic model selection ("quality" | "balanced" | "cost")
+ClientResult autoResult = await client.CompleteChatAsync(
+    BinaryContent.Create(BinaryData.FromObjectAsJson(new
+    {
+        model = "nrouter/auto",
+        messages = new[] { new { role = "user", content = "Summarize this..." } },
+        nrouter_optimize = "balanced",
+    }))
+);
 ```
 
 ---

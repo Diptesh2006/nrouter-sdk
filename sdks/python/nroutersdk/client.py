@@ -8,7 +8,7 @@ import os
 import re
 import time
 import ipaddress
-from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence, cast
 from urllib.parse import quote, urlparse
 
 if TYPE_CHECKING:
@@ -1054,8 +1054,8 @@ class _nRouterChat:
         fallbacks: list[str] | None = None,
         guardrails: list[str] | None = None,
         cache: bool | None = None,
-        optimize: str | None = None,
-        cost_band: str | None = None,
+        optimize: Literal["quality", "balanced", "cost"] | None = None,
+        cost_band: Literal["low", "mid", "high"] | None = None,
         advanced_sampling: bool = False,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -1077,11 +1077,15 @@ class _nRouterChat:
                 ADD-ONLY — they run in addition to the guardrails already
                 assigned, and a request can never remove or relax one.
             cache: Set false to force provider egress.
-            optimize: ``"quality"`` or ``"cost"``, for ``nrouter/auto`` only.
-                Overrides the organization's saved strategy for this call;
-                any other model is refused with 400 ``invalid_request``.
+            optimize: ``"quality"`` (org default), ``"balanced"`` (all price
+                bands, no ceiling), or ``"cost"`` (within ``cost_band``
+                ceiling), for ``nrouter/auto`` only. Overrides the
+                organization's saved strategy for this call; any other model is
+                refused with 400 ``invalid_request``.
             cost_band: ``"low"``, ``"mid"``, or ``"high"``, for cost-mode
-                ``nrouter/auto`` only (default ``"mid"``).
+                ``nrouter/auto`` only (default ``"mid"``). Refused with 400
+                ``invalid_request`` on Direct models or under ``"quality"`` or
+                ``"balanced"``.
             advanced_sampling: When true, send validated temperature/top_p.
             stream: Stream the response.
             **kwargs: All OpenAI chat.completions.create() params.

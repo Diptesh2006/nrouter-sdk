@@ -223,13 +223,16 @@ enabled:
   `nrouter_fallbacks` on the request). *`nrouter/auto`*: nRouter chooses an
   eligible model for you. Either way you pay the served model's list price,
   and `x-nr-model` names it.
-- **Cost mode on `nrouter/auto`.** Add `"nrouter_optimize": "cost"` and
-  `"nrouter_cost_band": "low"` (or `"mid"`, the default, or `"high"`) to the
-  request body dictionary. The band caps each model's blended list rate
-  `(3 * input + 1 * output) / 4` per 1M tokens: `low` under $1, `mid` under $7
-  (low included), `high` every band. `nrouter_cost_band` on a Direct model or
-  under `"quality"` is refused with `400 invalid_request`; a band with no
-  eligible model is refused with `400 cost_band_unsatisfiable` before any spend.
+- **Selection strategies on `nrouter/auto`.** Pass `"nrouter_optimize"` as
+  `"quality"` (org default), `"balanced"` (all price bands, no ceiling), or
+  `"cost"` (restricted to the cost-band ceiling). For cost mode, add
+  `"nrouter_optimize": "cost"` and `"nrouter_cost_band": "low"` (or `"mid"`,
+  the default, or `"high"`) to the request body dictionary. The band caps each
+  model's blended list rate `(3 * input + 1 * output) / 4` per 1M tokens: `low`
+  under $1, `mid` under $7 (low included), `high` every band.
+  `nrouter_cost_band` on a Direct model or under `"quality"` or `"balanced"` is
+  refused with `400 invalid_request`; a band with no eligible model is refused
+  with `400 cost_band_unsatisfiable` before any spend.
 - **Text wires only** — chat completions, responses, messages and legacy
   completions. Audio, image and video calls take a single-provider route and
   have no cross-provider failover.

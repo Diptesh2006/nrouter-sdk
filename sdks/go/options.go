@@ -28,6 +28,12 @@ var ExtraBodyFields = []string{
 const (
 	MaxFallbacks  = 4
 	MaxGuardrails = 8
+
+	// OptimizeQuality, OptimizeBalanced, and OptimizeCost are the selection
+	// strategies accepted by FeatureOptions.Optimize on nrouter/auto requests.
+	OptimizeQuality  = "quality"
+	OptimizeBalanced = "balanced"
+	OptimizeCost     = "cost"
 )
 
 var forbiddenTenancyKeys = map[string]struct{}{
@@ -61,14 +67,17 @@ type FeatureOptions struct {
 	// organization.
 	Guardrails []string
 	// Optimize is the strategy for a request on nrouter/auto only: "quality"
-	// (the organization default) or "cost" (restricted to the CostBand
-	// ceiling). Both score every eligible model with one formula; a model is
-	// always selected. Empty omits it. Pairing it
-	// with any other model is refused by the gateway with 400 invalid_request.
+	// (the organization default), "balanced" (across all price bands with no
+	// ceiling), or "cost" (restricted to the CostBand ceiling). All three
+	// score every eligible model with one formula; a model is always selected.
+	// Empty omits it. Pairing it with any other model is refused by the
+	// gateway with 400 invalid_request.
 	Optimize string
 	// CostBand is the cost-band ceiling for cost-mode nrouter/auto only:
 	// "low" (< $1 / 1M blended), "mid" (< $7 / 1M blended, default), or
-	// "high" (all bands including $7+ / 1M blended). Empty omits it.
+	// "high" (all bands including $7+ / 1M blended). Empty omits it. Sending
+	// it on a Direct model or under "quality" or "balanced" is refused by the
+	// gateway with 400 invalid_request.
 	CostBand string
 	Cache    *bool
 }
@@ -97,7 +106,7 @@ func BuildExtraBody(opts FeatureOptions) (map[string]any, error) {
 		extra["nrouter_fallbacks"] = names
 	}
 	if opts.Optimize != "" {
-		if opts.Optimize != "quality" && opts.Optimize != "balanced" && opts.Optimize != "cost" {
+		if opts.Optimize != OptimizeQuality && opts.Optimize != OptimizeBalanced && opts.Optimize != OptimizeCost {
 			return nil, configErr(`Optimize must be "quality", "balanced", or "cost"; it maps onto the gateway field nrouter_optimize and applies to the model nrouter/auto only`)
 		}
 		extra["nrouter_optimize"] = opts.Optimize

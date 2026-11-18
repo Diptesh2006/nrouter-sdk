@@ -88,3 +88,33 @@ test_that("request sends client-language and trace routing headers", {
   expect_equal(unname(unlist(result$body$session)), "session_wire_1")
   expect_equal(result$meta$request_id, "req_trace_test")
 })
+
+test_that("chat_completions forwards nrouter_optimize strategies on the wire", {
+  skip_if_not_installed("webfakes")
+  skip_if_not(webfakes_available(), "webfakes background process not available")
+  app <- webfakes::new_app()
+  app$use(webfakes::mw_json())
+  app$post("/v1/chat/completions", function(req, res) {
+    res$set_header("x-nr-request-id", "req_optimize_test")
+    res$send_json(list(
+      model = req$json$model,
+      nrouter_optimize = req$json$nrouter_optimize
+    ))
+  })
+  process <- webfakes::new_app_process(app)
+  on.exit(process$stop(), add = TRUE)
+  client <- nrouter_client(
+    api_key = "sk-nrouter-test",
+    base_url = process$url("/v1")
+  )
+
+  for (strategy in c("quality", "balanced", "cost")) {
+    result <- nrouter_chat_completions(client, list(
+      model = "nrouter/auto",
+      messages = list(list(role = "user", content = "hello")),
+      nrouter_optimize = strategy
+    ))
+    expect_equal(unname(unlist(result$body$model)), "nrouter/auto")
+    expect_equal(unname(unlist(result$body$nrouter_optimize)), strategy)
+  }
+})

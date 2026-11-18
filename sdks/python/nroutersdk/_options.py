@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from nroutersdk._errors import nRouterConfigurationError
 
@@ -92,8 +92,8 @@ def build_extra_body(
     fallbacks: Sequence[str] | None = None,
     guardrails: Sequence[str] | None = None,
     cache: bool | None = None,
-    optimize: str | None = None,
-    cost_band: str | None = None,
+    optimize: Literal["quality", "balanced", "cost"] | None = None,
+    cost_band: Literal["low", "mid", "high"] | None = None,
 ) -> dict[str, Any]:
     """Map Python options to the exact nRouter gateway body fields.
 

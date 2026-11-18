@@ -253,7 +253,7 @@ export interface NRouterFeatureOptions {
    * Cost-band ceiling for cost-mode `nrouter/auto` only: "low" (< $1 / 1M
    * blended), "mid" (< $7 / 1M blended; default when omitted), or "high"
    * (all bands including $7+ / 1M blended). Refused with 400 `invalid_request`
-   * on Direct models or under "quality", and 400 `cost_band_unsatisfiable`
+   * on Direct models or under "quality" or "balanced", and 400 `cost_band_unsatisfiable`
    * when zero eligible models fit the ceiling.
    */
   costBand?: 'low' | 'mid' | 'high';

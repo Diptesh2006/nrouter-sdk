@@ -94,8 +94,8 @@ def test_optimize_maps_onto_the_gateway_field_and_refuses_other_values():
     for strategy in ("quality", "balanced", "cost"):
         assert build_extra_body(optimize=strategy) == {"nrouter_optimize": strategy}
     assert build_extra_body() == {}
-    with pytest.raises(nRouterConfigurationError, match="optimize"):
-        build_extra_body(optimize="cheap")
+    with pytest.raises(nRouterConfigurationError, match="balanced"):
+        build_extra_body(optimize="cheap")  # type: ignore[arg-type]
 
 
 def test_cost_band_maps_onto_the_gateway_field_and_refuses_other_values():
@@ -103,7 +103,7 @@ def test_cost_band_maps_onto_the_gateway_field_and_refuses_other_values():
         assert build_extra_body(cost_band=band) == {"nrouter_cost_band": band}
     assert build_extra_body() == {}
     with pytest.raises(nRouterConfigurationError, match="cost_band"):
-        build_extra_body(cost_band="ultra")
+        build_extra_body(cost_band="ultra")  # type: ignore[arg-type]
 
 
 def test_more_than_four_fallbacks_is_refused_locally():

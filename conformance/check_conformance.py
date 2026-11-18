@@ -1335,6 +1335,17 @@ def check_option_builders(root: Path = ROOT, spec: dict | None = None) -> list[s
                     f"{field!r} — the gateway reads it, so an SDK that cannot "
                     f"emit it forwards nothing and the option is unreachable"
                 )
+            field_spec = spec["extra_body_fields"].get(field)
+            enum_values = (
+                field_spec.get("enum") if isinstance(field_spec, dict) else None
+            )
+            if enum_values:
+                for val in enum_values:
+                    if re.search(rf'["\']{re.escape(str(val))}["\']', blob) is None:
+                        failures.append(
+                            f"{sdk}: option builder for {field!r} does not "
+                            f"contain enum literal {val!r}"
+                        )
         for invented in sorted(set(_NROUTER_FIELD.findall(blob)) - set(fields)):
             failures.append(
                 f"{sdk}: option builder names {invented!r}, which the spec's "
@@ -1845,6 +1856,12 @@ def self_test() -> int:
             "an internal BYOK mode name in the spec",
             lambda d: d["response_headers"]["x-nr-funding-source"].update(
                 {"description": _BYOK_INTERNAL_TOKENS[0]}
+            ),
+        ),
+        (
+            "an extra_body_fields enum literal",
+            lambda d: d["extra_body_fields"]["nrouter_optimize"].update(
+                {"enum": ["quality", "balanced", "cost", "invented_strategy"]}
             ),
         ),
     ):
@@ -2369,6 +2386,19 @@ def self_test() -> int:
             ):
                 problems.append("a missing root Package.swift did not fail the check")
             shipping.write_text(text)
+
+        # Remove an extra_body_fields enum literal from a real option builder.
+        victim = fake_root / "sdks/rust/src/options.rs"
+        text = victim.read_text(encoding="utf-8")
+        victim.write_text(text.replace('"balanced"', '"REMOVED"'))
+        if not any(
+            "nrouter_optimize" in f and "balanced" in f and "rust" in f
+            for f in check(root=fake_root)
+        ):
+            problems.append(
+                "deleting an extra_body enum literal from a real option builder did not fail the check"
+            )
+        victim.write_text(text)
 
         # Remove a whole SDK file: must ERROR, never silently skip.
         (fake_root / "sdks/rust/src/errors.rs").unlink()

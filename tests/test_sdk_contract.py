@@ -352,6 +352,7 @@ class SpecContractTests(unittest.TestCase):
             "cost_band_unsatisfiable",
             "invalid_request",
             "quality",
+            "balanced",
             "nrouter/auto",
         ):
             self.assertIn(
@@ -1477,6 +1478,30 @@ class TwoModeRoutingDocsTests(unittest.TestCase):
         blob = json.dumps(spec)
         for stale in ("Smart Router alias", "alias resolution", "Model alias absent"):
             self.assertNotIn(stale, blob, f"spec still describes {stale!r}")
+
+    def test_every_sdk_readme_mentioning_nrouter_optimize_documents_all_three_strategies(
+        self,
+    ) -> None:
+        readmes = [self.ROOT_README, *sorted(SDK_ROOT.glob("sdks/*/README.md"))]
+        mentioning = [
+            path
+            for path in readmes
+            if "nrouter_optimize" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(
+            len(mentioning),
+            len(readmes),
+            "every shipped SDK README and root README.md must document nrouter_optimize",
+        )
+        for path in mentioning:
+            text = path.read_text(encoding="utf-8")
+            rel = path.relative_to(SDK_ROOT)
+            for strategy in ("quality", "balanced", "cost"):
+                self.assertRegex(
+                    text,
+                    rf'["\']{strategy}["\']',
+                    f"{rel} mentions nrouter_optimize without documenting {strategy!r}",
+                )
 
 
 # AT THE BOTTOM, and that is the whole point. This block used to sit at line

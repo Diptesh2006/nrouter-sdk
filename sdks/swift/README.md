@@ -6,7 +6,7 @@ URLSession and async/await only.
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/nRouterGateway/nrouter-sdk.git", from: "3.1.4")
+    .package(url: "https://github.com/nRouterGateway/nrouter-sdk.git", from: "3.1.5")
 ]
 ```
 
@@ -21,7 +21,7 @@ Or in Xcode: **File → Add Package Dependencies** and paste the URL.
 > You can use the package in Xcode immediately, without waiting for indexing:
 > 1. Select **File → Add Package Dependencies...**
 > 2. Paste `https://github.com/nRouterGateway/nrouter-sdk.git`
-> 3. Select version `3.1.4`
+> 3. Select version `3.1.5`
 > 4. Add the `NRouter` product.
 >
 > Swift Package Index is only a discovery and compatibility-testing service; the package itself already comes directly from GitHub.
@@ -223,6 +223,13 @@ enabled:
   `nrouter_fallbacks` on the request). *`nrouter/auto`*: nRouter chooses an
   eligible model for you. Either way you pay the served model's list price,
   and `x-nr-model` names it.
+- **Cost mode on `nrouter/auto`.** Add `"nrouter_optimize": "cost"` and
+  `"nrouter_cost_band": "low"` (or `"mid"`, the default, or `"high"`) to the
+  request body dictionary. The band caps each model's blended list rate
+  `(3 * input + 1 * output) / 4` per 1M tokens: `low` under $1, `mid` under $7
+  (low included), `high` every band. `nrouter_cost_band` on a Direct model or
+  under `"quality"` is refused with `400 invalid_request`; a band with no
+  eligible model is refused with `400 cost_band_unsatisfiable` before any spend.
 - **Text wires only** — chat completions, responses, messages and legacy
   completions. Audio, image and video calls take a single-provider route and
   have no cross-provider failover.

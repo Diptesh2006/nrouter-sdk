@@ -140,6 +140,8 @@ console.log(result.meta.requestId, result.meta.cost, result.meta.model);
 | `cache` | `nrouter_cache` | Only `false` is sent — `true` is the gateway default. Streams are never cached. |
 | `fallbacks` | `nrouter_fallbacks` | Up to **4** model names tried in order. **Replaces** the org fallback policy for this one call; `model` stays the primary. On `nrouter/auto` it replaces the fallbacks nrouter/auto would choose (`[]` = none). |
 | `guardrails` | `nrouter_guardrails` | Up to **8** guardrail ids or names your org owns. **ADD-ONLY.** |
+| `optimize` | `nrouter_optimize` | `nrouter/auto` only: `'quality'` (org default) or `'cost'`. |
+| `costBand` | `nrouter_cost_band` | Cost-mode `nrouter/auto` only: `'low'` (blended list rate under $1 / 1M), `'mid'` (under $7, the default) or `'high'` (every band). Any other value throws locally; a band with no eligible model is refused with `cost_band_unsatisfiable` before any spend. |
 
 `guardrails` is add-only by design: the listed guardrails run **in addition to**
 the ones assigned to your key, team or organization and to the platform

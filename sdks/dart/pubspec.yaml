@@ -1,6 +1,6 @@
 name: nrouter
 description: nRouter SDK — one API key for models across six provider clouds. Works in Flutter and plain Dart.
-version: 3.1.4
+version: 3.1.5
 homepage: https://nrouter.ai
 repository: https://github.com/nRouterGateway/nrouter-sdk
 issue_tracker: https://github.com/nRouterGateway/nrouter-sdk/issues

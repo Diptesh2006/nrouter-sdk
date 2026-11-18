@@ -730,7 +730,7 @@ println(response.choices[0].message.content)
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/nRouterGateway/nrouter-sdk.git", from: "3.1.4")
+.package(url: "https://github.com/nRouterGateway/nrouter-sdk.git", from: "3.1.5")
 ```
 
 ```swift

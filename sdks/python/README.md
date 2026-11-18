@@ -401,13 +401,15 @@ All endpoints route through `https://api.nrouter.ai/v1`:
 
 ## Per-request routing and guardrail overrides
 
-Two options on `client.nr.chat()` reach the gateway's per-request overrides.
-Both are text wires only (chat completions, completions, messages, responses).
+Four options on `client.nr.chat()` reach the gateway's per-request overrides.
+All are text wires only (chat completions, completions, messages, responses).
 
 | Option | Wire field | Notes |
 |---|---|---|
 | `fallbacks` | `nrouter_fallbacks` | Up to **4** model names tried in order when the primary cannot be served. **Replaces** your org fallback policy for this one call; `model` stays the primary. On `nrouter/auto` it replaces the fallbacks nrouter/auto would choose (`[]` = none). |
 | `guardrails` | `nrouter_guardrails` | Up to **8** guardrail ids or names your org owns. **ADD-ONLY.** |
+| `optimize` | `nrouter_optimize` | `nrouter/auto` only: `"quality"` (org default) or `"cost"`. |
+| `cost_band` | `nrouter_cost_band` | Cost-mode `nrouter/auto` only: `"low"` (blended list rate under $1 / 1M), `"mid"` (under $7, the default) or `"high"` (every band). Any other value raises `nRouterConfigurationError` locally; a band with no eligible model is refused with `cost_band_unsatisfiable` before any spend. |
 
 ```python
 result = client.nr.chat(

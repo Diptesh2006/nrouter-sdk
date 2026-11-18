@@ -9,7 +9,7 @@ around the official `openai-java` client — same API surface, pre-configured fo
 <dependency>
     <groupId>ai.nrouter</groupId>
     <artifactId>nrouter-sdk</artifactId>
-    <version>3.1.4</version>
+    <version>3.1.5</version>
 </dependency>
 ```
 
@@ -221,6 +221,15 @@ enabled:
   `nrouter_fallbacks` on the request). *`nrouter/auto`*: nRouter chooses an
   eligible model for you. Either way you pay the served model's list price,
   and `x-nr-model` names it.
+- **Cost mode on `nrouter/auto`.** Add the body fields with
+  `.putAdditionalBodyProperty("nrouter_optimize", JsonValue.from("cost"))` and
+  `.putAdditionalBodyProperty("nrouter_cost_band", JsonValue.from("low"))` (or
+  `"mid"`, the default, or `"high"`). The band caps each model's blended list
+  rate `(3 * input + 1 * output) / 4` per 1M tokens: `low` under $1, `mid`
+  under $7 (low included), `high` every band. `nrouter_cost_band` on a Direct
+  model or under `"quality"` is refused with `400 invalid_request`; a band with
+  no eligible model is refused with `400 cost_band_unsatisfiable` before any
+  spend.
 - **Text wires only** — chat completions, responses, messages and legacy
   completions. Audio, image and video calls take a single-provider route and
   have no cross-provider failover.

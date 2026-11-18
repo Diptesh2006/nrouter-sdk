@@ -18,17 +18,17 @@ are nevertheless reachable from a real registry — a preview is a support scope
 not a distribution method, and calling these "source checkout" sends a reader
 looking for a git URL when `cargo add` already works.
 
-All ten SDKs share the single coordinated release version **`3.1.4`**.
+All ten SDKs share the single coordinated release version **`3.1.5`**.
 
 | target | distribution | release version | release mechanism |
 |---|---|---|---|
-| Kotlin | Maven Central `ai.nrouter:nrouter-sdk-kotlin` ([central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-kotlin)) | `3.1.4` | Automated: `publish-kotlin.yml` builds, signs, and stages to Central on main merge |
-| Android | Maven Central `ai.nrouter:nrouter-sdk-android` ([central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-android)) | `3.1.4` | Automated: `publish-android.yml` publishes to Central once Kotlin core is verified |
-| Rust | crates.io `nrouter` ([crates.io/crates/nrouter](https://crates.io/crates/nrouter)) | `3.1.4` | Registry package: `publish-rust.yml` verification / `cargo publish` |
-| Dart / Flutter | pub.dev `nrouter` ([pub.dev/packages/nrouter](https://pub.dev/packages/nrouter)) | `3.1.4` | Registry package: `publish-dart.yml` verification / `dart pub publish` |
-| R | [R-universe](https://nroutergateway.r-universe.dev/nrouter) | `3.1.4` | Automated: R-universe builds from `release-r` branch |
-| Swift | bare SemVer git tag, resolved by SwiftPM | `3.1.4` | Tagged release: git tag `3.1.4` |
-| Go | `sdks/go/v*` git tag, resolved by `proxy.golang.org` | `v3.1.4` | Tagged release: git tag `sdks/go/v3.1.4` |
+| Kotlin | Maven Central `ai.nrouter:nrouter-sdk-kotlin` ([central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-kotlin)) | `3.1.5` | Automated: `publish-kotlin.yml` builds, signs, and stages to Central on main merge |
+| Android | Maven Central `ai.nrouter:nrouter-sdk-android` ([central.sonatype.com](https://central.sonatype.com/artifact/ai.nrouter/nrouter-sdk-android)) | `3.1.5` | Automated: `publish-android.yml` publishes to Central once Kotlin core is verified |
+| Rust | crates.io `nrouter` ([crates.io/crates/nrouter](https://crates.io/crates/nrouter)) | `3.1.5` | Registry package: `publish-rust.yml` verification / `cargo publish` |
+| Dart / Flutter | pub.dev `nrouter` ([pub.dev/packages/nrouter](https://pub.dev/packages/nrouter)) | `3.1.5` | Registry package: `publish-dart.yml` verification / `dart pub publish` |
+| R | [R-universe](https://nroutergateway.r-universe.dev/nrouter) | `3.1.5` | Automated: R-universe builds from `release-r` branch |
+| Swift | bare SemVer git tag, resolved by SwiftPM | `3.1.5` | Tagged release: git tag `3.1.5` |
+| Go | `sdks/go/v*` git tag, resolved by `proxy.golang.org` | `v3.1.5` | Tagged release: git tag `sdks/go/v3.1.5` |
 
 ## To release
 

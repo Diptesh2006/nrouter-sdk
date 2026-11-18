@@ -1200,6 +1200,16 @@ def check_readme_parity(root: Path = ROOT) -> list[str]:
             failures.append(f"{sdk}: README is missing the {ROUTING_HEADING!r} section")
         if ROUTING_LINK not in text:
             failures.append(f"{sdk}: README links nowhere to {ROUTING_LINK}")
+        if _STALE_QUALITY_DEFAULT.search(text):
+            failures.append(
+                f'{sdk}: README still advertises "quality" as the default strategy on '
+                f'nrouter/auto ("balanced" is the default)'
+            )
+        if "nrouter_optimize" in text and not _BALANCED_AS_DEFAULT.search(text):
+            failures.append(
+                f'{sdk}: README documents nrouter_optimize without naming "balanced" '
+                f"as the default strategy"
+            )
         exempt = _override_spans(text)
         for armed in _ARMED_RETRIES.finditer(text):
             if any(start <= armed.start() < end for start, end in exempt):
@@ -1542,6 +1552,40 @@ def check_byok_spec_contract(spec: dict) -> list[str]:
     return failures
 
 
+_STALE_QUALITY_DEFAULT = re.compile(
+    r"""(?is)(?:["'`]+quality["'`]+|\*Best for the task\*)[\s/*]*"""
+    r"""(?:by default|,\s*default|\([^)]*default[^)]*\))"""
+    r"""|`quality`\s+strategy\s*\([^)]*default"""
+)
+_BALANCED_AS_DEFAULT = re.compile(
+    r"""(?is)["'`]+balanced["'`]+[\s/*]*(?:by default|,\s*default|\([^)]*default)"""
+)
+
+
+def check_optimize_default_contract(spec: dict) -> list[str]:
+    """Pin 'balanced' as the default strategy on nrouter/auto across spec descriptions."""
+    failures: list[str] = []
+    auto_desc = str(
+        (spec.get("selection_routes") or {}).get("nrouter/auto", {}).get("description", "")
+    )
+    opt_desc = str(
+        (spec.get("extra_body_fields") or {}).get("nrouter_optimize", {}).get("description", "")
+    )
+    for surface, desc in (
+        ("selection_routes['nrouter/auto']", auto_desc),
+        ("extra_body_fields['nrouter_optimize']", opt_desc),
+    ):
+        if _STALE_QUALITY_DEFAULT.search(desc):
+            failures.append(
+                f'spec: {surface} still advertises "quality" as the default strategy'
+            )
+        if not _BALANCED_AS_DEFAULT.search(desc):
+            failures.append(
+                f'spec: {surface} does not document "balanced" as the default strategy'
+            )
+    return failures
+
+
 def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
     """Return a list of failure strings; empty means conformant."""
     spec = spec or load_spec()
@@ -1704,6 +1748,7 @@ def check(root: Path = ROOT, spec: dict | None = None) -> list[str]:
         )
 
     failures.extend(check_byok_spec_contract(spec))
+    failures.extend(check_optimize_default_contract(spec))
     route_failures, _, _ = route_coverage(root, spec)
     failures.extend(route_failures)
     # The third wire surface: the request body. Endpoints and headers were
@@ -1864,6 +1909,14 @@ def self_test() -> int:
                 {"enum": ["quality", "balanced", "cost", "invented_strategy"]}
             ),
         ),
+        (
+            "nrouter_optimize advertising quality as default",
+            lambda d: d["extra_body_fields"]["nrouter_optimize"].update(
+                {
+                    "description": '"quality" (the organization default) weights task suitability.'
+                }
+            ),
+        ),
     ):
         mutated = json.loads(json.dumps(spec))
         mutate(mutated)
@@ -1980,6 +2033,24 @@ def self_test() -> int:
         )
         if not any("go: README links nowhere" in f for f in check(root=fake_root)):
             problems.append("deleting a README's router-settings link did not fail the check")
+
+        victim.write_text(
+            _mutate(
+                readme,
+                '`"balanced"` (org default',
+                '`"quality"` (org default',
+                problems,
+                "readme optimize default",
+            ),
+            encoding="utf-8",
+        )
+        if not any(
+            'go: README still advertises "quality" as the default strategy' in f
+            for f in check(root=fake_root)
+        ):
+            problems.append(
+                'a README advertising "quality" as default strategy did not fail the check'
+            )
 
         # A DELETED SDK README must not pass by leaving nine behind. The floor
         # is one README per shipped SDK, not "more than one".

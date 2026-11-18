@@ -66,12 +66,13 @@ type FeatureOptions struct {
 	// Guardrails is up to MaxGuardrails guardrail ids or names owned by this
 	// organization.
 	Guardrails []string
-	// Optimize is the strategy for a request on nrouter/auto only: "quality"
-	// (the organization default), "balanced" (across all price bands with no
-	// ceiling), or "cost" (restricted to the CostBand ceiling). All three
-	// score every eligible model with one formula; a model is always selected.
-	// Empty omits it. Pairing it with any other model is refused by the
-	// gateway with 400 invalid_request.
+	// Optimize is the strategy for a request on nrouter/auto only: "balanced"
+	// (the organization default across all price bands with no ceiling),
+	// "quality" (small cost weight across all price bands), or "cost"
+	// (restricted to the CostBand ceiling). All three score every eligible
+	// model with one formula; a model is always selected. Empty omits it.
+	// Pairing it with any other model is refused by the gateway with 400
+	// invalid_request.
 	Optimize string
 	// CostBand is the cost-band ceiling for cost-mode nrouter/auto only:
 	// "low" (< $1 / 1M blended), "mid" (< $7 / 1M blended, default), or

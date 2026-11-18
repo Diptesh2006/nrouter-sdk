@@ -221,9 +221,9 @@ enabled:
   eligible model for you. Either way you pay the served model's list price,
   and `x-nr-model` names it.
 - **Selection strategies on `nrouter/auto`.** `FeatureOptions.optimize` sets
-  `nrouter_optimize` to `"quality"` (org default), `"balanced"` (across all
-  price bands with no ceiling), or `"cost"` (restricted to the `cost_band`
-  ceiling). For cost mode, set `FeatureOptions { optimize:
+  `nrouter_optimize` to `"balanced"` (org default across all price bands with
+  no ceiling), `"quality"` (small cost weight across all price bands), or
+  `"cost"` (restricted to the `cost_band` ceiling). For cost mode, set `FeatureOptions { optimize:
   Some("cost".into()), cost_band: Some("low".into()), ..Default::default() }`
   (`"mid"` is the default band, `"high"` admits every band) and merge
   `nrouter::options::build_extra_body(&opts)?` into the request body; it maps onto

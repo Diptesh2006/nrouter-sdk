@@ -161,10 +161,11 @@ export function buildExtraBody(opts: NRouterFeatureOptions): NRouterExtraBody {
     extra.nrouter_fallbacks = overrideNames(opts.fallbacks, 'fallbacks', MAX_FALLBACKS);
   }
 
-  // `nrouter_optimize` is a per-request strategy for `nrouter/auto` only. A
-  // value outside the enum is refused here, naming the option, rather than
-  // spent on a round trip that ends in 400 `invalid_request`. Pairing it with a
-  // model other than `nrouter/auto` is refused by the gateway the same way.
+  // `nrouter_optimize` is a per-request strategy for `nrouter/auto` only
+  // ("balanced" is the built-in default when unset). A value outside the enum
+  // is refused here, naming the option, rather than spent on a round trip that
+  // ends in 400 `invalid_request`. Pairing it with a model other than
+  // `nrouter/auto` is refused by the gateway the same way.
   if (opts.optimize !== undefined) {
     if (opts.optimize !== 'quality' && opts.optimize !== 'balanced' && opts.optimize !== 'cost') {
       throw configurationError(

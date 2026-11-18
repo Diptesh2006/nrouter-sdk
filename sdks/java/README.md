@@ -222,8 +222,9 @@ enabled:
   eligible model for you. Either way you pay the served model's list price,
   and `x-nr-model` names it.
 - **Selection strategies on `nrouter/auto`.** Pass `"nrouter_optimize"` as
-  `"quality"` (org default), `"balanced"` (all price bands, no ceiling), or
-  `"cost"` (restricted to the cost-band ceiling). For cost mode, add the body
+  `"balanced"` (org default, all price bands, no ceiling), `"quality"` (small
+  cost weight, all price bands), or `"cost"` (restricted to the cost-band
+  ceiling). For cost mode, add the body
   fields with
   `.putAdditionalBodyProperty("nrouter_optimize", JsonValue.from("cost"))` and
   `.putAdditionalBodyProperty("nrouter_cost_band", JsonValue.from("low"))` (or

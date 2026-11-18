@@ -23,8 +23,9 @@ await client.nr.chat({ model: 'nrouter/auto', prompt });                // nRout
   `nrouter_optimize: "quality" | "balanced" | "cost"`):
   all three strategies score every eligible model with one formula — task
   suitability from public leaderboard ratings minus a cost weight.
-  *Best for the task* (the default) weights task suitability; *Balanced* weighs
-  task suitability against request cost across all price bands with no ceiling;
+  *Balanced* (the default) weighs task suitability against request cost across
+  all price bands with no ceiling; *Best for the task* weights task suitability
+  with a small cost weight across all price bands;
   *Lowest cost* first restricts eligible models to the active `nrouter_cost_band`
   ceiling (`"low"` `< $1`, `"mid"` `$1` to `< $7` default, `"high"` `$7+` per
   million tokens on the `(3 * input + 1 * output) / 4` blended list rate) and

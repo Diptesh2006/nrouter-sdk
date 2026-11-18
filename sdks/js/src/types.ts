@@ -197,10 +197,11 @@ export interface NRouterExtraBody {
    */
   nrouter_fallbacks?: string[];
   /**
-   * Selection strategy for `nrouter/auto` only: "quality" (the organization
-   * default), "balanced" (across all price bands with no ceiling), or "cost"
-   * (restricted to the active `nrouter_cost_band` ceiling). All three score
-   * every eligible model with one formula; a model is always selected.
+   * Selection strategy for `nrouter/auto` only: "balanced" (the organization
+   * default across all price bands with no ceiling), "quality" (small cost
+   * weight across all price bands), or "cost" (restricted to the active
+   * `nrouter_cost_band` ceiling). All three score every eligible model with one
+   * formula; a model is always selected.
    */
   nrouter_optimize?: 'quality' | 'balanced' | 'cost';
   /**
@@ -241,12 +242,13 @@ export interface NRouterFeatureOptions {
    */
   fallbacks?: string[];
   /**
-   * Strategy for a request on `nrouter/auto` only: "quality" (the organization
-   * default), "balanced" (across all price bands with no ceiling), or "cost"
-   * (restricted to the `costBand` ceiling). All three score every eligible
-   * model with one formula; a model is always selected. Overrides the saved
-   * Router Settings strategy for this one request. Any other value, or any
-   * model other than `nrouter/auto`, is refused with 400 `invalid_request`.
+   * Strategy for a request on `nrouter/auto` only: "balanced" (the organization
+   * default across all price bands with no ceiling), "quality" (small cost
+   * weight across all price bands), or "cost" (restricted to the `costBand`
+   * ceiling). All three score every eligible model with one formula; a model is
+   * always selected. Overrides the saved Router Settings strategy for this one
+   * request. Any other value, or any model other than `nrouter/auto`, is
+   * refused with 400 `invalid_request`.
    */
   optimize?: 'quality' | 'balanced' | 'cost';
   /**

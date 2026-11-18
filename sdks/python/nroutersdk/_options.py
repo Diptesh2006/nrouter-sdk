@@ -24,7 +24,8 @@ EXTRA_BODY_FIELDS = (
     GUARDRAILS_FIELD,
 )
 
-#: The three strategies ``nrouter_optimize`` accepts, for ``nrouter/auto`` only.
+#: The three strategies ``nrouter_optimize`` accepts, for ``nrouter/auto`` only
+#: (``"balanced"`` is the built-in default when unset).
 OPTIMIZE_VALUES = ("quality", "balanced", "cost")
 
 #: The three ceilings ``nrouter_cost_band`` accepts on cost-mode ``nrouter/auto``.

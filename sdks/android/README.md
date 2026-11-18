@@ -194,8 +194,9 @@ enabled:
   eligible model for you. Either way you pay the served model's list price,
   and `x-nr-model` names it.
 - **Selection strategies on `nrouter/auto`.** Pass `"nrouter_optimize"` as
-  `"quality"` (org default), `"balanced"` (all price bands, no ceiling), or
-  `"cost"` (restricted to the cost-band ceiling). For cost mode, add
+  `"balanced"` (org default, all price bands, no ceiling), `"quality"` (small
+  cost weight, all price bands), or `"cost"` (restricted to the cost-band
+  ceiling). For cost mode, add
   `.put("nrouter_optimize", "cost")` and `.put("nrouter_cost_band", "low")` (or
   `"mid"`, the default, or `"high"`) to the request `JSONObject`. The band caps
   each model's blended list rate `(3 * input + 1 * output) / 4` per 1M tokens:

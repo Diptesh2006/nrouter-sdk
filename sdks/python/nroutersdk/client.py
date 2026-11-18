@@ -1077,11 +1077,12 @@ class _nRouterChat:
                 ADD-ONLY — they run in addition to the guardrails already
                 assigned, and a request can never remove or relax one.
             cache: Set false to force provider egress.
-            optimize: ``"quality"`` (org default), ``"balanced"`` (all price
-                bands, no ceiling), or ``"cost"`` (within ``cost_band``
-                ceiling), for ``nrouter/auto`` only. Overrides the
-                organization's saved strategy for this call; any other model is
-                refused with 400 ``invalid_request``.
+            optimize: ``"balanced"`` (org default across all price bands, no
+                ceiling), ``"quality"`` (small cost weight across all price
+                bands), or ``"cost"`` (within ``cost_band`` ceiling), for
+                ``nrouter/auto`` only. Overrides the organization's saved
+                strategy for this call; any other model is refused with 400
+                ``invalid_request``.
             cost_band: ``"low"``, ``"mid"``, or ``"high"``, for cost-mode
                 ``nrouter/auto`` only (default ``"mid"``). Refused with 400
                 ``invalid_request`` on Direct models or under ``"quality"`` or

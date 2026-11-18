@@ -61,8 +61,9 @@ type FeatureOptions struct {
 	// organization.
 	Guardrails []string
 	// Optimize is the strategy for a request on nrouter/auto only: "quality"
-	// (the organization default) or "cost" (lowest estimated request cost
-	// within CostBand, with Default Pick fallback). Empty omits it. Pairing it
+	// (the organization default) or "cost" (restricted to the CostBand
+	// ceiling). Both score every eligible model with one formula; a model is
+	// always selected. Empty omits it. Pairing it
 	// with any other model is refused by the gateway with 400 invalid_request.
 	Optimize string
 	// CostBand is the cost-band ceiling for cost-mode nrouter/auto only:

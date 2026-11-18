@@ -21,7 +21,7 @@ flowchart LR
     App["Your App / AI Agent"] -->|"1 Virtual Key (sk-nrouter-*)"| SDK["nRouter SDK / OpenAI Client"]
     SDK -->|"HTTPS / Streaming SSE\napi.nrouter.ai/v1/*"| GW["nRouter Gateway (Rust)"]
     GW <-->|"mTLS 1.3 Inspection\n(Zero DB, Zero Egress)"| Cortex["nrouter-cortex"]
-    GW -->|"Smart Auto-Routing\n(11 Intent Tiers)"| Clouds["Upstream Clouds"]
+    GW -->|"nrouter/auto or a named model"| Clouds["Upstream Clouds"]
 
     subgraph Clouds ["Supported Model Providers"]
         OAI["OpenAI (GPT-4o, o1, o3)"]
@@ -289,7 +289,7 @@ Also from the spec (`request_headers`, `extra_body_fields`). The body fields app
 |---|---|---|
 | `nrouter_cache` | body, boolean, default `true` | Use the tenant-isolated response cache for buffered text requests. `false` forces a provider call; streams are never cached |
 | `nrouter_fallbacks` | body, up to 4 model names | Per-request fallback chain, tried in order. Replaces the organization's fallback policy for this call. On `nrouter/auto` it replaces the fallbacks nrouter/auto would choose (`[]` = none). An invalid or out-of-band target is refused with `400 fallback_not_allowed` |
-| `nrouter_optimize` | body, `"quality"` or `"cost"` | `nrouter/auto` only: the selection strategy for this one request (`"quality"` best model for the task by default, or `"cost"` lowest estimated request cost within `nrouter_cost_band` with Default Pick fallback), overriding the organization's Router Settings strategy. Any other value, or the field on another model, is refused with `400 invalid_request` |
+| `nrouter_optimize` | body, `"quality"` or `"cost"` | `nrouter/auto` only: the selection strategy for this one request (`"quality"` by default, or `"cost"` restricted to the `nrouter_cost_band` ceiling; both score every eligible model with one formula), overriding the organization's Router Settings strategy. Any other value, or the field on another model, is refused with `400 invalid_request` |
 | `nrouter_cost_band` | body, `"low"`, `"mid"`, or `"high"`, default `"mid"` | Cost-mode `nrouter/auto` only: sets the blended-rate ceiling (`"low"` `< $1`, `"mid"` `$1` to `< $7` default, `"high"` `$7+` per 1M tokens on `(3 * input + 1 * output) / 4`). Sent on a Direct model, with an invalid value, or under `"quality"` returns `400 invalid_request`; zero eligible models in the band returns `400 cost_band_unsatisfiable` (`$0` spent) |
 | `nrouter_guardrails` | body, up to 8 ids or names | Guardrails to run in addition to the assigned ones; it can never remove one. An unknown id is refused with `400 guardrail_not_found` |
 | `nrouter_prompt_template_id` / `nrouter_prompt_variables` | body | Select a prompt template and supply its variables |
@@ -303,7 +303,7 @@ Also from the spec (`request_headers`, `extra_body_fields`). The body fields app
 Routing is a gateway concern; what you put in `model` chooses the mode:
 
 - **Direct — you choose the model.** Name it in `model`. nRouter never swaps it for another: a concrete model is never re-routed and inherits no hidden fallback. A different model answers only through a fallback you configured yourself — in Router Settings or `nrouter_fallbacks` on the request (up to 4) — and only when the provider fails (`429`, `503`, `529`, connection or first-byte stall). You are charged once, for the model that answered.
-- **`nrouter/auto` — nRouter chooses an eligible model for you.** Selects between task-appropriate models by quality (`nrouter_optimize: "quality"`, default) or lowest estimated request cost within a blended-rate ceiling (`nrouter_optimize: "cost"`, `nrouter_cost_band: "low" | "mid" | "high"`, default `"mid"`, with Default Pick fallback). `nrouter_fallbacks` on a request for `nrouter/auto` replaces the fallbacks it would choose.
+- **`nrouter/auto` — nRouter chooses an eligible model for you.** Scores every eligible model with one formula — task suitability from public leaderboard ratings minus a cost weight — under the `quality` strategy (`nrouter_optimize: "quality"`, default) or the `cost` strategy restricted to a blended-rate ceiling (`nrouter_optimize: "cost"`, `nrouter_cost_band: "low" | "mid" | "high"`, default `"mid"`). The decision model only assesses the request; it never picks. If it is off, abstains or times out, or your organization turned off Smart model selection, `nrouter/auto` still selects a model. Former Smart Router alias names return `404`. `nrouter_fallbacks` on a request for `nrouter/auto` replaces the fallbacks it would choose.
 
 In both modes you pay 0% markup on the served model's exact list price: `x-nr-model` always names the concrete model that served the request, and `x-nr-routing` indicates `direct` or `fallback:<n>`.
 

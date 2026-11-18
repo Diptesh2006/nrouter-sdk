@@ -8,8 +8,8 @@ const { nRouter } = require("@nrouter_ai/sdk");
 const client = new nRouter();
 
 (async () => {
-  // A Smart Router alias activates its configured strategy and fallback chain;
-  // a concrete model id pins the request to that model.
+  // A concrete model id pins the request to that model; `nrouter/auto` lets
+  // nRouter choose, and `x-nr-model` names the model that answered.
   const model = process.env.NROUTER_MODEL || "claude-sonnet-4-5-20250929";
   const response = await client.nr.chat({
     model,

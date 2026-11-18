@@ -35,8 +35,9 @@ pub struct FeatureOptions {
     pub guardrail_ids: Vec<String>,
     pub cache: Option<bool>,
     /// Strategy for a request on `nrouter/auto` only: `"quality"` (the
-    /// organization default) or `"cost"` (lowest estimated request cost within
-    /// `cost_band`, with Default Pick fallback). Pairing it with any other
+    /// organization default) or `"cost"` (restricted to the `cost_band`
+    /// ceiling). Both score every eligible model with one formula; a model is
+    /// always selected. Pairing it with any other
     /// model is refused by the gateway with 400 `invalid_request`.
     pub optimize: Option<String>,
     /// Cost-band ceiling for cost-mode `nrouter/auto` only: `"low"`, `"mid"`

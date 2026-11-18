@@ -198,8 +198,9 @@ export interface NRouterExtraBody {
   nrouter_fallbacks?: string[];
   /**
    * Selection strategy for `nrouter/auto` only: "quality" (the organization
-   * default) or "cost" (lowest estimated request cost within the active
-   * `nrouter_cost_band` ceiling, with Default Pick fallback).
+   * default) or "cost" (restricted to the active `nrouter_cost_band`
+   * ceiling). Both score every eligible model with one formula; a model is
+   * always selected.
    */
   nrouter_optimize?: 'quality' | 'cost';
   /**
@@ -241,8 +242,8 @@ export interface NRouterFeatureOptions {
   fallbacks?: string[];
   /**
    * Strategy for a request on `nrouter/auto` only: "quality" (the organization
-   * default; best model for the task) or "cost" (lowest estimated request cost
-   * within `costBand`, with Default Pick fallback). Overrides the saved Router
+   * default) or "cost" (restricted to the `costBand` ceiling). Both score
+   * every eligible model with one formula; a model is always selected. Overrides the saved Router
    * Settings strategy for this one request. Any other value, or any model
    * other than `nrouter/auto`, is refused with 400 `invalid_request`.
    */

@@ -1,7 +1,7 @@
 # CLAUDE.md — nrouter-sdk
 
 Public repo (`github.com/nRouterGateway/nrouter-sdk`). Never commit secrets or internal endpoints.
-Skills: `nrouter-sdk`, `deploy-nrouter-sdk` (`/deploy-nrouter-sdk`).
+Skills: `nrouter-sdk`, `deploy` (`references/sdk.md`; `/deploy <plane> sdk`).
 
 ## Architecture & Contract (Rule #14)
 - **Ten client SDKs (`sdks/`):** speak one wire contract (`api.nrouter.ai/v1/*`).

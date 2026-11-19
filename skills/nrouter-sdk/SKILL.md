@@ -3,7 +3,7 @@ name: nrouter-sdk
 description: >-
   Use when developing, testing or auditing the official nRouter multi-language SDKs: generated model
   constants, request/response types, conformance suites, wire serialization, error classification,
-  retries, the @nrouter_ai/support-agent library. Not for registry publishing (use deploy-nrouter-sdk).
+  retries, the @nrouter_ai/support-agent library. Not for registry publishing (use deploy, references/sdk.md).
 metadata:
   version: 1.3.0
 ---
@@ -14,7 +14,7 @@ metadata:
 
 - **What:** Client SDK development across 10 languages, generated model constants from spec/model-catalog-snapshot.json (scripts/generate-model-constants.mjs, MCAT-39), conformance testing, wire serialization, error classification, and retry semantics.
 - **When:** Adding SDK features, regenerating or checking SDK model constants, updating request/response types, running conformance test suites, or testing the @nrouter_ai/support-agent library.
-- **Not for:** Publishing packages to external package registries (use deploy-nrouter-sdk) or gateway wire implementation (use nrouter-rust-modalities).
+- **Not for:** Publishing packages to external package registries (use deploy, references/sdk.md) or gateway wire implementation (use nrouter-rust-modalities).
 
 Ten SDKs, one gateway contract. Shared facts here; open the sub-skill for the change.
 
